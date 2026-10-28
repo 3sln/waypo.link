@@ -79,16 +79,16 @@ test('cancel from the device that made the replacement: the server ends this ses
 
 test('recovery refused for a pending replacement keeps the proof in memory; cancelling with the file sends it once',async()=>{
  const secrets=new Map([['restoreFile','encrypted']]),calls=[];let state={config:{origin:'https://space.example',localDevelopment:true},unlockQuestions:[{id:'q'}],beamGeneration:0};
- const payload={version:2,recoveryToken:'id.token'};
+ const payload={version:3,recoveryToken:'id.token',fileId:'ICEiIyQlJicoKSorLC0uLw'};
  const r={state:{snapshot:()=>state,transition:fn=>{state=fn({...state})??state;}},browser:{secret:k=>secrets.get(k),storeSecret:(k,v)=>v===null?secrets.delete(k):secrets.set(k,v),recoveryChallenge:()=>'local-browser-test-token',clearRecoveryChallenge(){},navigate(){}},recoveryFile:{decrypt:async()=>payload},
   api:{request:async(path,body)=>{calls.push([path,body]);if(path==='/api/auth/recover')throw Object.assign(new Error('This recovery file was replaced recently.'),{code:'recovery_reissue_pending',status:409});return {cancelled:true,restored:true};}}};
  const ctx={engineFeed:new EventTarget()};
  await assert.rejects(new RecoverAccount({}).perform(r,ctx,{values:{'unlock:q':'answer'}}),{code:'recovery_reissue_pending'});
- assert.equal(state.restoreReissuePending,true);assert.deepEqual(secrets.get('reissueCancelProof'),{recoveryToken:'id.token',identityBackup:payload});
+ assert.equal(state.restoreReissuePending,true);assert.deepEqual(secrets.get('reissueCancelProof'),{recoveryToken:'id.token'},'only the credential: v3 files carry nothing else to send');
  const page=render(recoveryPage({...state,route:{kind:'recovery-restore'},recoveryStage:'unlock',locale:'en'}));
  assert.ok([...page.querySelectorAll('button')].some(b=>/Cancel the replacement with this file/.test(b.textContent)));
  await new CancelReissueWithFile({}).perform(r,ctx,{});
- assert.deepEqual(calls.at(-1),['/api/auth/recovery/reissue/cancel-file',{recoveryToken:'id.token',identityBackup:payload}]);
+ assert.deepEqual(calls.at(-1),['/api/auth/recovery/reissue/cancel-file',{recoveryToken:'id.token'}]);
  assert.equal(secrets.has('reissueCancelProof'),false);assert.equal(state.restoreReissuePending,false);assert.match(state.notice,/works again/);
  await assert.rejects(new CancelReissueWithFile({}).perform(r,ctx,{}),/Unlock your recovery file again/);
 });

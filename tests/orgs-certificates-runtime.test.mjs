@@ -94,8 +94,9 @@ test('runtime: jwt-bearer member grant over the router, bindle_member, no refres
   const settings = await s.memberOwner(s.alice, 'GET', `/api/member-certificates/settings/${s.org}`); assert.deepEqual(await settings.json(), { certificateSeconds: 660 });
   const unknown = await s.app.fetch(new Request(`${ORIGIN}/identity/${s.alice}/delegations/${(await holder()).jkt}`)); assert.equal(unknown.status, 404);
   // R4-H1: the certification key is published in the identity document and never in the recovery keychain.
-  const keychain = await s.invoke(s.alice, 'identityKeychain', [s.alice, { create: false }]), kid = JSON.parse(Buffer.from(issued.certificate.split('.')[0], 'base64url')).kid;
-  assert.notEqual(keychain.signing.kid, kid); assert.notEqual(keychain.encryption.kid, kid); assert.ok(!JSON.stringify(keychain).includes(kid));
+  // (Recovery file v3 holds no keys at all; the certification key is also never an identity signing key.)
+  const signingKeys = await s.app.resources.accounts.get(s.alice).identityKeyHistory(s.alice, { purpose: 'signing' }), kid = JSON.parse(Buffer.from(issued.certificate.split('.')[0], 'base64url')).kid;
+  assert.ok(!signingKeys.some(k => k.kid === kid));
   const published = await s.invoke(s.alice, 'memberCertificateKeys', [s.alice]);
   assert.equal(published.identity, `${ORIGIN}/identity/${s.alice}`); assert.ok(published.keys.some(k => k.kid === kid && k.state === 'active'), 'the local key read lists the certification key');
 });

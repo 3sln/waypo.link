@@ -11,7 +11,7 @@ test('actual Worker signup freshness and inline step-up preserve identity and pu
  const password='Browser identity certificate test password!';
  const start=await post('/api/auth/signup',{method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});assert.equal(start.status(),200);
  const pending=await start.json();assert.match(pending.account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);
- const file=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();const backup=JSON.parse(file.content);assert.equal(backup.handle,undefined);assert.equal(backup.nameAssignment,undefined);
+ const file=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();const backup=JSON.parse(file.content);assert.equal(backup.handle,undefined);assert.equal(backup.nameAssignment,undefined);assert.equal(backup.version,3);assert.equal(backup.keychain,undefined);
  const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true});assert.equal(activated.status(),200);const session=await activated.json();
  const page=await context.newPage();await page.goto(baseURL+'/console');await waitForApp(page);await page.getByRole('button',{name:'Account & security',exact:true}).click();
  const downloading=page.waitForEvent('download');await page.getByRole('button',{name:'Download canonical name certificate'}).click();const download=await downloading;
@@ -21,7 +21,7 @@ test('actual Worker signup freshness and inline step-up preserve identity and pu
  // Signup proved this password; claiming reaches the billing gate immediately.
  await claim();await page.getByText('Billing is not enabled.',{exact:true}).waitFor();
  // Recovery also installs a session, but replacement credentials do not make it fresh.
- const recovering=await (await post('/api/auth/recover',{recoveryToken:file.recoveryToken,identityBackup:backup,turnstileToken:'local-browser-test-token'})).json();assert(recovering.pendingToken);
+ const recovering=await (await post('/api/auth/recover',{recoveryToken:file.recoveryToken,turnstileToken:'local-browser-test-token'})).json();assert(recovering.pendingToken);
  assert.equal((await post('/api/auth/password/pending',{pendingToken:recovering.pendingToken,password})).status(),200);
  const replacement=await (await post('/api/auth/recovery/download',{pendingToken:recovering.pendingToken})).json();
  assert.equal((await post('/api/auth/recovery/confirm',{pendingToken:recovering.pendingToken,recoveryToken:replacement.recoveryToken,downloadConfirmed:true})).status(),200);
@@ -35,17 +35,17 @@ test('actual Worker signup freshness and inline step-up preserve identity and pu
  await screenshot(page,'identity-names-desktop');await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(page,'identity-names-mobile');
 });
 
-test('canceling provider-signature verification prevents late backup completion and KDF work',async t=>{
+test('the browser recovery provider refuses withdrawn (v2 keychain) and foreign payloads before any KDF work, with no authority fetch',async t=>{
  const browser=await launch();t.after(()=>browser.close());const context=await browser.newContext();const page=await context.newPage();await page.goto(baseURL+'/console');
- let signalRequest;const requested=new Promise(resolve=>signalRequest=resolve);let releaseResponse;const held=new Promise(resolve=>releaseResponse=resolve);
- await page.route('**/api/recovery/authority',async route=>{signalRequest();await held;await route.abort().catch(()=>{});});
- await page.evaluate(async()=>{
-  const {default:RecoveryProvider}=await import('/src/providers/recovery-file.mjs');const {generateIdentityKeychain,createIdentityBackup}=await import('/packages/recovery/identity-backup.mjs');
-  const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const entity=crypto.randomUUID();
-  const backup=await createIdentityBackup({issuer:location.origin,entity,keychain:await generateIdentityKeychain(),recoveryToken:entity+'.'+'x'.repeat(43),warning:'Private test backup.'},{kid:crypto.randomUUID(),privateKey:pair.privateKey});
-  const provider=new RecoveryProvider();window.cancelRecovery=await provider.obtain();
-  const NativeWorker=window.Worker;window.recoveryWorkerStarts=0;window.Worker=class extends NativeWorker{constructor(...args){super(...args);window.recoveryWorkerStarts++;}};
-  window.pendingRecovery=window.cancelRecovery.encrypt(backup,[{id:'phrase',type:'passphrase',prompt:'Private passphrase'}],['Strong private test passphrase'],location.origin).then(()=>({completed:true}),()=>({canceled:true}));
+ let authorityFetches=0;await page.route('**/api/recovery/authority',async route=>{authorityFetches++;await route.continue();});
+ const result=await page.evaluate(async()=>{
+  const {default:RecoveryProvider}=await import('/src/providers/recovery-file.mjs');const provider=await new RecoveryProvider().obtain();
+  const NativeWorker=window.Worker;let starts=0;window.Worker=class extends NativeWorker{constructor(...args){super(...args);starts++;}};
+  const entity=crypto.randomUUID(),questions=[{id:'phrase',type:'passphrase',prompt:'Private passphrase'}],answers=['Strong private test passphrase'];
+  const v2={version:2,issuer:location.origin,entity,recoveryToken:entity+'.'+'x'.repeat(43),warning:'w',keychain:{version:1},proof:{}};
+  const foreign={version:3,issuer:'https://other.example',entity,recoveryToken:entity+'.'+'x'.repeat(43),fileId:'AAAAAAAAAAAAAAAAAAAAAA',issuedAt:1};
+  const outcome=async payload=>provider.encrypt(payload,questions,structuredClone(answers),location.origin).then(()=>'encrypted',error=>error.code??error.message);
+  return {v2:await outcome(v2),foreign:await outcome(foreign),starts};
  });
- await requested;await page.evaluate(()=>window.cancelRecovery.cancel());releaseResponse();assert.deepEqual(await page.evaluate(()=>window.pendingRecovery),{canceled:true});assert.equal(await page.evaluate(()=>window.recoveryWorkerStarts),0);
+ assert.equal(result.v2,'recovery_file_invalid');assert.match(result.foreign,/another service/);assert.equal(result.starts,0);assert.equal(authorityFetches,0);
 });

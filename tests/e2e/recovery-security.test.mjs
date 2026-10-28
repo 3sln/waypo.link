@@ -7,7 +7,7 @@ import { launch, baseURL } from './browser.mjs';
 test('independent browser audit: untrusted metadata stays inert and wrong answer/provider never transmits recovery authority', async () => {
   assert.ok(['localhost', '127.0.0.1'].includes(new URL(baseURL).hostname));
   const answer = 'private audit phrase 8fe137';
-  const payload = { version: 1, issuer: 'https://other-provider.example', handle: 'alice', recoveryToken: '11111111-1111-1111-1111-111111111111.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', warning: 'Non-live audit fixture' };
+  const payload = { version: 3, issuer: 'https://other-provider.example', entity: '11111111-1111-4111-8111-111111111111', recoveryToken: '11111111-1111-4111-8111-111111111111.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', fileId: 'AAAAAAAAAAAAAAAAAAAAAA', issuedAt: 1 };
   const prompt = '<img src="/audit-leak" onerror="window.auditInjected=true">';
   const hint = 'https://untrusted.example/answer-here';
   const file = await encryptRecoveryFile(payload, [{ id: 'phrase', type: 'passphrase', prompt, hint }], [answer], { deriveKey: argon2id });
@@ -49,7 +49,7 @@ test('independent browser audit: untrusted metadata stays inert and wrong answer
 });
 
 test('independent browser audit: repeated submit starts one worker and navigation terminates it', async () => {
-  const file = await encryptRecoveryFile({ version: 1, issuer: baseURL, handle: 'alice', recoveryToken: '11111111-1111-1111-1111-111111111111.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', warning: 'Non-live audit fixture' }, [{ id: 'phrase', type: 'passphrase', prompt: 'Private phrase' }], ['private cancellation fixture'], { deriveKey: argon2id });
+  const file = await encryptRecoveryFile({ version: 3, issuer: baseURL, entity: '11111111-1111-4111-8111-111111111111', recoveryToken: '11111111-1111-4111-8111-111111111111.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', fileId: 'AAAAAAAAAAAAAAAAAAAAAA', issuedAt: 1 }, [{ id: 'phrase', type: 'passphrase', prompt: 'Private phrase' }], ['private cancellation fixture'], { deriveKey: argon2id });
   const browser = await launch();
   try {
     const page = await browser.newPage();

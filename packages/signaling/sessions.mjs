@@ -149,8 +149,10 @@ export async function glareSurvivor(a,b,crypto=globalThis.crypto){
  * Reference-host bounds (provider policy, provisional; §13.1, Appendix B RTC-11). `recipientPending` is the pending
  * capacity before the reserve; the reserve is split into a `self` share and a cross-entity share (`reserveSelf`,
  * `reserveCross`, §13.1 "Pending reserve"). Pairings together and open offers together each get at most half of pending
- * and connected capacity (`subBudgetShare`). `dataBytes` is the aggregate `data` budget per entity per `dataWindowMs`
- * (provisional value; its cost-model row is a production gate, §3.5).
+ * and connected capacity (`subBudgetShare`). `dataBytes` is the aggregate `data` budget per entity per `dataWindowMs`:
+ * 256 KiB per hour, the same on every plan, as an abuse guard (owner-approved 2026-10-28; DEVLOG "Owner approvals and
+ * directions (in session)"). Pairings take at most half of it. Its cost-model row stays a production gate (§3.5), and
+ * organization and service-entity budgets are to be tiered by an organization plan (release gates, "Signaling").
  */
 export const BOUNDS=Object.freeze({
  endpoints:32,endpointsPerApp:8,endpointIdleMs:30*86400000,initiatorOpen:8,recipientPending:4,reserveSelf:2,reserveCross:2,recipientConnected:8,subBudgetShare:0.5,
@@ -158,5 +160,5 @@ export const BOUNDS=Object.freeze({
  outboxPeer:64,outboxControlReserve:128,outboxPeerControlReserve:16,controlReplies:4,inbox:256,inboxBytes:4194304,
  offersPerEntity:64,offersPerApp:32,offerUsesPerson:16,offerUsesService:10000,offerMinSeconds:10,offerPersonSeconds:900,offerServiceOpenSeconds:7776000,offerServiceBoundSeconds:604800,offerPrincipals:16,
  pairings:256,pairingPendingMs:7*86400000,pairingDefaultMs:90*86400000,pairingMaxMs:366*86400000,pairingLabel:64,ownPairingLive:2,
- onlineMs:60000,dataBytes:1048576,dataWindowMs:3600000,
+ onlineMs:60000,dataBytes:262144,dataWindowMs:3600000,
 });

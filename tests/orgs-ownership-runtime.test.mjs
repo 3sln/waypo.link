@@ -14,7 +14,10 @@ import {stages} from '../packages/runtime/routes/orgs.mjs';
 import {personActor} from '../packages/orgs/authority.mjs';
 import {fakeHasher} from './helpers/identity-engine.mjs';
 import {fakeClock} from '../packages/app/memory-providers.mjs';
+import {IdentityCrypto} from '../packages/identity/crypto.mjs';
 import {fakeOrgPolar,ORG_POLAR_CONFIG} from './helpers/org-polar.mjs';
+import {transferIdentityPort} from '../packages/identity/transfer-out.mjs';
+import {organizationIdentityPort} from '../packages/identity/organizations.mjs';
 
 const ORIGIN='http://localhost:8788',PASSWORD='Organizations ownership runtime password!',DAY=86400000;
 test('runtime: checkout at creation, verified webhook delegation, transfer effect, key rotation and recovery reissue',async t=>{
@@ -58,18 +61,31 @@ test('runtime: checkout at creation, verified webhook delegation, transfer effec
  await accountHandle(env,org).billingWebhookVerified(org,{owner:org,id:'evt_runtime_2',bodyHash:'d'.repeat(64),type:'order.paid'});
  view=await call(A,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.transfer.state,'paid');assert.equal(view.body.ownerOfRecord.sub,A);
  const keyBefore=(await accountHandle(env,org).orgsSigningProvenance(org)).kid;
+ // Review M1 (recovery file v3): before the change the previous owner's token is the organization's current credential.
+ const transferIdentity=transferIdentityPort(repository),before=await repository.get(org);
+ assert.ok(await transferIdentity.verifyRecovery(org,oldFile.recoveryToken),'the creation file verifies before the ownership change');
  clock.advance(DAY+1000);await accounts.get(org).alarm();
  view=await call(B,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.ownerOfRecord.sub,B,JSON.stringify(view.body));assert.equal(view.body.recovery.state,'missing');assert.ok(view.body.decisions.includes('reissue-recovery'));
+ // `missing` means no valid file: the ownership effect cleared the credential (one CAS, security epoch bumped) before
+ // reporting success, so the previous owner's token verifies nowhere.
+ {const after=await repository.get(org);assert.equal(after.recoveryHash,null);for(const name of ['recoveryFileId','recoveryIssuedAt','recoveryBackupVersion'])assert.equal(after[name],undefined,name);
+  assert.ok(after.security.epoch>before.security.epoch,'the organization security epoch was bumped');assert.ok(after.audit.some(e=>e.type==='recovery-file-invalidated'));
+  assert.equal(await transferIdentity.verifyRecovery(org,oldFile.recoveryToken),null,'transfer-out no longer accepts the previous owner\'s file');
+  assert.equal((await transferIdentity.get(org)).recovery,null);
+  await assert.rejects(identity.recover({recoveryToken:oldFile.recoveryToken,turnstileToken:'ok'},base),'recovery refuses the previous owner\'s file');
+  assert.equal((await organizationIdentityPort(repository).invalidateRecovery(org)).invalidated,false,'invalidation is idempotent');}
  assert.notEqual((await accountHandle(env,org).orgsSigningProvenance(org)).kid,keyBefore,'the organization signing key rotated at the ownership change');
  assert.ok(polar.effects.revoked.length===1&&polar.effects.refunds.length===0,'the previous subscription is cancelled at once, without a refund');
  // Discovery follows the organization's answer: B owns it, A remains a member.
  assert.equal((await call(B,'GET','/api/orgs')).body.organizations.find(o=>o.id===org)?.role,'owner-of-record');assert.equal((await call(A,'GET','/api/orgs')).body.organizations.find(o=>o.id===org)?.role,'member');
  assert.equal((await call(A,'GET',`/api/orgs/${org}/membership`)).body.organization.ownerOfRecord,false);
- // The previous owner's file no longer matches the organization's keys; the new owner's reissue does.
- const record=await repository.get(org);await assert.rejects(backup.verify(JSON.parse(oldFile.content),record,oldFile.recoveryToken));
+ // Recovery file v3: the previous owner's file is not the organization's current credential once the new owner reissues
+ // (organization files recover nothing until ORG-12; the credential hash, not a key, decides).
+ const hash=token=>new IdentityCrypto().hash('recovery',token);
  {const denied=await call(A,"POST",`/api/orgs/${org}/recovery-file`);assert.equal(denied.status,404,JSON.stringify(denied.body));}
  const reissued=await call(B,'POST',`/api/orgs/${org}/recovery-file`);assert.equal(reissued.status,200,JSON.stringify(reissued.body));
- const fresh=await repository.get(org);await backup.verify(JSON.parse(reissued.body.recoveryFile.content),fresh,reissued.body.recoveryFile.recoveryToken,{expectedKid:fresh.recoveryKeyKid});
+ const fresh=await repository.get(org);assert.equal(fresh.recoveryHash,await hash(reissued.body.recoveryFile.recoveryToken));assert.notEqual(fresh.recoveryHash,await hash(oldFile.recoveryToken));
+ assert.equal(fresh.recoveryFileId,JSON.parse(reissued.body.recoveryFile.content).fileId);assert.equal(reissued.body.recoveryFile.content.includes('keychain'),false);
  assert.equal((await call(B,'GET',`/api/orgs/${org}/ownership`)).body.recovery.state,'issued');
 });
 

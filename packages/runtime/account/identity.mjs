@@ -3,18 +3,18 @@ import {ownerFlags} from './flags.mjs';
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
 import {UNPAID_LIFECYCLE_ORIGIN} from '../../identity/lifecycle-protection.mjs';
-import {IdentityKeyRegistry,createIdentityKeyEngine,performKeyAction,readKeyQuery,EnsureIdentityKey,RotateIdentityKey,RevokeIdentityKey,IdentityKeyByKid,IdentityKeyHistory,RotateSigningKeyForRecovery,RecoveryKeychainMatches} from '../../identity/keys.mjs';
+import {IdentityKeyRegistry,createIdentityKeyEngine,performKeyAction,readKeyQuery,EnsureIdentityKey,RotateIdentityKey,RevokeIdentityKey,IdentityKeyByKid,IdentityKeyHistory} from '../../identity/keys.mjs';
 import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {RecoveryReissueService,PrepareRecoveryReissue,CommitRecoveryReissue,CancelRecoveryReissue} from '../../identity/recovery-reissue.mjs';
+import {RecoveryReissueService,PrepareRecoveryReissue,CommitRecoveryReissue} from '../../identity/recovery-reissue.mjs';
 import {transferOutEngine} from './transfer-out.mjs';
 import {DelegationRegistry,delegationsProvider,keyDelegationAdmits,DELEGATION_OPERATIONS,DelegationList,DelegationStatus,RevokeDelegation,ReconcileDelegations} from '../../identity/delegation.mjs';
 
 // One identity key engine per controller, over the controller's transactional account store (packages/identity/keys.mjs).
-// Private keys are sealed under KEY_ENCRYPTION_KEY exactly as before; nothing here logs or returns key material
-// except the internal identity-backup port.
+// Private keys are sealed under KEY_ENCRYPTION_KEY exactly as before; nothing here logs, exports or returns key
+// material (recovery file v3 carries no keys; the identity encryption key was removed, owner approval 2026-10-28).
 const engines=new WeakMap();
 function keyEngine(c){let engine=engines.get(c);if(!engine){engine=createIdentityKeyEngine(new IdentityKeyRegistry({store:c.store,seal:value=>encryptSecret(value,c.config.KEY_ENCRYPTION_KEY),open:value=>decryptSecret(value,c.config.KEY_ENCRYPTION_KEY)}));engines.set(c,engine);}return engine;}
 const unavailable=()=>new StorageError('identity_keys_unavailable','Identity keys are unavailable.',409);
@@ -39,13 +39,12 @@ function delegationEngine(c){
  return engine;
 }
 // Active-account recovery reissue (packages/identity/recovery-reissue.mjs): one engine per controller, composing the
-// controller's transfer-out service and the recovery-issuance rotation above, so the gate and the rotation are one
-// gated invocation in the single writer.
+// controller's transfer-out service, so each gate is one gated invocation in the single writer. No key changes.
 const reissueEngines=new WeakMap();
 function reissueEngine(c){
  let engine=reissueEngines.get(c);
  if(!engine){
-  const recoveryReissue=new RecoveryReissueService({metadata:c.metadata,transfer:()=>transferOutEngine(c).service,keychain:(owner,options)=>methods.recoveryKeychain.call(c,owner,options),restorable:(owner,kids)=>keyEngine(c).identityKeys.recoveryKidsRestorable(owner,kids)});
+  const recoveryReissue=new RecoveryReissueService({metadata:c.metadata,transfer:()=>transferOutEngine(c).service});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,lifecycle:recoveryReissue}});reissueEngines.set(c,engine);
  }
  return engine;
@@ -60,34 +59,15 @@ export const methods={
     if(!signer){await performKeyAction(engine,new EnsureIdentityKey({owner,input:{purpose:'signing'}}));signer=await engine.identityKeys.privateKey(owner,'signing');}
     if(!signer)throw unavailable();return signer;
   },
-  // Internal identity-backup port only; never exposed by owner/MCP HTTP routes. `create:false` never writes.
-  async identityKeychain(owner,{create=true}={}){
-    const engine=keyEngine(this);
-    if(create){await this.warm(owner);for(const purpose of ['signing','encryption'])await performKeyAction(engine,new EnsureIdentityKey({owner,input:{purpose}}));}
-    const signing=await engine.identityKeys.exportPrivate(owner,'signing'),encryption=await engine.identityKeys.exportPrivate(owner,'encryption');
-    if(!signing||!encryption)throw unavailable();
-    return {version:1,signing,encryption};
-  },
-  // Internal identity-backup port only (PORT-10, P15): ensures both keys, rotates the signing key with continuity when
-  // `rotation` asks for it ({rotateIf, always}; RotateSigningKeyForRecovery), binds `keep` plus the resulting key, and
-  // returns the keychain the new file carries with the rotation outcome. One gated call, so one account commit order.
-  async recoveryKeychain(owner,{rotation=null,keep=[]}={}){
-    const engine=keyEngine(this);await this.warm(owner);for(const purpose of ['signing','encryption'])await performKeyAction(engine,new EnsureIdentityKey({owner,input:{purpose}}));
-    const outcome=await performKeyAction(engine,new RotateSigningKeyForRecovery({owner,input:{rotateIf:rotation?.rotateIf??[],always:rotation?.always===true,keep}}));
-    const signing=await engine.identityKeys.exportPrivate(owner,'signing'),encryption=await engine.identityKeys.exportPrivate(owner,'encryption');
-    if(!signing||!encryption||signing.kid!==outcome.kid)throw unavailable();
-    return {keychain:{version:1,signing,encryption},rotation:{...outcome,requested:Boolean(rotation)}};
-  },
-  // Internal identity-backup port only (active-account reissue, phase 1): the reissue gate, then the rotation above.
-  async recoveryReissuePrepare(owner,{rotation=null,keep=[],actor}={}){await this.warm(owner);return perform(reissueEngine(this),new PrepareRecoveryReissue({actor:reissueActor(owner,actor),input:{rotation,keep}}));},
-  // Internal identity-backup port only (phase 2): the reissue gate again; cancels a live transfer-out. No key change.
-  async recoveryReissueCommit(owner,{actor,kids}={}){await this.warm(owner);return perform(reissueEngine(this),new CommitRecoveryReissue({actor:reissueActor(owner,actor),input:kids}));},
-  // Internal identity-backup port only (cancelling a committed reissue): rotates away from the voided file's key.
-  async recoveryReissueCancel(owner,{voided,restored=null}={}){await this.warm(owner);return perform(reissueEngine(this),new CancelRecoveryReissue({actor:reissueActor(owner,{}),input:{voided,restored}}));},
-  // Internal identity-backup port only: whether a verified file's keychain still restores (RecoveryKeychainMatches). Never writes.
-  async recoveryKeysMatch(owner,keychain){return readKeyQuery(keyEngine(this),new RecoveryKeychainMatches({owner,input:{keychain}}));},
-  // Internal key management (no `rpc` entry, so never reachable through `invoke`). Rotation and revocation change
-  // what old recovery files restore: verification compares against the current keys and rejects older files.
+  // Internal recovery-file port only (account setup): ensures the identity signing key exists, as issuing a v2 file used
+  // to do. Idempotent; never rotates; returns only the kid.
+  async provisionIdentityKey(owner){await this.warm(owner);return {kid:(await this.signingKey(owner)).kid};},
+  // Internal recovery-file port only (active-account reissue, phase 1): the reissue gate. No key change (P15 withdrawn).
+  async recoveryReissuePrepare(owner,{actor}={}){await this.warm(owner);return perform(reissueEngine(this),new PrepareRecoveryReissue({actor:reissueActor(owner,actor),input:{}}));},
+  // Internal recovery-file port only (phase 2): the reissue gate again; cancels a live transfer-out. No key change.
+  async recoveryReissueCommit(owner,{actor}={}){await this.warm(owner);return perform(reissueEngine(this),new CommitRecoveryReissue({actor:reissueActor(owner,actor),input:{}}));},
+  // Internal key management (no `rpc` entry, so never reachable through `invoke`). Recovery files hold no keys, so
+  // rotation and revocation never affect them.
   async rotateIdentityKey(owner,{purpose,expectedKid}={}){await this.warm(owner);return performKeyAction(keyEngine(this),new RotateIdentityKey({owner,input:{purpose,expectedKid}}));},
   async revokeIdentityKey(owner,{purpose,kid,reason}={}){await this.warm(owner);return performKeyAction(keyEngine(this),new RevokeIdentityKey({owner,input:{purpose,kid,...reason===undefined?{}:{reason}}}));},
   async identityKeyHistory(owner,{purpose}={}){return readKeyQuery(keyEngine(this),new IdentityKeyHistory({owner,input:{purpose}}));},
@@ -119,12 +99,9 @@ export const methods={
 
 export const rpc={
  identitySigningKey:{lifecycle:'purging',gate:'none'},
- identityKeychain:{lifecycle:'suspended'},
- recoveryKeychain:{lifecycle:'suspended'},
- recoveryKeysMatch:{lifecycle:'suspended'},
+ provisionIdentityKey:{lifecycle:'suspended'},
  recoveryReissuePrepare:{},
  recoveryReissueCommit:{},
- recoveryReissueCancel:{},
  rememberSignupOrigin:{},
  registerSignupPush:{},
  listDelegations:{},

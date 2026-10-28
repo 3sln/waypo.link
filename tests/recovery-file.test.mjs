@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { argon2id } from 'hash-wasm';
 import { decryptRecoveryFile, encryptRecoveryFile, inspectRecoveryFile, normalizeAnswer, validateQuestions,
   KDF_PARAMETERS, MAX_FILE_BYTES } from '../packages/recovery/index.mjs';
-import { RECOVERY_V1_VECTOR as vector } from '../packages/recovery/vectors.mjs';
+import { RECOVERY_V2_VECTOR as vector } from '../packages/recovery/vectors.mjs';
 
 const options = { deriveKey: argon2id, crypto: globalThis.crypto };
 const clone = value => structuredClone(value);
 function vectorFile() {
-  return { format: '3sln-recovery', version: 1, normalization: '3sln-answers-v1',
+  return { format: '3sln-recovery', version: 2, fileId: vector.payload.fileId, normalization: '3sln-answers-v1',
     questions: clone(vector.questions), kdf: { ...KDF_PARAMETERS, salt: vector.salt },
     cipher: { name: 'AES-256-GCM', iv: vector.iv }, ciphertext: vector.ciphertext };
 }
@@ -145,7 +145,8 @@ test('unsupported schema, arbitrary resource requests and oversized data fail be
   let derives = 0;
   const forbiddenOptions = { crypto: globalThis.crypto, deriveKey() { derives++; throw new Error('Must not derive'); } };
   const modifications = [
-    file => { file.format = 'legacy-recovery'; }, file => { file.version = 2; },
+    file => { file.format = 'legacy-recovery'; }, file => { file.version = 3; }, file => { file.version = 1; delete file.fileId; },
+    file => { delete file.fileId; }, file => { file.fileId = 'ICEiIyQlJicoKSorLC0uLx'; }, file => { file.fileId = 'short'; },
     file => { file.normalization = 'future-profile'; }, file => { file.unknown = true; },
     file => { file.questions[0].type = 'password'; }, file => { file.questions[0].unexpected = true; },
     file => { file.questions[1].id = file.questions[0].id; }, file => { file.questions = []; },

@@ -13,18 +13,28 @@
    {
     "fragment": "https://spec.bindle.example/fragments/item-classification/v1",
     "required": false,
-    "purpose": "Sort incoming messages.",
+    "purpose": "Sort incoming messages with the text classifier you choose, or your fallback classifier.",
     "fields": [
-     "classifiers"
+     "text",
+     "fallback",
+     "textDetail",
+     "fallbackDetail"
     ],
     "methods": {
-     "classifiers": {
+     "text": {
       "https://spec.bindle.example/contracts/item-classification/v1": [
+       "capabilities",
+       "classify"
+      ]
+     },
+     "fallback": {
+      "https://spec.bindle.example/contracts/item-classification/v1": [
+       "capabilities",
        "classify"
       ]
      }
     },
-    "digest": "sha256-yRYEzVccu6igF0mj6HVTxQ7_T4005VYtPiUVK4yInis"
+    "digest": "sha256-whjOMarIRk5Tbmc5sO8pNwb8kl94V5U0sxTaHkY7M_k"
    }
   ]
  },

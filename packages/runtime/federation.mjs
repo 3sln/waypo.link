@@ -26,8 +26,9 @@ import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
 import {EMAIL_BRIDGE_CONTRACT,EMAIL_BRIDGE_METHODS} from '../email-bridge/wire.mjs';
 import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.mjs';
-import {ITEM_CLASSIFIER_FRAGMENT_DOCUMENT} from '../apps/connections.mjs';
-import {CLASSIFIER_CONTRACT,classifierOffered} from './account/classifier.mjs';
+import {ITEM_CLASSIFICATION_FRAGMENT_DOCUMENT} from '../apps/connections.mjs';
+import {ITEM_CLASSIFICATION_CONTRACT} from '../sdk/src/item-classification.mjs';
+import {classifierOffered} from './account/classifier.mjs';
 import {brokeringMounts} from './integration-ports.mjs';
 import {verifyClientAssertion,memoryReplayCache,CLIENT_ASSERTION_TYPE} from '../federation/introspection.mjs';
 import {pinnedKeys} from '../federation/integrations.mjs';
@@ -81,9 +82,9 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // Extensions rev 3.2 (§11.1, Q2 provisional): the email bridge is the provider feature of a 3sln.me extension; the
  // same row object the account-side declarations port evaluates (review M2).
  PROVIDER_FEATURE_ROWS[PROVIDER_EXT.emailBridge],
- // CR-X3-25: the classifier is a paid built-in item-classification/v1 resource, listed in `contracts` (extensions §5.2)
- // while it is offered.
- {flag:['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&classifierOffered(c.config),declare:()=>({contracts:[CLASSIFIER_CONTRACT]})},
+ // CR-X3-25 (owner direction 2026-10-28): the paid built-in classifier implements item-classification/v1 and is listed in
+ // `contracts` (extensions §5.2) while it is offered. Integrations the owner adds may supply other classifiers.
+ {flag:['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&classifierOffered(c.config),declare:()=>({contracts:[ITEM_CLASSIFICATION_CONTRACT]})},
  // Signaling rev 3.2 (flags off): the built-in signaling resource is implied by its contract in `contracts` (no occupant
  // declaration, extensions §5.2, signaling §3.1), only where the adapter mounted it.
  {flag:['SIGNALING_ENABLED','SESSION_KINDS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.signalingResource===true,declare:()=>({contracts:[SIGNALING_CONTRACT]})},
@@ -107,7 +108,9 @@ export function federationSchemas(config){
  const schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
  if(siteGlobal(config,'INTEGRATIONS_ENABLED'))schemas[GOOGLE_DRIVE_SETUP_FRAGMENT.id]=structuredClone(GOOGLE_DRIVE_SETUP_FRAGMENT);
  if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
- if(siteGlobal(config,'INTEGRATIONS_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[ITEM_CLASSIFIER_FRAGMENT_DOCUMENT.id]=structuredClone(ITEM_CLASSIFIER_FRAGMENT_DOCUMENT);
+ // The shared Bindle item-classification fragment (IC-4, owner-approved 2026-10-28): any app may request it; the owner
+ // fills it with the paid built-in classifier or classifiers of integrations they add.
+ if(siteGlobal(config,'INTEGRATIONS_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[ITEM_CLASSIFICATION_FRAGMENT_DOCUMENT.id]=structuredClone(ITEM_CLASSIFICATION_FRAGMENT_DOCUMENT);
  // The signaling and ice-relay fragments (signaling §3.2, §3.3) are first-party reviewed fragments while the provider
  // implements them (SIGNALING_ENABLED and EXTENSIONS_ENABLED), so a default deployment needs no operator registration; an
  // operator entry for the same id is replaced by the shipped one.
@@ -193,13 +196,13 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
-  // Item-classification results (scores about owner content) are never kept in the journal (item-classification §5);
-  // a retry with the same tx answers `indeterminate`.
+  // Item-classification results (scores about owner content) are never kept in the journal (item-classification §9);
+  // a retry with the same tx answers `indeterminate`, and the request fingerprint is keyed per owner (runtime.mjs).
   // Relay credentials (bearer secrets, §12.4) are never kept in the journal either. The signaling contract's `listen`
   // and `endpoints` are reads (§10.2), so never journaled; its writes' results (leg certificates, offer tokens) are never
   // retained in the journal (§10.2 "Retention"); and `listen` runs outside the account gate (a long poll must not hold
   // the writer).
-  dispatcher:{durableJournal:true,readOnly:context=>context.contract===SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==SIGNALING_CONTRACT&&context.contract!==ICE_RELAY_CONTRACT&&context.contract!==CLASSIFIER_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.signalingContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
+  dispatcher:{durableJournal:true,readOnly:context=>context.contract===SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==SIGNALING_CONTRACT&&context.contract!==ICE_RELAY_CONTRACT&&context.contract!==ITEM_CLASSIFICATION_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.signalingContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
   // Extensions rev 3.2 (CR-X3-20) and signaling Appendix C.2 "Lifecycle hooks": the generic grant-changed hook. When an
   // app no longer holds any active grant on the signaling fragment, signaling §14.2 runs for it (sessions, endpoints,
   // offers, pairings) and its session handler approvals are cleared.

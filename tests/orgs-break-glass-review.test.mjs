@@ -98,14 +98,14 @@ test('M1: Track A never takes effect without a provider-accepted out-of-band not
 });
 
 test('M2: a reissue begun before an owner change is never confirmed; the file is invalidated again and not handed out',async()=>{const w=await bgWorld(62);try{
- await rejects(w.run('orgs.recovery-reissue-done',A,{kid:'k-unbegun'}),'not_found');assert.notEqual((await w.summary()).recovery?.state,'issued','done without a begun reissue confirms nothing');
+ await rejects(w.run('orgs.recovery-reissue-done',A,{fileId:'k-unbegun'}),'not_found');assert.notEqual((await w.summary()).recovery?.state,'issued','done without a begun reissue confirms nothing');
  const begun=await w.run('orgs.recovery-reissue-begin',A,{});const c=await waiting(w);
  await w.reach(c.waitEndsAt+H);assert.equal((await w.summary()).ownerOfRecord.sub,B);await w.settle();assert.equal((await w.summary()).recovery.state,'missing');
- const out=await w.run('orgs.recovery-reissue-done',A,{kid:'k-old',generation:begun.generation});assert.deepEqual(out,{issued:false,reason:'owner_changed'});
+ const out=await w.run('orgs.recovery-reissue-done',A,{fileId:'k-old',generation:begun.generation});assert.deepEqual(out,{issued:false,reason:'owner_changed'});
  const r=await w.summary();assert.equal(r.recovery.state,'rotation-pending');assert.ok(r.ownershipOutbox.some(e=>e.kind==='recovery-rotate'&&e.cause==='reissue-superseded'&&!e.doneAt));
- await rejects(w.run('orgs.recovery-reissue-done',C,{kid:'k',generation:begun.generation}),'not_found');
+ await rejects(w.run('orgs.recovery-reissue-done',C,{fileId:'k',generation:begun.generation}),'not_found');
  // The edge never returns that file.
- const edge=new OrganizationRecoveryReissue({org:{begin:async()=>({request:'r',generation:0}),done:async()=>({issued:false,reason:'owner_changed'})},identity:{record:async()=>({recoveryHash:null}),bindRecovery:async()=>({ok:true})},backup:{issue:async()=>({keychain:{signing:{kid:'k'}}})}});
+ const edge=new OrganizationRecoveryReissue({org:{begin:async()=>({request:'r',generation:0}),done:async()=>({issued:false,reason:'owner_changed'})},identity:{record:async()=>({recoveryHash:null}),bindRecovery:async()=>({ok:true})},backup:{issue:async()=>({file:{version:3,fileId:'AAAAAAAAAAAAAAAAAAAAAA',issuedAt:1},fileId:'AAAAAAAAAAAAAAAAAAAAAA'})}});
  await rejects(edge.reissue({},ORG),'organization_owner_changed');
 }finally{await w.close();}});
 test('M2: an owner with a passkey must step up with it to reissue the organization recovery file',async()=>{const w=await bgWorld(63);try{

@@ -2,6 +2,7 @@
 // (the provider's SMTP adapter, holding queue and auto-reply are slice BRIDGE, not built). Covers forged provenance,
 // consumer/channel binding, dedup on tx, jti and ingress fingerprint, the spam tiers after custody (B2's intake),
 // no backscatter, the disabled switch, the flag, and a commit whose reply is lost. Seeded: CHAOS_SEED=<seed>.
+import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createTestEngine,memoryStore} from './helpers/engine.mjs';
@@ -22,8 +23,9 @@ async function sign(header,claims,privateKey){const head=`${enc(header)}.${enc(c
 // RFC 9562 UUIDv5 over (feature ref, contract, entity, ingress fingerprint), as the provider bridge derives `tx`.
 const NAMESPACE=Uint8Array.from('6ba7b8119dad11d180b400c04fd430c8'.match(/../g),h=>parseInt(h,16));
 async function uuidv5(name){const bytes=new Uint8Array(await crypto.subtle.digest('SHA-1',new Uint8Array([...NAMESPACE,...encoder.encode(name)]))).slice(0,16);bytes[6]=bytes[6]&15|80;bytes[8]=bytes[8]&63|128;const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}
-// Fake item-classification/v1 resource; Parlay supplies the labels.
-const classifier=()=>({inputs:[],async classify(input){this.inputs.push(structuredClone(input));return {scores:{spam:Number(/p=(0\.\d+)/.exec(input.item.text)?.[1]??0)},model:{id:MODEL.model,version:MODEL.version}};}});
+// Host view of the item-classification fragment with one text classifier at full detail; Parlay supplies the labels.
+const TEXT='https://classifiers.example/r/text',textOf=input=>new TextDecoder().decode(decodeBase64url(input.item.data));
+const classifier=()=>({inputs:[],async fields(){return {text:TEXT,textDetail:'full'};},async capabilities(){return {kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:65536}],maxLabels:16};},async classify(resource,input){this.inputs.push(structuredClone(input));return {scores:{spam:Number(/p=(0\.\d+)/.exec(textOf(input))?.[1]??0)},model:{id:MODEL.model,version:MODEL.version}};}});
 
 // Fake provider handoff: SMTP acceptance (owner settings only), the holding queue, provenance signing with the
 // bridge key, tx derivation, the `deliver` RPC and the single invariant auto-reply, decided at acceptance from the
@@ -91,8 +93,8 @@ test('fake provider handoff: accepted mail is stored as an unverified channel it
  // none for automated mail, and nothing the occupant did (or rejected) changed it. The occupant never replied.
  assert.deepEqual(w.provider.replies.map(r=>r.to),['spam@bulk.example','maybe@ads.example','friend@ok.example']);
  assert.equal(new Set(w.provider.replies.map(r=>r.text)).size,1);assert.equal(w.calls.egress,0);
- // The classifier saw minimized text and hints only.
- for(const input of w.classifier.inputs){assert.deepEqual(Object.keys(input.item).sort(),['hints','text']);assert.deepEqual(input.labels.map(l=>l.id),['spam']);assert.equal(input.item.text.includes('@'),false);}
+ // The classifier saw minimized text and, at the owner's full detail level, the source and header hints only.
+ for(const input of w.classifier.inputs){assert.deepEqual(Object.keys(input.item).sort(),['data','kind','mediaType','size']);assert.equal(input.detail,'full');assert.deepEqual(Object.keys(input.tags??{}).filter(k=>!['source','context'].includes(k)),[]);assert.equal(input.tags.source,'email');assert.deepEqual(input.labels.map(l=>l.id),['spam']);assert.equal(textOf(input).includes('@'),false);}
 });
 
 test('forged or misbound provenance is refused before storage; consumer and channel are checked before any key lookup',async t=>{

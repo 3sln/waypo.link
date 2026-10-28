@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {encryptRecoveryFile,decryptRecoveryFile,normalizeAnswer,QUESTION_TYPES,MAX_FILE_BYTES} from '../packages/recovery/index.mjs';
-import {createIdentityBackup,verifyIdentityBackup,generateIdentityKeychain} from '../packages/recovery/identity-backup.mjs';
+import {validateRecoveryPayload} from '../packages/recovery/index.mjs';
 import {identityBackupPort} from '../packages/runtime/identity-backup.mjs';
 import {forEachSeed} from './helpers/chaos.mjs';
 
 // Engine-level recovery-file edge cases. The KDF is a fast keyed substitute that
 // counts calls: real Argon2id is covered by the archived vector and audit suites.
 function countingKDF(){const kdf={calls:0,async deriveKey({password,salt,hashLength}){kdf.calls++;return new Uint8Array(await crypto.subtle.digest('SHA-256',new Uint8Array([...password,...salt]))).slice(0,hashLength);}};return kdf;}
-const payload={version:1,issuer:'https://identity.example',handle:'alice',recoveryToken:'account.random-recovery-credential',warning:'Keep private.'};
+const ENTITY='0f8e6a52-3c1b-4d7e-9a2f-5b6c7d8e9f01',payload={version:3,issuer:'https://identity.example',entity:ENTITY,recoveryToken:`${ENTITY}.${'A'.repeat(43)}`,fileId:'ICEiIyQlJicoKSorLC0uLw',issuedAt:1798416000000};
 const questions=[{id:'pet',type:'text',prompt:'First pet',hint:''},{id:'born',type:'date',prompt:'A date',hint:''},{id:'pin',type:'pin',prompt:'PIN',hint:'digits'},{id:'phrase',type:'passphrase',prompt:'Phrase',hint:''}];
 const answers=['  Rex  the   DOG ','1999/1/2','0042','exact Phrase '];
 const CODES=new Set(['recovery_file_invalid','recovery_file_authentication_failed']);
@@ -17,7 +17,7 @@ const mutations=[
  (f,r)=>{const keys=Object.keys(f);delete f[r.pick(keys)];},
  f=>{f.extra=true;},
  (f,r)=>{f[r.pick(Object.keys(f))]=r.pick([null,1,'x',[],{},true]);},
- f=>{f.version=2;},f=>{f.format='3sln-recovery-v2';},f=>{f.normalization='3sln-answers-v2';},
+ f=>{f.version=3;},f=>{f.version=1;},f=>{f.fileId='AAAAAAAAAAAAAAAAAAAAAA';},f=>{f.format='3sln-recovery-v2';},f=>{f.normalization='3sln-answers-v2';},
  (f,r)=>{f.kdf[r.pick(['memoryKiB','iterations','parallelism','keyBytes'])]*=r.pick([2,1024]);},
  f=>{f.kdf.name='scrypt';},f=>{f.cipher.name='AES-128-GCM';},
  (f,r)=>{const k=r.pick(['ciphertext','salt','iv']),o=k==='ciphertext'?f:k==='salt'?f.kdf:f.cipher;const v=o[k],i=r.int(v.length);o[k]=v.slice(0,i)+(v[i]==='A'?'B':'A')+v.slice(i+1);},
@@ -73,38 +73,25 @@ test('normalization fuzz: accepted answers are idempotent fixed points and never
 const authorityKeys=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
 const authority={kid:'provider-edge',privateKey:authorityKeys.privateKey,publicKey:authorityKeys.publicKey};
 
-test('signed identity backup fuzz: no single-field mutation verifies, and expectations bind issuer and entity',async()=>{
- const keychain=await generateIdentityKeychain(),entity=crypto.randomUUID(),issuer='https://identity.example';
- const backup=await createIdentityBackup({issuer,entity,keychain,recoveryToken:'token-1',warning:'Keep private.'},authority);
- assert.equal((await verifyIdentityBackup(backup,authority,{issuer,entity})).entity,entity);
- for(const expected of [{issuer:'https://other.example'},{entity:crypto.randomUUID()}])await assert.rejects(verifyIdentityBackup(backup,authority,expected),/another identity/);
- const paths=[['version'],['issuer'],['entity'],['recoveryToken'],['warning'],['keychain','version'],['keychain','signing','kid'],['keychain','encryption','privateJWK','d'],['keychain','signing','privateJWK','x'],['proof','kid'],['proof','payload'],['proof','signature'],['proof','alg']];
- await forEachSeed(26,async random=>{
-  const copy=structuredClone(backup),path=random.pick(paths),parent=path.slice(0,-1).reduce((o,k)=>o[k],copy),key=path.at(-1),value=parent[key];
-  parent[key]=typeof value==='string'?random.pick([value.slice(1),value+'A',value.toUpperCase()===value?value.toLowerCase():value.toUpperCase(),'']):random.pick([value+1,String(value),null]);
-  if(JSON.stringify(copy)===JSON.stringify(backup))return;
-  await assert.rejects(verifyIdentityBackup(random.chance(0.5)?JSON.stringify(copy):copy,authority,{issuer,entity}),undefined,path.join('.'));
+test('opaque payload fuzz: no single-field mutation validates unless it keeps the exact v3 shape',async()=>{
+ assert.deepEqual(validateRecoveryPayload(payload),payload);
+ const fields=Object.keys(payload);
+ await forEachSeed(40,async random=>{
+  const copy=structuredClone(payload),key=random.pick(fields),value=copy[key];
+  copy[key]=typeof value==='string'?random.pick([value.slice(1),value+'A','',value.toUpperCase()]):random.pick([value+0.5,-1,String(value),null]);
+  if(random.chance(0.3))copy[random.pick(['keychain','proof','handle','warning'])]={};
+  if(JSON.stringify(copy)===JSON.stringify(payload))return;
+  if(key==='issuedAt'&&Number.isSafeInteger(copy.issuedAt)&&copy.issuedAt>=0&&Object.keys(copy).length===fields.length)return;
+  assert.throws(()=>validateRecoveryPayload(random.chance(0.5)?JSON.stringify(copy):copy),{code:'recovery_file_invalid'},key);
  });
- await assert.rejects(verifyIdentityBackup(JSON.stringify(backup).slice(0,-1),authority),/JSON|Unexpected|Invalid/);
- await assert.rejects(verifyIdentityBackup(JSON.stringify(backup)+' '.repeat(16*1024),authority));
 });
 
-test('identity backup port: recovery requires the same token and unrotated keys of the same account',async()=>{
- const key=await crypto.subtle.exportKey('jwk',authorityKeys.privateKey),config={APP_ORIGIN:'https://identity.example',RECOVERY_SIGNING_KEY:JSON.stringify({kid:'port-edge',privateJWK:key})};
- // PORT-10 account contract: recoveryKeychain(owner,{rotation,keep}) -> {keychain,rotation}; recoveryKeysMatch(owner,keychain) -> boolean.
- const chains=new Map(),same=(a,b)=>['signing','encryption'].every(p=>a[p].kid===b[p].kid&&['kty','crv','x','y','d'].every(f=>a[p].privateJWK[f]===b[p].privateJWK[f]));
- const accounts={get:owner=>({invoke:async({method,args:[id,input]})=>{
-  if(method==='recoveryKeychain'){if(!chains.has(id))chains.set(id,await generateIdentityKeychain());return {keychain:structuredClone(chains.get(id)),rotation:{rotated:false,kid:chains.get(id).signing.kid,previous:null,skipped:null,requested:Boolean(input.rotation)}};}
-  if(method==='recoveryKeysMatch')return chains.has(id)&&same(chains.get(id),input);
-  return {$fault:{code:'unsupported_method',message:'Unsupported account operation.'}};
- }})};
- const port=identityBackupPort({config,accounts}),alice={id:crypto.randomUUID()},bob={id:crypto.randomUUID()};
- const {backup:file,rotation}=await port.issue(alice,'alice.token');await port.issue(bob,'bob.token');
- assert.equal(rotation.requested,false,'a first issuance asks for no rotation');
- assert.equal((await port.verify(file,alice,'alice.token')).entity,alice.id);
- await assert.rejects(port.verify(file,alice,'alice.other'),/does not match/);
- await assert.rejects(port.verify(file,bob,'alice.token'),/another identity/);
- chains.set(alice.id,{...chains.get(alice.id),encryption:(await generateIdentityKeychain()).encryption});
- await assert.rejects(port.verify(file,alice,'alice.token'),/key has changed/,'a backup of rotated keys cannot overwrite the current identity');
- await assert.rejects(identityBackupPort({config:{APP_ORIGIN:config.APP_ORIGIN},accounts}).issue(alice,'t'),{code:'recovery_unavailable'});
+test('recovery-file port: issues an opaque v3 payload with a fresh file id and calls no account for it',async()=>{
+ const accounts={get(){throw new Error('issuance never reaches the account writer');}};
+ const port=identityBackupPort({config:{APP_ORIGIN:'https://identity.example'},accounts}),alice={id:ENTITY};
+ const one=await port.issue(alice,`${ENTITY}.${'B'.repeat(43)}`),two=await port.issue(alice,`${ENTITY}.${'C'.repeat(43)}`);
+ assert.equal(one.file.version,3);assert.notEqual(one.fileId,two.fileId);assert.equal(validateRecoveryPayload(one.file).fileId,one.fileId);
+ await assert.rejects(port.issue(alice,'alice.token'),{code:'recovery_file_invalid'},'a credential of another shape is refused');
+ assert.equal(typeof port.verify,'undefined','there is no file verification: the provider checks the credential hash');
+ await assert.rejects(port.certificate(alice,'alice',1),{code:'recovery_unavailable'},'name certificates still need the configured authority');
 });

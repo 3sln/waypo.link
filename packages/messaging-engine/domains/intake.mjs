@@ -7,8 +7,12 @@ import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 //  - very likely spam: p >= T_high under a threshold pinned to the occupant's {model, version, schema}: auto-reject
 //    into the bounded, recoverable Rejected view (500 items or 7 days, whichever is smaller);
 //  - could be spam: T_low <= p < T_high: `sys:suspected.spam`, deprioritized, no push;
-//  - an unpinned model version (calibration mode), no occupant, no consent or no allowance: never auto-reject;
-//    deterministic header heuristics can yield at most "could be spam";
+//  - an unpinned model version (calibration mode) or no consent: never auto-reject; deterministic header heuristics can
+//    yield at most "could be spam";
+//  - unscored (item-classification §8.4: the owner consented but no classifier could score it — none fits, all
+//    refused, a failure, or no allowance left): never auto-reject, never pushed. The request is held quietly and marked
+//    `scoring: {state: 'unscored', reason}` so the owner sees it was not checked (the conservative default:
+//    an unchecked request must not look like a checked clean one, nor be punished as spam);
 //  - allowlisted principals or addresses are never auto-rejected; the skipped reject is recorded in tagHistory.
 // The classifier sees only minimized, redacted text and automation hints: no identifiers, recipients or URLs.
 import {INTAKE_CONTRACT,verifyProvenance,intakeDigest,sha256,jcs,fromBase64url} from '../../messaging-protocol/index.mjs';
@@ -16,7 +20,7 @@ import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
 import {KEYS,BOUNDS,actorOwner,readConfig,chargeUsage} from '../store/mailbox.mjs';
 import {chargeBudget,intakeBudgetIdentity} from './receive-budget.mjs';
-import {classifyText} from './categories.mjs';
+import {classifyText,classifierSnapshot,noteGap} from './categories.mjs';
 
 export const T_HIGH=0.97,T_LOW=0.70,SPAM='sys:suspected.spam',FINAL_SPAM='sys:spam',DEFAULT_ALLOWANCE=200,MAX_CLASSIFIER_CHARS=8000;
 const invalid=message=>fault('invalid_input',message,400);
@@ -37,8 +41,9 @@ export function heuristics(item){
  if(item.origin!=='channel')return [];const hints=new Set(item.asserted.automation.map(h=>h.toLowerCase()));
  if(item.asserted.dmarc==='fail')hints.add('dmarc-fail');return ARROW.filter(h=>hints.has(h));
 }
-// Pure tier decision. result: {spam:number, evidence:{model,version,schema}} | null.
-export function decideTier({result,pins=[],allowlisted=false,hints=[]}){
+// Pure tier decision. result: {spam:number, evidence:{model,version,schema}} | null. `unscored`: the owner wanted the
+// request classified and it was not (a reason token), which holds it quietly instead of pushing it.
+export function decideTier({result,pins=[],allowlisted=false,hints=[],unscored=null}){
  if(result&&typeof result.spam==='number'&&result.spam>=0&&result.spam<=1&&evidenceOK(result.evidence)){
   const pin=pins.find(x=>modelKey(x)===modelKey(result.evidence)),p=result.spam,high=pin?.high??T_HIGH,low=pin?.low??T_LOW;
   const tag={id:SPAM,source:'classifier',probability:p,evidence:{model:result.evidence.model,version:result.evidence.version,schema:result.evidence.schema}};
@@ -47,7 +52,9 @@ export function decideTier({result,pins=[],allowlisted=false,hints=[]}){
   if(p>=low)return {tier:'suspect',tags:[tag],history:[]};
   return {tier:'none',tags:[],history:[]};
  }
- if(hints.length)return {tier:'suspect',tags:[{id:SPAM,source:'heuristic',hints}],history:[]};
+ const marker=unscored?[{action:'unscored',reason:unscored}]:[];
+ if(hints.length)return {tier:'suspect',tags:[{id:SPAM,source:'heuristic',hints}],history:marker};
+ if(unscored)return {tier:'unscored',tags:[],history:marker};
  return {tier:'none',tags:[],history:[]};
 }
 
@@ -120,36 +127,41 @@ export class IntakeDrain extends MailboxAction {
  static operation='intake.drain';static deps=['receive','classifier','providerBridge','clock'];static changes='incoming-changed';
  async run({receive,classifier,providerBridge,clock}){
   actorOwner(this.actor,['system','owner']);const store=receive.store,limit=Math.min(Math.max(Number(this.input?.limit)||32,1),256);
-  const queue=[...(await store.list({prefix:'pending/'})).entries()].slice(0,limit),out={processed:0,rejected:0,suspected:0,classified:0};
+  const queue=[...(await store.list({prefix:'pending/'})).entries()].slice(0,limit),out={processed:0,rejected:0,suspected:0,classified:0,unscored:0};
   for(const [pendingKey,{id}] of queue){
    const now=clock.now(),item=await store.get(KEYS.item(id));if(!item||item.state!=='pending'||item.quarantined){await store.transaction(tx=>tx.delete(pendingKey));continue;}
    const settings={...defaultSettings(),...await store.get(KEYS.settings)},day=Math.floor(now/86400000),used=settings.usage.day===day?settings.usage.calls:0;
    // Address matches count only for DMARC-passing mail, so a spoofed allowlisted address cannot skip rejection (BB2-R6).
    const allowlisted=Boolean(item.origin==='native'?await store.get(KEYS.allowPrincipal(item.author.principal)):item.asserted.dmarc==='pass'&&await store.get(KEYS.allowEmail(item.asserted.address)));
-   let result=null,called=false;
-   // A classifier call is reserved inside a transaction before it is made, so concurrent drains cannot overspend the
-   // owner's allowance (BB2-R8).
-   if(classifier&&typeof classifier.classify==='function'&&settings.classifierConsent&&used<settings.allowance)called=await store.transaction(async tx=>{const s={...defaultSettings(),...await tx.get(KEYS.settings)},u=s.usage.day===day?s.usage.calls:0;if(!s.classifierConsent||u>=s.allowance)return false;await tx.put(KEYS.settings,{...s,usage:{day,calls:u+1}});return true;});
+   let result=null,called=false,miss=null;
+   // The field values are read once for this item's operation (extensions §3.2). A classifier call is reserved inside a
+   // transaction before it is made, so concurrent drains cannot overspend the owner's allowance (BB2-R8).
+   const {values,candidates}=settings.classifierConsent?await classifierSnapshot(classifier):{values:null,candidates:0};
+   if(settings.classifierConsent&&!candidates)miss='no_classifier';
+   else if(settings.classifierConsent){called=await store.transaction(async tx=>{const s={...defaultSettings(),...await tx.get(KEYS.settings)},u=s.usage.day===day?s.usage.calls:0;if(!s.classifierConsent||u>=s.allowance)return false;await tx.put(KEYS.settings,{...s,usage:{day,calls:u+1}});return true;});if(!called)miss='allowance';}
    if(called){let body='';if(item.origin==='native'&&item.content?.mimeType?.startsWith('text/plain')){const b=await store.get(KEYS.body(id));if(b)body=decoder.decode(b);}
     const text=minimize(item.origin==='channel'?channelText(item):`${item.subject}\n\n${body}`);
     // Parlay asks only its spam category here (item-classification/v1: the caller supplies the taxonomy).
-    try{const r=await classifyText(classifier,{text,hints:item.origin==='channel'?item.asserted.automation.slice(0,16):[]},['spam']);result=r?{spam:r.labels.spam,evidence:r.evidence}:null;}catch{result=null;}
+    const outcome=await classifyText(classifier,values,{text,source:item.origin==='channel'?'email':'message',hints:item.origin==='channel'?item.asserted.automation.slice(0,16):[]},['spam'],{now});
+    if(outcome.status==='scored')result={spam:outcome.labels.spam,evidence:outcome.evidence};else miss=outcome.reason;
+    await store.transaction(tx=>noteGap(tx,outcome,now));
     // A host-published calibration for exactly this model version counts as a pin (architecture §12.1). It comes from
     // the owner's provider (providerBridge.calibration), never from the occupant being calibrated, and must pass the same
     // threshold checks as an owner pin (BB2-R5).
     const published=result&&typeof providerBridge?.calibration==='function'?await Promise.resolve().then(()=>providerBridge.calibration(structuredClone(result.evidence))).catch(()=>null):null;
     if(validPin(published)&&modelKey(published)===modelKey(result.evidence))settings.pins=[...settings.pins,{model:published.model,version:published.version,schema:published.schema,high:published.high,low:published.low}];
-   }
-   const decision=decideTier({result,pins:settings.pins,allowlisted,hints:result?[]:heuristics(item)});
+   }else if(miss==='no_classifier')await store.transaction(tx=>noteGap(tx,{status:'unscored',reason:miss},now));
+   const decision=decideTier({result,pins:settings.pins,allowlisted,hints:result?[]:heuristics(item),unscored:result?null:miss});
    await store.transaction(async tx=>{
     const current=await tx.get(KEYS.item(id));await tx.delete(pendingKey);
     if(!current||current.state!=='pending'||current.quarantined)return;
     const next={...current,tags:[...current.tags,...decision.tags.map(t=>({...t,at:now}))],tagHistory:[...current.tagHistory,...decision.history.map(h=>({...h,at:now}))]};
     if(decision.tier==='reject'){Object.assign(next,{state:'rejected',rejectedAt:now,notification:null});await tx.put(KEYS.rejected(now,id),{id});await boundRejected(tx,now);out.rejected++;}
-    else Object.assign(next,{state:'request',priority:decision.tier==='suspect'?'low':'normal',notification:decision.tier==='suspect'?'quiet':'push'});
+    else Object.assign(next,{state:'request',priority:decision.tier==='suspect'?'low':'normal',notification:['suspect','unscored'].includes(decision.tier)||miss?'quiet':'push'});
+    if(!result&&miss)next.scoring={state:'unscored',reason:miss,at:now};
     if(decision.tier==='suspect')out.suspected++;await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);
    });
-   out.processed++;if(called&&result)out.classified++;
+   out.processed++;if(called&&result)out.classified++;if(!result&&miss)out.unscored++;
   }
   return out;
  }
@@ -186,7 +198,7 @@ export class IntakeRescue extends MailboxAction {
   });
  }
 }
-const view=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:i.imported?.verified!==false}:{asserted:{sender:i.asserted.sender,dmarc:i.asserted.dmarc,automation:i.asserted.automation},verified:false},subject:i.subject,receivedAt:i.receivedAt,state:i.state,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,rejectedAt:i.rejectedAt??null});
+const view=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:i.imported?.verified!==false}:{asserted:{sender:i.asserted.sender,dmarc:i.asserted.dmarc,automation:i.asserted.automation},verified:false},subject:i.subject,receivedAt:i.receivedAt,state:i.state,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,rejectedAt:i.rejectedAt??null,...i.scoring?{scoring:{state:i.scoring.state,reason:i.scoring.reason}}:{}});
 // "Requests" View: suspected requests sorted to the bottom. Rejected view: not searchable, newest first.
 export class IntakeRequests extends MailboxQuery {
  static operation='intake.requests';static deps=['receive'];static refreshOn=['incoming-changed'];

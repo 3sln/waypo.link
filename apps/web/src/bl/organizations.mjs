@@ -177,7 +177,7 @@ export class OrganizationsIntent extends OwnerFlow{
    if(a==='abandon-recovery'){r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,null);try{if(m.recovery&&m.context)tabs?.release(m.owner,m.context,m.recovery.issue);}catch{}put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers()});return;}
    if(a==='dismiss-recovery'){const id=d.org??v.org;if(!UUID.test(id??'')||v.confirm!==true)fail('review_required');unsaved?.remove(m.owner,id);put(r,ctx,{...recoveryMarkers(),notice:'recovery_dismissed',error:null});return;}
    // A fresh file for an organization whose file was not saved: the owner of record's reissue (fresh step-up), which
-   // rotates the signing key first, so the lost copy stops working (packages/orgs/creation.mjs P15). The server decides.
+   // replaces the organization's credential, so the lost copy stops working (packages/orgs/creation.mjs). The server decides.
    if(a==='regenerate-recovery'){const id=d.org??v.org;if(m.recovery)fail('recovery_required');if(!UUID.test(id??'')||!markers().includes(id))fail('review_required');if(elsewhere().includes(id)){put(r,ctx,recoveryMarkers());fail('recovery_saving_elsewhere');}put(r,ctx,{error:null,notice:null});let result;try{result=await call('recovery-file',undefined,id);}catch(error){if(refused(error))fail('recovery_reissue_unavailable');throw error;}await keepRecovery(result.recoveryFile,id);return;}
    if(a==='reload'){await reload();await plans();if(m.context)await details(m.context);return;}
    if(a==='select'){if(m.recovery)fail('recovery_required');put(r,ctx,{notice:null});if(d.closeEntry===true&&m.entry){port.invitation?.set(null);put(r,ctx,{entry:null});publish(r,ctx,{organizationInvitationPending:false});}if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);return;}
@@ -189,7 +189,7 @@ export class OrganizationsIntent extends OwnerFlow{
     // asks for the download.
     if(a==='verify-recovery'){if(!['verify','confirm'].includes(m.recovery.stage))fail('recovery_download_first');const answers=[String(v.passphrase??'')];let payload;try{payload=await checked(()=>r.recoveryFile.decrypt(secret.encrypted,answers,initial.config.origin));}catch(error){if(error?.code==='organization_changed')throw error;fail('recovery_mismatch');}finally{answers.fill('');}if(payload?.recoveryToken!==secret.token)fail('recovery_mismatch');put(r,ctx,{recovery:{...m.recovery,stage:'confirm'},error:null});return;}
     if(m.recovery.stage!=='confirm'||v.confirm!==true)fail('review_required');
-    // M3: another tab issued a newer file for this organization (rotating its key), so this copy no longer works.
+    // M3: another tab issued a newer file for this organization (replacing its credential), so this copy no longer works.
     let latest=null;try{latest=m.context?tabs?.latest(m.owner,m.context)??null:null;}catch{}
     if(latest&&m.recovery.issue&&latest!==m.recovery.issue){r.browser.storeSecret(key,null);put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers()});fail('recovery_superseded');}
     r.browser.storeSecret(key,null);if(m.context){unsaved?.remove(m.owner,m.context);try{tabs?.release(m.owner,m.context,m.recovery.issue);}catch{}}put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers(),notice:'recovery_saved',error:null});if(m.context){try{await reload();await details(m.context);}catch{}}r.browser.focus?.(base(snapshot(r)).organization?'#org-details':'#org-title');return;

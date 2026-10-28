@@ -341,5 +341,5 @@ test('§13.1: the aggregate data budget counts what the entity\'s legs send and 
   for(let m=0;m<16;m++){try{await x.data(s,4096);}catch(e){refused=e.code;break;}if(m%4===3)await h.pump();}
   await h.pump();if(!refused){await x.end(s);await h.pump();}
  }
- assert.equal(refused,'rate_limited','own-entity data counts at send and receive, so the 1 MiB budget binds after 8 full legs');
+ assert.equal(refused,'rate_limited','own-entity data counts at send and receive, so the 256 KiB budget binds after 2 full legs');
 });

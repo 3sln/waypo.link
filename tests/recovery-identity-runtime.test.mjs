@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
 import { IdentityService } from '../packages/identity/service.mjs';
 import { identityBackupPort } from '../packages/runtime/identity-backup.mjs';
-import { verifyIdentityBackup, verifyNameAssignment } from '../packages/recovery/identity-backup.mjs';
+import { verifyNameAssignment } from '../packages/recovery/identity-backup.mjs';
+import { validateRecoveryPayload } from '../packages/recovery/index.mjs';
+
+// Recovery file v3 over the durable Node runtime and its HTTP routes (owner approval 2026-10-28): an opaque credential,
+// no keys, no provider proof; envelope v1 credentials (payloads v1 and v2) recover nothing.
 
 const origin = 'http://localhost:8788';
 const password = 'Portable recovery runtime test password!';
@@ -38,7 +42,7 @@ async function fixture(t, config = {}) {
     async download(pendingToken) {
       const result = await request('/api/auth/recovery/download', { pendingToken });
       assert.equal(result.status, 200, result.value.error);
-      return { ...result.value, backup: JSON.parse(result.value.content) };
+      return { ...result.value, payload: JSON.parse(result.value.content) };
     },
     async activate(pendingToken, recoveryToken) {
       const result = await request('/api/auth/recovery/confirm', { pendingToken, recoveryToken, downloadConfirmed: true });
@@ -46,164 +50,119 @@ async function fixture(t, config = {}) {
       return { ...result.value, headers: { Cookie: result.response.headers.get('Set-Cookie').split(';')[0], 'X-CSRF-Token': result.value.csrfToken } };
     },
     async recover(file, overrides = {}) {
-      return request('/api/auth/recover', { recoveryToken: file.recoveryToken, identityBackup: file.backup, turnstileToken: challenge, ...overrides });
+      return request('/api/auth/recover', { recoveryToken: file.recoveryToken, turnstileToken: challenge, ...overrides });
     }
   };
 }
 
-test('durable signed recovery adopts the existing signer across restart and return', async t => {
+const signingHistory = async (f, id) => digest((await f.app.resources.accounts.get(id).identityKeyHistory(id, { purpose: 'signing' })).map(k => [k.kid, k.state]));
+
+test('durable v3 recovery across restart and return: no keys in the file, the signer never changes, name certificates stay separate', async t => {
   const f = await fixture(t), pending = await f.signup();
   const accountId = pending.account.id, assignedHandle = pending.account.handle;
   const originalSigner = await f.app.resources.accounts.get(accountId).signingKey(accountId);
-  const file = await f.download(pending.pendingToken), backup = file.backup;
-  assert.equal(backup.version, 2);
-  assert.equal(backup.issuer, origin);
-  assert.equal(backup.entity, accountId);
-  assert.equal(backup.keychain.signing.kid, originalSigner.kid);
-  assert.notEqual(backup.keychain.encryption.kid, originalSigner.kid);
-  assert.notEqual(backup.keychain.encryption.privateJWK.d, backup.keychain.signing.privateJWK.d);
-  for (const value of [backup, decoded(backup.proof.payload)]) {
-    assert.equal(value.handle, undefined);
-    assert.equal(value.nameAssignment, undefined);
-    assert.equal(value.assignmentId, undefined);
-  }
+  const file = await f.download(pending.pendingToken), payload = validateRecoveryPayload(file.payload);
+  assert.deepEqual(Object.keys(file.payload).sort(), ['entity', 'fileId', 'issuedAt', 'issuer', 'recoveryToken', 'version']);
+  assert.equal(payload.version, 3); assert.equal(payload.issuer, origin); assert.equal(payload.entity, accountId); assert.equal(payload.fileId, file.fileId);
+  assert.equal(file.content.includes('privateJWK'), false); assert.equal(file.content.includes(originalSigner.kid), false);
   const authorityPath = join(f.directory, 'recovery-signing-key');
   assert.equal((await stat(authorityPath)).mode & 0o777, 0o600);
   const authorityText = await readFile(authorityPath, 'utf8');
   const authority = JSON.parse(authorityText), { d, key_ops, ...publicKey } = authority.privateJWK;
-  await verifyIdentityBackup(backup, { kid: authority.kid, publicKey }, { issuer: origin, entity: accountId });
   const owner = await f.activate(pending.pendingToken, file.recoveryToken);
   const certificateResponse = await f.request('/api/auth/handles/certificate', {}, owner.headers);
   assert.equal(certificateResponse.status, 200, certificateResponse.value.error);
   const assignment = JSON.parse(certificateResponse.value.content);
   await verifyNameAssignment(assignment, { kid: authority.kid, publicKey }, { issuer: origin, entity: accountId, handle: assignedHandle });
-  for (const value of [assignment, decoded(assignment.proof.payload)]) {
-    assert.equal(value.entity, accountId);
-    assert.equal(value.handle, assignedHandle);
-    assert.equal(value.keychain, undefined);
-    assert.equal(value.recoveryToken, undefined);
-    assert.equal(JSON.stringify(value).includes(backup.keychain.signing.privateJWK.d), false);
-    assert.equal(JSON.stringify(value).includes(backup.keychain.encryption.privateJWK.d), false);
-  }
-  const snapshot = await f.request('/api/account', undefined, owner.headers, 'GET');
-  assert.equal(snapshot.status, 200);
-  // Contact links (and the contact policy this test once carried across recovery) left the core in contacts phase 4.
-  const beforeKeys = digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false }));
+  for (const value of [assignment, decoded(assignment.proof.payload)]) { assert.equal(value.recoveryToken, undefined); assert.equal(value.fileId, undefined); }
+  const beforeKeys = await signingHistory(f, accountId);
   await f.restart();
   assert.equal(digest(await readFile(authorityPath, 'utf8')), digest(authorityText));
   const recovered = await f.recover(file);
   assert.equal(recovered.status, 200, recovered.value.error);
-  assert.equal(recovered.value.account.id, accountId);
-  assert.equal(recovered.value.account.handle, assignedHandle);
+  assert.equal(recovered.value.account.id, accountId); assert.equal(recovered.value.account.handle, assignedHandle);
   assert.equal((await f.request('/api/session', undefined, owner.headers, 'GET')).value.authenticated, false);
   const pendingToken = recovered.value.pendingToken;
   assert.equal((await f.request('/api/auth/password/pending', { pendingToken, password })).status, 200);
   const replacement = await f.download(pendingToken);
-  // P15 (PORT-10): the replacement file rotates the signing key with continuity; the encryption key is unchanged.
-  assert.notEqual(replacement.backup.keychain.signing.kid, backup.keychain.signing.kid);
-  assert.equal(digest(replacement.backup.keychain.encryption), digest(backup.keychain.encryption));
-  assert.equal(replacement.backup.handle, undefined);
-  assert.notEqual(digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false })), beforeKeys);
-  const replacedKeys = await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false });
-  assert.deepEqual([replacedKeys.signing.kid, replacedKeys.encryption.kid], [replacement.backup.keychain.signing.kid, replacement.backup.keychain.encryption.kid]);
-  // An interrupted recovery can resume from the original signed file even after replacement issuance.
+  assert.notEqual(replacement.fileId, file.fileId);
+  assert.equal(await signingHistory(f, accountId), beforeKeys, 'the replacement file rotates nothing (P15 withdrawn)');
+  // An interrupted recovery can resume from the original file even after replacement issuance.
   const resumed = await f.recover(file);
-  assert.equal(resumed.status, 200, resumed.value.error);
-  assert.equal(resumed.value.resumed, true);
-  assert.equal(resumed.value.credentialRequired, false);
+  assert.equal(resumed.status, 200, resumed.value.error); assert.equal(resumed.value.resumed, true); assert.equal(resumed.value.credentialRequired, false);
   const returned = await f.activate(resumed.value.pendingToken, replacement.recoveryToken);
   assert.equal(returned.account.id, accountId);
   const returnedCertificate = await f.request('/api/auth/handles/certificate', {}, returned.headers);
-  assert.equal(returnedCertificate.status, 200);
   assert.equal(JSON.parse(returnedCertificate.value.content).assignmentId, assignment.assignmentId);
+  const view = await f.request('/api/account', undefined, returned.headers, 'GET');
+  assert.equal(view.value.recovery.fileId, replacement.fileId); assert.equal(view.value.recovery.version, 3);
   const beforeReplay = digest(await f.app.resources.repository.get(accountId));
   const replay = await f.recover(file);
-  assert.equal(replay.status, 401);
-  assert.equal(replay.value.error, 'unauthorized');
+  assert.equal(replay.status, 401); assert.equal(replay.value.error, 'unauthorized');
   assert.equal(digest(await f.app.resources.repository.get(accountId)), beforeReplay);
 });
 
-test('v2 token stripping and signature mutation reject without changing identity or key metadata', async t => {
-  const f = await fixture(t), pending = await f.signup('tamperproof');
+test('forged or altered credentials reject without changing identity or key metadata; v2 extras are irrelevant', async t => {
+  const f = await fixture(t), pending = await f.signup();
   const file = await f.download(pending.pendingToken);
   await f.activate(pending.pendingToken, file.recoveryToken);
   const controller = f.app.resources.accounts.get(pending.account.id);
   const identityBefore = digest(await f.app.resources.repository.get(pending.account.id));
   const metadataBefore = digest([...await controller.metadata.list({})]);
-  const tampered = structuredClone(file.backup);
-  const signature = Buffer.from(tampered.proof.signature, 'base64url'); signature[0] ^= 1;
-  tampered.proof.signature = signature.toString('base64url');
-  for (const identityBackup of [undefined, { version: 1, issuer: origin, handle: pending.account.handle, recoveryToken: file.recoveryToken }, tampered]) {
-    const result = await f.recover(file, { identityBackup });
-    assert.equal(result.status, 401);
-    assert.equal(result.value.error, 'unauthorized');
+  const flipped = file.recoveryToken.slice(0, -1) + (file.recoveryToken.endsWith('A') ? 'B' : 'A');
+  for (const recoveryToken of [flipped, `${pending.account.id}.${'Z'.repeat(43)}`, file.payload.fileId, '']) {
+    const result = await f.recover(file, { recoveryToken });
+    assert.ok([400, 401].includes(result.status), String(result.status));
     assert.equal(digest(await f.app.resources.repository.get(pending.account.id)), identityBefore);
     assert.equal(digest([...await controller.metadata.list({})]), metadataBefore);
   }
 });
 
-test('a signed file cannot reconstruct a missing account or missing identity keys', async t => {
-  const f = await fixture(t), pending = await f.signup('missingstate');
+test('a file cannot reconstruct a missing account', async t => {
+  const f = await fixture(t), pending = await f.signup();
   const file = await f.download(pending.pendingToken);
   await f.activate(pending.pendingToken, file.recoveryToken);
-  const id = pending.account.id, controller = f.app.resources.accounts.get(id);
-  const identityBefore = digest(await f.app.resources.repository.get(id));
-  await controller.metadata.delete('encryption-key');
-  const withoutEncryption = digest([...await controller.metadata.list({})]);
-  const missingKey = await f.recover(file);
-  assert.equal(missingKey.status, 401);
-  assert.equal(digest([...await controller.metadata.list({})]), withoutEncryption, 'Verification must not generate replacement keys');
-  assert.equal(digest(await f.app.resources.repository.get(id)), identityBefore);
+  const id = pending.account.id;
   await f.app.resources.repository.metadata.delete(`account/${id}`);
   const identityRows = digest([...await f.app.resources.repository.metadata.list({})]);
   const missingAccount = await f.recover(file);
   assert.equal(missingAccount.status, 401);
   assert.equal(await f.app.resources.repository.get(id), undefined);
   assert.equal(digest([...await f.app.resources.repository.metadata.list({})]), identityRows);
-  assert.equal(digest([...await controller.metadata.list({})]), withoutEncryption);
 });
 
-test('download fails closed with absent provider authority before persisting recovery or identity keys', async t => {
-  const f = await fixture(t), pending = await f.signup('nosigner');
+test('issuing a file needs no provider signing authority; setup provisions the signing key once and never rotates it', async t => {
+  const f = await fixture(t), pending = await f.signup();
   const repository = f.app.resources.repository, accounts = f.app.resources.accounts;
-  const controller = accounts.get(pending.account.id);
-  const identityBefore = digest(await repository.get(pending.account.id));
-  const keysBefore = digest([...await controller.metadata.list({})]);
-  // Node normally provisions a durable authority. Inject the runtime port without
-  // it to exercise the same absent-secret failure used by Worker deployments.
   const service = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: origin }, accounts }),
     turnstile: {}, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {},
     config: { origin, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
-  await assert.rejects(service.downloadRecovery({ pendingToken: pending.pendingToken }, { origin }), { code: 'recovery_unavailable' });
-  assert.equal(digest(await repository.get(pending.account.id)), identityBefore);
-  assert.equal(digest([...await controller.metadata.list({})]), keysBefore);
+  const result = await service.downloadRecovery({ pendingToken: pending.pendingToken }, { origin });
+  assert.equal(validateRecoveryPayload(result.content).fileId, result.fileId);
+  assert.equal((await repository.get(pending.account.id)).recoveryFileId, result.fileId);
+  const keys = await signingHistory(f, pending.account.id);
+  assert.equal((await accounts.get(pending.account.id).identityKeyHistory(pending.account.id, { purpose: 'signing' })).length, 1, 'the identity signing key exists after setup');
+  await service.downloadRecovery({ pendingToken: pending.pendingToken }, { origin });
+  assert.equal(await signingHistory(f, pending.account.id), keys, 'a second issuance rotates nothing');
 });
 
-test('legacy recovery can resume after issuing its signed upgrade, then requires the replacement signed file', async t => {
-  const f = await fixture(t), pending = await f.signup('legacyreturn');
-  const file = await f.download(pending.pendingToken);
-  await f.activate(pending.pendingToken, file.recoveryToken);
-  const repository = f.app.resources.repository, id = pending.account.id;
-  // Model an existing pre-v2 identity row: the old random token is current, but
-  // no format marker or provider assignment was persisted by that version.
-  const legacy = await repository.get(id);
-  delete legacy.recoveryBackupVersion; delete legacy.nameAssignmentId;
-  await repository.metadata.put(`account/${id}`, legacy);
-  const start = await f.recover(file, { identityBackup: undefined });
-  assert.equal(start.status, 200, start.value.error);
-  assert.equal((await f.request('/api/auth/password/pending', { pendingToken: start.value.pendingToken, password })).status, 200);
-  const replacement = await f.download(start.value.pendingToken);
-  assert.equal(replacement.backup.version, 2);
-  const resumed = await f.recover(file, { identityBackup: undefined });
-  assert.equal(resumed.status, 200, resumed.value.error);
-  assert.equal(resumed.value.resumed, true);
-  assert.equal(resumed.value.credentialRequired, false);
-  await f.activate(resumed.value.pendingToken, replacement.recoveryToken);
-  assert.equal((await f.recover(file, { identityBackup: undefined })).status, 401);
-  assert.equal((await f.recover(replacement, { identityBackup: undefined })).status, 401);
-  const returned = await f.recover(replacement);
-  assert.equal(returned.status, 200, returned.value.error);
-  assert.equal(returned.value.account.id, id);
+test('a legacy (unmarked or v2) credential and a legacy resume authority recover nothing; a new file is required', async t => {
+  for (const version of [undefined, 2]) {
+    const f = await fixture(t), pending = await f.signup();
+    const file = await f.download(pending.pendingToken);
+    const owner = await f.activate(pending.pendingToken, file.recoveryToken);
+    const repository = f.app.resources.repository, id = pending.account.id;
+    const legacy = await repository.get(id);
+    delete legacy.recoveryFileId; if (version) legacy.recoveryBackupVersion = version; else delete legacy.recoveryBackupVersion;
+    await repository.metadata.put(`account/${id}`, legacy);
+    assert.equal((await f.recover(file)).status, 401);
+    const view = await f.request('/api/account', undefined, owner.headers, 'GET');
+    assert.equal(view.value.recovery.reissueRequired, 'legacy-format');
+    // A recovery in progress under a legacy resume authority does not resume either.
+    const recovering = { ...await repository.get(id), status: 'recovering', recoveryResumeHash: legacy.recoveryHash, recoveryResumeBackupVersion: version ?? 1, recoveryHash: null };
+    await repository.metadata.put(`account/${id}`, recovering);
+    assert.equal((await f.recover(file)).status, 401);
+  }
 });
 
 test('a retained verified-payment marker permits one numeric custom name after cancellation without replacing identity recovery', async t => {
@@ -214,7 +173,7 @@ test('a retained verified-payment marker permits one numeric custom name after c
   // covered separately; these rows do not assert a real payment occurred.
   await controller.metadata.put(`billing/ever-paid/sandbox/${id}`, { version: 1, source: 'polar', owner: id, server: 'sandbox', organizationId: 'fixture-org', plan: 'plus', productId: 'fixture-plus', orderId: 'fixture-paid-order', subscriptionId: 'fixture-ended-subscription', verifiedAt: Date.now() - 86400000 });
   await controller.metadata.put('billing/state', { owner: id, source: 'polar', plan: 'free', status: 'canceled', validUntil: Date.now() - 1000 });
-  const recoveryBefore = (await repository.get(id)).recoveryHash, keychainBefore = digest(await controller.identityKeychain(id, { create: false }));
+  const recoveryBefore = (await repository.get(id)).recoveryHash, keychainBefore = await signingHistory(f, id);
   await f.restart();
   const freshLogin=await f.request('/api/auth/login/password',{handle:owner.account.handle,password,turnstileToken:challenge});assert.equal(freshLogin.status,200,freshLogin.value.error);
   const freshHeaders={Cookie:freshLogin.response.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':freshLogin.value.csrfToken};
@@ -224,7 +183,7 @@ test('a retained verified-payment marker permits one numeric custom name after c
   assert.equal(claim.value.account.handle, owner.account.handle);
   assert.equal(claim.value.account.paidHandle, '123');
   assert.equal((await f.app.resources.repository.get(id)).recoveryHash, recoveryBefore);
-  assert.equal(digest(await f.app.resources.accounts.get(id).identityKeychain(id, { create: false })), keychainBefore);
+  assert.equal(await signingHistory(f, id), keychainBefore);
   assert.equal((await f.request('/api/auth/handles/claim', { handle: '123' }, freshHeaders)).status, 200);
   assert.equal((await f.request('/api/auth/handles/claim', { handle: '456' }, freshHeaders)).value.error, 'handle_already_claimed');
   const authority = await f.request('/api/recovery/authority', undefined, {}, 'GET');

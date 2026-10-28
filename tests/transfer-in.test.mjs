@@ -64,10 +64,10 @@ test('attested transfer-in end to end: statement, polling, activation, rotation 
   assert.equal((await dest.begin(p.pkg)).state, 'active');
 });
 
-test('nothing signs before activation: the custody fence refuses minting, fresh signing, exports and recovery rotation', async t => {
+test('nothing signs before activation: the custody fence refuses minting, fresh signing and rotation', async t => {
   const p = await portabilityPair(t), { dest } = p;
   await dest.reserve(p.pkg); await dest.begin(p.pkg);
-  for (const work of [() => dest.registry.ensure(OWNER, 'signing'), () => dest.registry.ensure(OWNER, 'encryption'), () => dest.registry.privateKey(OWNER, 'signing'), () => dest.registry.exportPrivate(OWNER, 'signing'), () => dest.registry.rotateForRecovery(OWNER, { always: true }), () => dest.registry.rotate(OWNER, { purpose: 'signing', expectedKid: 'kid-1' }), () => dest.registry.rotateAtActivation(OWNER, { expectedKid: 'kid-1' })])
+  for (const work of [() => dest.registry.ensure(OWNER, 'signing'), () => dest.registry.privateKey(OWNER, 'signing'), () => dest.registry.rotate(OWNER, { purpose: 'signing', expectedKid: 'kid-1' }), () => dest.registry.rotateAtActivation(OWNER, { expectedKid: 'kid-1' })])
     await assert.rejects(work(), { code: 'transfer_in_pending' });
   assert.equal((await dest.registry.privateKey(OWNER, 'signing', { transferStatement: true })).kid, 'kid-1', 'only the statement signer');
   assert.equal(await dest.document(), null);
@@ -81,7 +81,7 @@ test('keys.mjs never mints a key for an owner whose identity moved away (PORT-2 
   assert.ok((await registry.ensure(OWNER, 'signing')).created);
   await engine.metadata.put('transfer-out/v1', { state: 'committed' });
   const { kty, crv, x, y } = await crypto.subtle.exportKey('jwk', (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])).publicKey);
-  for (const work of [() => registry.ensure(OWNER, 'signing'), () => registry.privateKey(OWNER, 'signing'), () => registry.exportPrivate(OWNER, 'signing'), () => registry.rotateForRecovery(OWNER, { always: true }), () => registry.register(OWNER, { kid: 'x', alg: 'ES256', publicJwk: { kty, crv, x, y } })])
+  for (const work of [() => registry.ensure(OWNER, 'signing'), () => registry.privateKey(OWNER, 'signing'), () => registry.register(OWNER, { kid: 'x', alg: 'ES256', publicJwk: { kty, crv, x, y } })])
     await assert.rejects(work(), { code: 'identity_moved' });
   await engine.metadata.put('transfer-out/v1', { state: 'pending' });
   assert.equal((await registry.ensure(OWNER, 'signing')).created, false);

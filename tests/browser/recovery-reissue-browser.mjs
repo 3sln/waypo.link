@@ -1,16 +1,18 @@
 // Active-account recovery reissue in real Chromium and Firefox against the real Node runtime: real routes, the shipped
-// console bundle, on-device encryption and test-unlock, the step-up prompt and a real file download. The only
+// console bundle, on-device encryption and test-unlock, the step-up prompt, a real file download and the re-upload
+// acknowledgement (recovery file v3: the saved file is selected again and compared by hash, never decrypted). The only
 // out-of-band step is making the password look 8 days old in the identity record, which a browser test cannot wait for.
 // Run `npm run build:assets` first.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {chromium,firefox} from 'playwright';
 import {createNodeServer} from '../../apps/node/server.mjs';
 import {recoveryCredential} from '../../packages/identity/service.mjs';
+import {catalogues} from '../../packages/i18n/catalogues.mjs';
 
 const PASSWORD='Browser reissue test password 2026!',ANSWER='Private reissue passphrase 2026!',CHALLENGE='local-browser-test-token',DAY=86400000;
 let app,directory,origin,signups=0;const mail=[];
@@ -31,7 +33,7 @@ async function account({aged=true}={}){
  const id=pending.value.account.id,repository=app.resources.repository;
  if(aged){const record=await repository.get(id);assert.equal(await repository.compareAndSwap(id,record.revision,{...record,passwordSetAt:Date.now()-8*DAY,revision:record.revision+1}),true);}
  const cookies=active.cookies.map(header=>{const [pair]=header.split(';'),index=pair.indexOf('=');return {name:pair.slice(0,index),value:pair.slice(index+1),url:origin};});
- return {id,cookies,csrfToken:active.value.csrfToken,file:{recoveryToken:file.value.recoveryToken,backup:JSON.parse(file.value.content)},identity:()=>repository.get(id),patch:async mutate=>{for(let attempt=0;attempt<5;attempt++){const record=await repository.get(id);if(await repository.compareAndSwap(id,record.revision,{...mutate(record),revision:record.revision+1}))return;}assert.fail('patch lost every race');}};
+ return {id,cookies,csrfToken:active.value.csrfToken,file:{recoveryToken:file.value.recoveryToken,fileId:file.value.fileId},identity:()=>repository.get(id),patch:async mutate=>{for(let attempt=0;attempt<5;attempt++){const record=await repository.get(id);if(await repository.compareAndSwap(id,record.revision,{...mutate(record),revision:record.revision+1}))return;}assert.fail('patch lost every race');}};
 }
 async function open(browserType,fixture,{locale='en',width=1280}={}){
  const browser=await browserType.launch({headless:true}),context=await browser.newContext({acceptDownloads:true,locale,viewport:{width,height:1000}});
@@ -44,53 +46,63 @@ async function open(browserType,fixture,{locale='en',width=1280}={}){
  return {browser,context,page,errors};
 }
 
-for(const [name,browserType]of [['chromium',chromium],['firefox',firefox]])test(`${name}: replace the recovery file end to end; confirmation opens the 7-day window, which this earlier device can cancel`,async t=>{
- const fixture=await account(),{browser,page,errors}=await open(browserType,fixture);t.after(()=>browser.close());
+for(const [name,browserType,locale]of [['chromium',chromium,'en'],['firefox',firefox,'en'],['chromium',chromium,'es']])test(`${name} (${locale}): replace the recovery file end to end; the saved file must be selected again; confirmation opens the 7-day window, which this earlier device can cancel`,async t=>{
+ // Source strings are the catalogue keys; the Spanish run reads the shipped translations.
+ const L=key=>{const value=catalogues[locale]['']?.[key];assert.ok(value||locale==='en',`missing ${locale} string: ${key}`);return value??key;};
+ const fixture=await account(),{browser,page,errors}=await open(browserType,fixture,{locale});t.after(()=>browser.close());
  const before=await fixture.identity();
- await page.getByRole('heading',{name:'Recovery file',exact:true}).waitFor();
- await page.getByRole('button',{name:'Replace recovery file'}).click();
- const dialog=page.getByRole('dialog');await dialog.getByText('Your old recovery file stops working').waitFor();
- await dialog.getByText('A pending move of your identity to another provider will be cancelled.').waitFor();
- await dialog.getByRole('button',{name:'Continue',exact:true}).click();
- await dialog.getByText('Confirm that your current recovery file will stop working.').waitFor();
- await dialog.getByLabel('I understand my old recovery file will stop working.').check();await dialog.getByRole('button',{name:'Continue',exact:true}).click();
+ await page.getByRole('heading',{name:L('Recovery file'),exact:true}).waitFor();
+ await page.getByRole('button',{name:L('Replace recovery file')}).click();
+ const dialog=page.getByRole('dialog');await dialog.getByText(L('Your old recovery file stops working')).waitFor();
+ await dialog.getByText(L('A pending move of your identity to another provider will be cancelled.')).waitFor();
+ await dialog.getByRole('button',{name:L('Continue'),exact:true}).click();
+ await dialog.getByText(L('Confirm that your current recovery file will stop working.')).waitFor();
+ await dialog.getByLabel(L('I understand my old recovery file will stop working.')).check();await dialog.getByRole('button',{name:L('Continue'),exact:true}).click();
  // The step-up prompt (no step-up yet), then the server stages the file.
- await page.getByRole('heading',{name:"Confirm it's you"}).waitFor();await page.getByLabel('Password',{exact:true}).fill(PASSWORD);await page.getByRole('button',{name:'Confirm with password'}).click();
- await page.getByRole('heading',{name:'Keep a way back in.',exact:true}).waitFor();
+ await page.getByRole('heading',{name:L("Confirm it's you")}).waitFor();await page.getByLabel(L('Password'),{exact:true}).fill(PASSWORD);await page.getByRole('button',{name:L('Confirm with password')}).click();
+ await page.getByRole('heading',{name:L('Keep a way back in.'),exact:true}).waitFor();
  assert.equal((await fixture.identity()).recoveryHash,before.recoveryHash,'staging leaves the current file working');
- await page.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(ANSWER);await page.getByRole('button',{name:'Encrypt recovery file',exact:true}).click();
- await page.getByRole('heading',{name:'Save your new recovery file.',exact:true}).waitFor();
- const downloading=page.waitForEvent('download');await page.getByRole('button',{name:'Download new recovery file',exact:true}).click();const download=await downloading;
+ await page.getByLabel(L('What is my private recovery passphrase?'),{exact:true}).fill(ANSWER);await page.getByRole('button',{name:L('Encrypt recovery file'),exact:true}).click();
+ await page.getByRole('heading',{name:L('Save your new recovery file.'),exact:true}).waitFor();
+ const downloading=page.waitForEvent('download');await page.getByRole('button',{name:L('Download new recovery file'),exact:true}).click();const download=await downloading;
  const saved=JSON.parse(await readFile(await download.path(),'utf8'));assert.equal(saved.format,'3sln-recovery');assert.equal(JSON.stringify(saved).includes(ANSWER),false,'answers never reach the file');
- await page.getByRole('heading',{name:'Test your new recovery file.',exact:true}).waitFor();
- await page.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(ANSWER);await page.getByRole('button',{name:'Test unlock',exact:true}).click();
- await page.getByRole('heading',{name:'Replace your old recovery file.',exact:true}).waitFor();
+ await page.getByRole('heading',{name:L('Test your new recovery file.'),exact:true}).waitFor();
+ await page.getByLabel(L('What is my private recovery passphrase?'),{exact:true}).fill(ANSWER);await page.getByRole('button',{name:L('Test unlock'),exact:true}).click();
+ // The acknowledgement: select the saved file again. Another file (here: the same JSON re-serialized) is refused.
+ await page.getByRole('heading',{name:L('Select the file you saved.'),exact:true}).waitFor();
+ const other=join(directory,`other-${locale}-${name}.json`);await writeFile(other,JSON.stringify(saved));
+ await page.locator('input[type=file][name=file]').setInputFiles(other);await page.getByRole('button',{name:L('Check the saved file'),exact:true}).click();
+ await page.getByText(L('This is not the file you just downloaded. Choose the new recovery file you saved on this device.')).first().waitFor();
+ assert.equal((await fixture.identity()).recoveryHash,before.recoveryHash,'a refused acknowledgement changes nothing');
+ await page.locator('input[type=file][name=file]').setInputFiles(await download.path());await page.getByRole('button',{name:L('Check the saved file'),exact:true}).click();
+ await page.getByRole('heading',{name:L('Replace your old recovery file.'),exact:true}).waitFor();
  assert.equal((await fixture.identity()).recoveryHash,before.recoveryHash,'still unchanged before confirmation');
- await page.getByLabel('I saved my new recovery file in a safe place.').check();await page.getByRole('button',{name:'Replace my recovery file',exact:true}).click();
- await page.getByRole('heading',{name:'Your new recovery file is active.',exact:true}).waitFor();
+ await page.getByLabel(L('I saved my new recovery file in a safe place.')).check();await page.getByRole('button',{name:L('Replace my recovery file'),exact:true}).click();
+ await page.getByRole('heading',{name:L('Your new recovery file is active.'),exact:true}).waitFor();
  const after=await fixture.identity();
  assert.notEqual(after.recoveryHash,before.recoveryHash);assert.equal(after.recoveryStaged,undefined);
- assert.notEqual(recoveryCredential(after).keyKid,fixture.file.backup.keychain.signing.kid,'the signing key rotated (P15)');
+ assert.equal(recoveryCredential(after).fileId,saved.fileId,'the confirmed file is the one saved and selected again');assert.equal(after.recoveryKeyKid,undefined);
+ assert.equal(JSON.stringify(saved).includes('keychain'),false);
  assert.ok(Date.now()-recoveryCredential(after).issuedAt<60000,'P14: the new file starts its 7 days now');
  // Wargame 2026-10-23 #1: during the window the old file can only cancel and the new one cannot recover yet.
- const old=await post('/api/auth/recover',{recoveryToken:fixture.file.recoveryToken,identityBackup:fixture.file.backup,turnstileToken:CHALLENGE});assert.equal(old.status,409);assert.equal(old.value.error,'recovery_reissue_pending');
+ const old=await post('/api/auth/recover',{recoveryToken:fixture.file.recoveryToken,turnstileToken:CHALLENGE});assert.equal(old.status,409);assert.equal(old.value.error,'recovery_reissue_pending');
  assert.equal(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}).includes('recoveryToken')),false,'no file secret in browser storage');
- await page.getByRole('button',{name:'Back to security',exact:true}).click();await page.getByRole('heading',{name:'Recovery file',exact:true}).waitFor();
+ await page.getByRole('button',{name:L('Back to security'),exact:true}).click();await page.getByRole('heading',{name:L('Recovery file'),exact:true}).waitFor();
  // The console shows the window; this device was signed in before the replacement began, so it can cancel.
- await page.getByText('Your recovery file was replaced recently.').waitFor();
- assert.equal(await page.getByRole('button',{name:'Replace recovery file'}).count(),0,'no second replacement during the window');
- await page.getByRole('button',{name:'Cancel the replacement',exact:true}).click();
+ await page.getByText(L('Your recovery file was replaced recently.')).waitFor();
+ assert.equal(await page.getByRole('button',{name:L('Replace recovery file')}).count(),0,'no second replacement during the window');
+ await page.getByRole('button',{name:L('Cancel the replacement'),exact:true}).click();
  // The button only opens a warning: nothing is cancelled until it is confirmed, and dismissing changes nothing.
- const warning=page.getByRole('dialog');await warning.getByText('signs this device out of this account',{exact:false}).waitFor();
- await warning.getByRole('button',{name:'Keep waiting',exact:true}).click();await warning.waitFor({state:'detached'});
+ const warning=page.getByRole('dialog');await warning.locator('.recovery-reissue-warnings li').nth(1).waitFor();
+ await warning.getByRole('button',{name:L('Keep waiting'),exact:true}).click();await warning.waitFor({state:'detached'});
  assert.ok((await fixture.identity()).recoveryPrevious,'dismissing the warning cancels nothing');
- await page.getByRole('button',{name:'Cancel the replacement',exact:true}).click();
- await page.getByRole('dialog').getByRole('button',{name:'Cancel the replacement',exact:true}).click();
+ await page.getByRole('button',{name:L('Cancel the replacement'),exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:L('Cancel the replacement'),exact:true}).click();
  // This device also staged and confirmed the replacement, and a cancel ends those sessions (DEVLOG 2026-10-23
  // "Cancel sessions"), so the console signs out with the outcome rather than reporting an expired session.
- await page.getByText('Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.').waitFor();
- await page.getByRole('heading',{name:'Accounts in this browser'}).waitFor();
- assert.equal(await page.getByText('Your session expired. Sign in again.').count(),0);
+ await page.getByText(L('Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.')).waitFor();
+ await page.getByRole('heading',{name:L('Accounts in this browser')}).waitFor();
+ assert.equal(await page.getByText(locale==='es'?/sesión (caducó|expiró)/i:'Your session expired. Sign in again.').count(),0);
  const record=await fixture.identity();
  assert.equal(record.recoveryHash,before.recoveryHash,'the previous credential is current again');assert.equal(record.recoveryPrevious,undefined);
  assert.deepEqual(errors,[]);
@@ -101,7 +113,7 @@ for(const [name,browserType]of [['chromium',chromium],['firefox',firefox]])test(
  const before=await fixture.identity(),cookie=fixture.cookies.map(entry=>`${entry.name}=${entry.value}`).join('; '),headers={Cookie:cookie,'X-CSRF-Token':fixture.csrfToken,'X-Bindle-Account':fixture.id};
  assert.equal((await post('/api/auth/step-up',{method:'password',password:PASSWORD},headers)).status,200);
  const begun=await post('/api/auth/recovery/reissue/begin',{acknowledged:true},headers);assert.equal(begun.status,200,begun.value.error);
- assert.equal((await post('/api/auth/recovery/reissue/confirm',{recoveryToken:begun.value.recoveryToken,downloadConfirmed:true},headers)).status,200);
+ assert.equal((await post('/api/auth/recovery/reissue/confirm',{recoveryToken:begun.value.recoveryToken,fileId:begun.value.fileId,downloadConfirmed:true},headers)).status,200);
  const token=mail.filter(entry=>entry.owner===fixture.id&&entry.type==='recovery-reissued').at(-1)?.cancelToken;assert.ok(token,'the earlier email received a cancel link');
  const browser=await browserType.launch({headless:true});t.after(()=>browser.close());const page=await (await browser.newContext()).newPage();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/account/recovery/cancel#token='+token);

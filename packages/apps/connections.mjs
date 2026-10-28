@@ -9,9 +9,9 @@ import {appendSeverance} from '../federation/brokered-severance.mjs';
 import {FEATURE_DEFINITIONS,SUSPENSION_REVOCATION_MS,FEATURE_SWEEP_MS} from '../app/domains/provider-features.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../identity/messaging-ingress.mjs';
 // Extensions rev 3.2 (CR-X3-26): the former slot documents, republished as ordinary fragments at new URLs. The provider
-// pins these exact documents; the intake and ingress fragments are consumed only by provider features. The classifier
-// field is the Bindle item-classification fragment (CR-X3-25), application-consumed (Parlay requests it as a setup
-// fragment); the withdrawn 3sln.me item-classifier fragment is no longer pinned.
+// pins these exact documents; the intake and ingress fragments are consumed only by provider features. The shared
+// Bindle item-classification fragment (CR-X3-25, IC-4) is application-consumed (Parlay requests it as a setup fragment);
+// the withdrawn 3sln.me item-classifier fragment is no longer pinned.
 import classifierFragment from '../../docs/artefacts/fragments/item-classification-v1.json' with {type:'json'};
 import messagingIngressFragment from '../../docs/artefacts/fragments/messaging-ingress-v1.json' with {type:'json'};
 import publicIntakeFragment from '../../docs/artefacts/fragments/public-intake-v1.json' with {type:'json'};
@@ -65,7 +65,7 @@ const BLOCKED=['suspended','purge-review','purging'];
 export const DELEGATION_FIELDS=Object.freeze([MESSAGING_INGRESS_FRAGMENT]);
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
 export const MESSAGING_INGRESS_FRAGMENT_DOCUMENT=freeze(messagingIngressFragment);
-export const ITEM_CLASSIFIER_FRAGMENT_DOCUMENT=freeze(classifierFragment);
+export const ITEM_CLASSIFICATION_FRAGMENT_DOCUMENT=freeze(classifierFragment);
 export const PUBLIC_INTAKE_FRAGMENT_DOCUMENT=freeze(publicIntakeFragment);
 /** Provider-consumable fields this provider recognizes (trusted pins, exact URL -> fragment document). */
 export const RECOGNIZED_FIELDS=Object.freeze({[MESSAGING_INGRESS_FRAGMENT_DOCUMENT.id]:MESSAGING_INGRESS_FRAGMENT_DOCUMENT,[PUBLIC_INTAKE_FRAGMENT_DOCUMENT.id]:PUBLIC_INTAKE_FRAGMENT_DOCUMENT});

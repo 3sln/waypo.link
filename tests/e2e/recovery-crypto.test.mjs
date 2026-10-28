@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { argon2id } from 'hash-wasm';
 import { encryptRecoveryFile, decryptRecoveryFile } from '../../packages/recovery/index.mjs';
-import {RECOVERY_V1_VECTOR as vector} from '../../packages/recovery/vectors.mjs';
+import {RECOVERY_V2_VECTOR as vector} from '../../packages/recovery/vectors.mjs';
 import { launch, baseURL } from './browser.mjs';
 
 test('real browser recovery worker interoperates with Node and authenticates public question metadata',async()=>{
  assert.ok(['localhost','127.0.0.1'].includes(new URL(baseURL).hostname));
- const payload={version:1,issuer:baseURL,handle:'crypto_fixture',recoveryToken:'non-live-browser-fixture',warning:'Fixture only.'};
+ const entity='7c9e6679-7425-40de-944b-e07fc1f90ae7',payload={version:3,issuer:baseURL,entity,recoveryToken:`${entity}.${'f'.repeat(43)}`,fileId:'AAAAAAAAAAAAAAAAAAAAAA',issuedAt:1};
  const questions=[{id:'date',type:'date',prompt:'Chosen date',hint:'Public hint'},{id:'pin',type:'pin',prompt:'Private PIN'}];
  const answers=['2000-2-29','001234'];
  const envelope=await encryptRecoveryFile(payload,questions,answers,{deriveKey:argon2id});
@@ -34,7 +34,7 @@ test('real browser recovery worker interoperates with Node and authenticates pub
    });
    const decrypted=await core.decryptRecoveryFile(envelope,['2000/02/29','001234'],{deriveKey});
    const browserFile=await core.encryptRecoveryFile(payload,questions,answers,{deriveKey});
-   const golden={format:core.RECOVERY_FORMAT,version:core.RECOVERY_VERSION,normalization:core.ANSWER_NORMALIZATION,
+   const golden={format:core.RECOVERY_FORMAT,version:core.RECOVERY_VERSION,fileId:vector.payload.fileId,normalization:core.ANSWER_NORMALIZATION,
     questions:vector.questions,kdf:{...core.KDF_PARAMETERS,salt:vector.salt},
     cipher:{name:'AES-256-GCM',iv:vector.iv},ciphertext:vector.ciphertext};
    const goldenPayload=await core.decryptRecoveryFile(golden,vector.answers,{deriveKey});

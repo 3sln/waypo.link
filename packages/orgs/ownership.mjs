@@ -26,7 +26,8 @@
 //   billing   {configured(), state(org,{known}), checkout(org,{...}), revoke(org,id), refund(org,{...}), plans(currency)}
 //             (packages/billing/organizations.mjs OrganizationBilling; SANDBOX ONLY)
 //   accounts  {get(sub) -> {status, handle, kind}|null}  this provider's identity records (recipient checks)
-//   effects   {rotateRecovery(org) -> {rotated:true}, index(person, {org, role, handle}) -> true}
+//   effects   {rotateRecovery(org) -> {rotated:true} only after the organization's recovery credential is cleared on the
+//             identity record, index(person, {org, role, handle}) -> true}
 //   alert     (entry) -> void   operator alert sink (a held subscription needs reconciliation); best effort, never blocks
 //   plans     the paid-check port; `check({creator, org, override:true})` answers the operator allowlist override.
 //
@@ -785,22 +786,25 @@ export class OwnershipService extends MembershipService{
  },{exit:true});}
  /** Confirms a reissue only for the owner and recovery generation that began it (review M2, R2-M2). Any `done` that is
   * not confirmed, from a principal who began a reissue (in any generation) and is not confirming the current owner's
-  * current-generation reissue, invalidates the possibly bound file with a fresh rotation and answers {issued:false}; the
-  * edge then never hands that file out (it also fails closed on any `done` error). A principal who began nothing gets
-  * not_found and causes no rotation. */
- recoveryReissueDone(actor,input){return this.act(actor,input,['kid','generation'],async(r,v,now,tx,powers)=>{
+  * current-generation reissue, queues a fresh rotation and answers {issued:false} (the rotation effect clears the
+  * organization's recovery credential on the identity record, so the file bound for this reissue stops working); the
+  * edge then never hands that file out (it also fails closed on any `done` error). A confirmation while a rotation is
+  * still pending is refused the same way: that rotation could otherwise clear the file just confirmed, leaving
+  * `issued` with no credential. A principal who began nothing gets not_found and causes no rotation. */
+ recoveryReissueDone(actor,input){return this.act(actor,input,['fileId','generation'],async(r,v,now,tx,powers)=>{
   const generation=r.recoveryGeneration??0,list=r.recoveryReissues??[],mine=list.filter(x=>samePrincipal(x.owner,actor.principal));
   const entry=v.generation===undefined?mine.at(-1):mine.find(x=>x.generation===v.generation);
   if(!entry){if(!mine.length)fail('not_found','Not found.',404);}
-  const current=entry&&powers.includes('owner-of-record')&&entry.generation===generation&&samePrincipal(r.ownerOfRecord,actor.principal);
-  if(!current){
+  const owner=entry&&powers.includes('owner-of-record')&&entry.generation===generation&&samePrincipal(r.ownerOfRecord,actor.principal),pending=r.recovery?.state==='rotation-pending';
+  if(!owner||pending){
    r.recoveryReissues=list.filter(x=>x!==(entry??mine.at(-1)));this.rotateAfterReissue(r,now,'reissue-superseded');
-   await this.audit(tx,r,'organization-recovery-reissue-superseded',actor,{generation});return {issued:false,reason:'owner_changed'};
+   await this.audit(tx,r,'organization-recovery-reissue-superseded',actor,{generation});return {issued:false,reason:owner?'rotation_pending':'owner_changed'};
   }
   r.recoveryReissues=list.filter(x=>x!==entry);r.recovery={state:'issued',owner:party(actor.principal),since:now,cause:r.recovery?.cause??'reissue'};this.ownershipNotice(r,'organization-recovery-reissued',{},now);
-  await this.audit(tx,r,'organization-recovery-reissued',actor,{kid:typeof v.kid==='string'?v.kid.slice(0,200):null});return {issued:true};
+  await this.audit(tx,r,'organization-recovery-reissued',actor,{fileId:typeof v.fileId==='string'?v.fileId.slice(0,64):null});return {issued:true};
  },{exit:true,exposure:false});}
- /** Invalidates any file bound since: an ordinary signing rotation through the outbox; the state is rotation-pending. */
+ /** Invalidates any file bound since: the recovery-rotate effect clears the organization's recovery credential on the
+  * identity record (then rotates the signing key); the state is rotation-pending until that write. */
  rotateAfterReissue(r,now,cause){const ref=this.random.uuid();r.recovery={state:'rotation-pending',owner:party(r.ownerOfRecord),since:now,cause,ref};this.outbox(r,'recovery-rotate',{cause,ref},now);}
 
  // ---- extension hooks (no-ops; packages/orgs/break-glass.mjs overrides them) ---------------------------------

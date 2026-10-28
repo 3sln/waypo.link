@@ -45,7 +45,9 @@ const SECURITY_ALERTS = Object.freeze({
   // Active-account recovery reissue: the previous recovery file no longer works.
   'recovery-reissued': ['{brand} recovery file replaced', 'A new recovery file was created for your account. For the next 7 days it cannot be used to recover the account, and the replacement can be cancelled from a device that was signed in before it started, from the link below, or with your previous recovery file. Not you? Cancel it and secure your account.'],
   'recovery-reissue-started': ['{brand} recovery file replacement started', 'Someone signed in to your account started replacing its recovery file. Not you? Sign in from a device you already use and secure your account.'],
-  'recovery-reissue-cancelled': ['{brand} recovery file replacement cancelled', 'The recovery file replacement was cancelled. Your previous recovery file works again and the new one never will.']
+  'recovery-reissue-cancelled': ['{brand} recovery file replacement cancelled', 'The recovery file replacement was cancelled. Your previous recovery file works again and the new one never will.'],
+  // The annual reissue offer (recovery file v3, 2026-10-28): a reminder only; nothing changes or expires.
+  'recovery-reissue-reminder': ['{brand} time for a new recovery file', 'Your recovery file is about a year old. We suggest creating a new one: sign in, open Account & security and choose Replace recovery file. Nothing stops working; your current file keeps working until you confirm a new one.']
 });
 // The reissue cancel page (packages/runtime/routes/recovery-reissue.mjs); the capability stays in the fragment.
 const REISSUE_CANCEL_PATH = '/account/recovery/cancel';

@@ -50,13 +50,26 @@ test('R2-M2: two concurrent reissues straddling an owner change: both late confi
  const b1=await w.run('orgs.recovery-reissue-begin',B,{}),b2=await w.run('orgs.recovery-reissue-begin',B,{});
  await w.run('orgs.breakglass-contest',A,{claim:c.id},w.tier1(c));await w.resolve(OP1,'uphold',{claim:c.id});await w.resolve(OP2,'uphold',{claim:c.id});await w.settle();
  const rotations=async()=>(await w.summary()).ownershipOutbox.filter(e=>e.kind==='recovery-rotate'&&e.cause==='reissue-superseded').length;
- assert.deepEqual(await w.run('orgs.recovery-reissue-done',B,{kid:'k1',generation:b1.generation}),{issued:false,reason:'owner_changed'});assert.equal(await rotations(),1);
- await w.settle();assert.deepEqual(await w.run('orgs.recovery-reissue-done',B,{kid:'k2',generation:b2.generation}),{issued:false,reason:'owner_changed'});assert.equal(await rotations(),2,'the second late confirmation rotates too');
- await rejects(w.run('orgs.recovery-reissue-done',E,{kid:'k3'}),'not_found');assert.equal(await rotations(),2,'someone who began nothing causes no rotation');
- await w.settle();const b3=await w.run('orgs.recovery-reissue-begin',A,{});assert.deepEqual(await w.run('orgs.recovery-reissue-done',A,{kid:'k4',generation:b3.generation+99}),{issued:false,reason:'owner_changed'},'a confirmation naming no begun generation still rotates');assert.equal(await rotations(),3);
+ assert.deepEqual(await w.run('orgs.recovery-reissue-done',B,{fileId:'k1',generation:b1.generation}),{issued:false,reason:'owner_changed'});assert.equal(await rotations(),1);
+ await w.settle();assert.deepEqual(await w.run('orgs.recovery-reissue-done',B,{fileId:'k2',generation:b2.generation}),{issued:false,reason:'owner_changed'});assert.equal(await rotations(),2,'the second late confirmation rotates too');
+ await rejects(w.run('orgs.recovery-reissue-done',E,{fileId:'k3'}),'not_found');assert.equal(await rotations(),2,'someone who began nothing causes no rotation');
+ await w.settle();const b3=await w.run('orgs.recovery-reissue-begin',A,{});assert.deepEqual(await w.run('orgs.recovery-reissue-done',A,{fileId:'k4',generation:b3.generation+99}),{issued:false,reason:'owner_changed'},'a confirmation naming no begun generation still rotates');assert.equal(await rotations(),3);
 }finally{await w.close();}});
+test('recovery v3 review M1: a confirmation while a recovery rotation is pending is refused and rotates again, so the pending rotation cannot clear a confirmed file',async()=>{const w=await world(88);try{
+ const b1=await w.run('orgs.recovery-reissue-begin',A,{}),b2=await w.run('orgs.recovery-reissue-begin',A,{});
+ assert.deepEqual(await w.run('orgs.recovery-reissue-done',A,{fileId:'k1',generation:b1.generation+99}),{issued:false,reason:'owner_changed'});
+ assert.equal((await w.summary()).recovery.state,'rotation-pending');
+ const rotations=async()=>(await w.summary()).ownershipOutbox.filter(e=>e.kind==='recovery-rotate').length,before=await rotations();
+ assert.deepEqual(await w.run('orgs.recovery-reissue-done',A,{fileId:'k2',generation:b2.generation}),{issued:false,reason:'rotation_pending'});
+ assert.equal((await w.summary()).recovery.state,'rotation-pending','nothing is confirmed while the credential is being cleared');assert.equal(await rotations(),before+1,'the file bound for the refused confirmation is cleared too');
+ await w.drain();assert.equal((await w.summary()).recovery.state,'missing');
+ const b3=await w.run('orgs.recovery-reissue-begin',A,{});assert.deepEqual(await w.run('orgs.recovery-reissue-done',A,{fileId:'k3',generation:b3.generation}),{issued:true});assert.equal((await w.summary()).recovery.state,'issued');
+}finally{await w.close();}
+ const ports={org:{begin:async()=>({request:'r',generation:0}),done:async()=>({issued:false,reason:'rotation_pending'})},identity:{record:async()=>({recoveryHash:null}),bindRecovery:async()=>({ok:true})},backup:{issue:async()=>({file:{version:3,fileId:'AAAAAAAAAAAAAAAAAAAAAA',issuedAt:1},fileId:'AAAAAAAAAAAAAAAAAAAAAA'})}};
+ await rejects(new OrganizationRecoveryReissue(ports).reissue({},ORG),'recovery_rotation_pending');
+});
 test('R2-M2: the edge never hands out a file when the confirmation fails for any reason',async()=>{
- const ports=done=>({org:{begin:async()=>({request:'r',generation:0}),done},identity:{record:async()=>({recoveryHash:null}),bindRecovery:async()=>({ok:true})},backup:{issue:async()=>({keychain:{signing:{kid:'k'}}})}});
+ const ports=done=>({org:{begin:async()=>({request:'r',generation:0}),done},identity:{record:async()=>({recoveryHash:null}),bindRecovery:async()=>({ok:true})},backup:{issue:async()=>({file:{version:3,fileId:'AAAAAAAAAAAAAAAAAAAAAA',issuedAt:1},fileId:'AAAAAAAAAAAAAAAAAAAAAA'})}});
  await rejects(new OrganizationRecoveryReissue(ports(async()=>{throw Object.assign(Error('x'),{code:'not_found'});})).reissue({},ORG),'organization_unavailable');
  await rejects(new OrganizationRecoveryReissue(ports(async()=>undefined)).reissue({},ORG),'organization_unavailable');
  const ok=await new OrganizationRecoveryReissue(ports(async()=>({issued:true}))).reissue({},ORG);assert.ok(ok.recoveryFile.content);

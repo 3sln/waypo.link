@@ -316,8 +316,8 @@ Under v2, every resource-field value, issuer-hosted or brokered, is a list of ob
 
 ```json
 {"id":"https://example.org/entities/e_123/resources/r-scoped-9",
- "label":"Fast model","status":"available",
- "contracts":["https://spec.bindle.example/contracts/decision-model/v1"],
+ "label":"Text classifier","status":"available",
+ "contracts":["https://spec.bindle.example/contracts/item-classification/v1"],
  "token":"eyJ…","token_type":"Bearer","expires_at":1792500000,
  "broker":{"endpoint":"https://models.example/bindle/rpc","origin":"https://models.example",
            "resource":"https://models.example/r/abc"}}
@@ -353,7 +353,7 @@ Brokered access tokens are [JWT access tokens (RFC 9068)](https://www.rfc-editor
  "iat":1792499700,"exp":1792500000,"jti":"0b6f…",
  "bindle":{"v":1,"purpose":"invoke","connection":"c_5c0f…","generation":3,
    "resource":"https://models.example/r/abc","grant":"g_81d2…",
-   "methods":{"https://spec.bindle.example/contracts/decision-model/v1":["decide"]},
+   "methods":{"https://spec.bindle.example/contracts/item-classification/v1":["capabilities","classify"]},
    "scope":null},
  "cnf":{"jkt":"…"}}
 ```

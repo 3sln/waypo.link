@@ -401,11 +401,13 @@ No phase leaves Parlay unable to start a new contact, and none breaks key delega
 6. **Signaling** `link` removal with the signaling.v1 migration (CR-C6, CR-S1 to CR-S4).
 7. **Later, only if needed:** the peer profile record, foreign redemption (CL-24), requests (CL-7), organization allowlists, and a ticket basis.
 
-## 11. Open owner questions (each with a recommended answer)
+## 11. Owner questions (answered)
 
-- **Q1. Website contact link template: place joiners in a `request` list, or in `can message you`?** **Recommend `request`.** A posted link is a public address. The owner vets each conversation a stranger starts and can move trusted people to "Contacts". Newsletter/follow uses `receive only`, which admits no inbound content.
-- **Q2. Where does the signed-object profile live: a new short core `keys.md`, or a section of identity-portability.md?** **Recommend a new short `keys.md`** (profile plus signature-domain table). Portability is a separate concern, and several extensions reference the profile.
-- **Q3. On the redeemer's side, is "Following" an ordinary `can message you` list (the publisher may also start new conversations), or does it need a narrower "this conversation only" policy?** **Recommend an ordinary `can message you` list.** It matches "the subscriber allowlists the publisher", adds no fourth policy, and unsubscribing (removal from the list) fully undoes it.
+The owner approved the recommended answer to each of Q1–Q3 in session on 2026-10-28 (DEVLOG, 2026-10-28, "Owner approvals and directions (in session)"; reviewer: owner; outcome: approved). The questions are kept as asked. This approves these three answers only; the CL-* decisions and CR-* change requests stay unsigned.
+
+- **Q1. Website contact link template: place joiners in a `request` list, or in `can message you`?** **Answered (owner-approved 2026-10-28): `request`.** A posted link is a public address. The owner vets each conversation a stranger starts and can move trusted people to "Contacts". Newsletter/follow uses `receive only`, which admits no inbound content.
+- **Q2. Where does the signed-object profile live: a new short core `keys.md`, or a section of identity-portability.md?** **Answered (owner-approved 2026-10-28): a new short core `keys.md`** (profile plus signature-domain table). Portability is a separate concern, and several extensions reference the profile.
+- **Q3. On the redeemer's side, is "Following" an ordinary `can message you` list (the publisher may also start new conversations), or does it need a narrower "this conversation only" policy?** **Answered (owner-approved 2026-10-28): an ordinary `can message you` list.** It matches "the subscriber allowlists the publisher", adds no fourth policy, and unsubscribing (removal from the list) fully undoes it.
 
 ## 12. Review disposition
 

@@ -6,11 +6,15 @@ import {createWorld,bridgeConsumer,P,uuidOf,encoder} from './receive-fixtures.te
 import {minimize,decideTier,T_HIGH} from '../../packages/messaging-engine/domains/intake.mjs';
 import {INTAKE_CONTRACT} from '../../packages/messaging-protocol/index.mjs';
 import {TAXONOMY,CATEGORY_DESCRIPTIONS} from '../../packages/messaging-engine/domains/categories.mjs';
+import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 
 // Pins bind to {model id, model version, Parlay's taxonomy}; the classifier reports only the model.
 const MODEL={model:'spamnet',version:'3',schema:TAXONOMY};
-// Fake item-classification/v1 resource: the score is read from a `p=` marker in the (already minimized) text.
-const classifier=(evidence=MODEL)=>{const inputs=[];return {inputs,evidence,async classify(input){inputs.push(structuredClone(input));const text=input.item.text,p=Number(/p=(0\.\d+)/.exec(text)?.[1]??0);if(/explode/.test(text))throw new Error('occupant failure');return {scores:{spam:p},model:{id:this.evidence.model,version:this.evidence.version}};}};};
+// Host view of the item-classification fragment with one text classifier: the score is read from a `p=` marker in the
+// (already minimized) text the call carries inline.
+const TEXT='https://classifiers.example/r/text',CAPS={kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:65536}],maxLabels:16};
+const textOf=input=>new TextDecoder().decode(decodeBase64url(input.item.data));
+const classifier=(evidence=MODEL,values={text:TEXT})=>{const inputs=[];return {inputs,evidence,values,async fields(){return structuredClone(this.values);},async capabilities(){return CAPS;},async classify(resource,input){inputs.push(structuredClone(input));const text=textOf(input),p=Number(/p=(0\.\d+)/.exec(text)?.[1]??0);if(/explode/.test(text))throw new Error('occupant failure');return {scores:{spam:p},model:{id:this.evidence.model,version:this.evidence.version}};}};};
 const fresh=async(t,options)=>{const w=await createWorld(options);t.after(()=>w.dispose());return w;};
 const code=(r,status,error)=>{assert.equal(r.status,status,JSON.stringify(r.json));assert.equal(r.json.error,error);};
 const say=(w,from,link,n,text)=>w.deliver(from,'bob',link,{operationId:uuidOf(n),body:encoder.encode(text),createdAt:w.clock.now()-1000});
@@ -28,7 +32,7 @@ test('spam storm through a request list: tiers apply after custody and nothing o
  // The per-sender public limit (5/day) refuses before classification with the ordinary code.
  const over=await say(w,'alice',link,6,'p=0.10 legit?');code(over,429,'rate_limited');
  assert.equal((await w.run('bob','receive.items')).items.length,0,'requests wait for the drain');
- const drained=await w.system('bob','intake.drain',{});assert.deepEqual(drained,{processed:7,rejected:5,suspected:1,classified:7});
+ const drained=await w.system('bob','intake.drain',{});assert.deepEqual(drained,{processed:7,rejected:5,suspected:1,classified:7,unscored:0});
  const s=await byState(w);assert.equal(s.rejected.length,5);assert.equal(s.request.length,2);
  for(const item of s.rejected){assert.equal(item.notification,null);assert.ok(item.tags.some(x=>x.id==='sys:spam'&&x.rule==='default:reject.spam'));}
  const requests=await w.run('bob','intake.requests');assert.deepEqual(requests.map(r=>r.priority),['normal','low'],'suspected requests sort last');
@@ -38,7 +42,7 @@ test('spam storm through a request list: tiers apply after custody and nothing o
  assert.deepEqual((await w.post('alice','bob',responses[0].request)).json,responses[0].json);
  // The classifier saw minimized text only: no principal, issuer, link capability, URL or recipient.
  // Intake asks only Parlay's spam category (the caller supplies the taxonomy).
- for(const input of c.inputs){assert.deepEqual(Object.keys(input.item).sort(),['hints','text']);assert.deepEqual(input.labels,[{id:'spam',description:CATEGORY_DESCRIPTIONS.spam}]);for(const leak of [P.alice.principal.subject,'provider.example','bindle_meta','hub.box.example'])assert.equal(JSON.stringify(input).includes(leak),false,leak);}
+ for(const input of c.inputs){assert.deepEqual(Object.keys(input.item).sort(),['data','kind','mediaType','size']);assert.equal(input.detail,'minimal','no detail field approved: minimal');assert.equal(input.tags,undefined);assert.equal(textOf(input).includes('[url]')||!textOf(input).includes('http'),true);assert.deepEqual(input.labels,[{id:'spam',description:CATEGORY_DESCRIPTIONS.spam}]);for(const leak of [P.alice.principal.subject,'provider.example','bindle_meta','hub.box.example'])assert.equal((textOf(input)+JSON.stringify(input.labels)).includes(leak),false,leak);}
 });
 
 test('calibration mode, allowlist and rescue: thresholds are bound to the model version and allowlisted senders are never rejected',async t=>{
@@ -81,10 +85,12 @@ test('without consent, occupant or allowance there is no auto-reject: heuristics
  await w.run('bob','intake.settings',{classifierConsent:true,pin:MODEL,allowance:1});
  await deliver({text:'p=0.999 first',from:'a@one.example'});await deliver({text:'p=0.999 second',from:'b@two.example',dmarc:'fail'});
  const out=await w.system('bob','intake.drain',{});assert.equal(out.classified,1);assert.equal(out.rejected,1);
- item=(await w.items('bob')).find(i=>i.asserted.address==='b@two.example');assert.equal(item.state,'request');assert.deepEqual(item.tags.map(x=>x.source),['heuristic'],'allowance exhausted: heuristic fallback');
+ item=(await w.items('bob')).find(i=>i.asserted.address==='b@two.example');assert.equal(item.state,'request');assert.deepEqual(item.tags.map(x=>x.source),['heuristic'],'allowance exhausted: heuristic fallback');assert.deepEqual(item.scoring,{state:'unscored',reason:'allowance',at:item.scoring.at},'and explicitly unscored');assert.equal(item.notification,'quiet');
  // A failing occupant falls back to heuristics too.
  await w.run('bob','intake.settings',{allowance:10});await deliver({text:'explode p=0.999',from:'c@three.example'});await w.system('bob','intake.drain',{});
- assert.equal((await w.items('bob')).find(i=>i.asserted.address==='c@three.example').state,'request');
+ item=(await w.items('bob')).find(i=>i.asserted.address==='c@three.example');assert.equal(item.state,'request');assert.deepEqual([item.scoring.state,item.scoring.reason,item.notification],['unscored','unknown_outcome','quiet']);
+ // The owner's request listing carries the marker, so the UI can say the request was not checked.
+ assert.deepEqual((await w.run('bob','intake.requests')).find(r=>r.author.asserted?.sender?.headerFrom?.includes('three.example'))?.scoring??(await w.run('bob','intake.requests')).find(r=>r.scoring)?.scoring,{state:'unscored',reason:'unknown_outcome'});
  assert.equal(decideTier({result:null,hints:['dmarc-fail']}).tier,'suspect');assert.equal(decideTier({result:{spam:0.99,evidence:MODEL},pins:[{...MODEL,high:T_HIGH,low:0.7}]}).tier,'reject');
  assert.equal(decideTier({result:{spam:1.5,evidence:MODEL},pins:[{...MODEL,high:T_HIGH,low:0.7}]}).tier,'none','out-of-range scores are ignored');
 });
@@ -169,4 +175,16 @@ test('review regressions: intake dedup binds consumer and digest, spoofed allowl
  // BB2-R7: erasing a rejected item with a user-storage body queues the object; the sweep deletes it.
  const store=w.peer('bob').store,id='u'.repeat(43);await store.transaction(async tx=>{await tx.put(`item/${id}`,{id,origin:'native',author:{jkt:'j1',principal:P.alice.principal},state:'rejected',rejectedAt:1,bodyRef:{storage:'user',key:'parlay/v1/items/u/1'},tags:[],tagHistory:[]});await tx.put(`rejected/${'1'.padStart(16,'0')}/${id}`,{id});await tx.put(`by-jkt/j1/${id}`,1);});
  assert.deepEqual(await w.system('bob','intake.sweep',{}),{deleted:1,pending:0});assert.deepEqual(deleted,['parlay/v1/items/u/1']);assert.equal(await store.get(`by-jkt/j1/${id}`),undefined);
+});
+
+// Item-classification §8.4: consent with no usable classifier never lets a request through as if it had been checked.
+test('consent without a text classifier: requests are held quietly as unscored, never rejected, and the gap is recorded',async t=>{
+ for(const values of [{},{image:'https://classifiers.example/r/image'}]){
+  const c=classifier(MODEL,values),w=await fresh(t,{classifier:c}),link=await w.admit('bob',{policy:'request'});
+  await w.run('bob','intake.settings',{classifierConsent:true,pin:MODEL});await say(w,'alice',link,1,'Win money p=0.99');
+  const out=await w.system('bob','intake.drain',{});assert.deepEqual(out,{processed:1,rejected:0,suspected:0,classified:0,unscored:1});assert.equal(c.inputs.length,0);
+  const [item]=await w.items('bob');assert.deepEqual([item.state,item.notification,item.priority,item.scoring.state,item.scoring.reason],['request','quiet','normal','unscored','no_classifier']);
+  assert.ok(item.tagHistory.some(h=>h.action==='unscored'&&h.reason==='no_classifier'));
+  assert.deepEqual((await w.store('bob').get('bb:classify:gaps')).map(g=>[g.kind,g.reason]),[['text','no_classifier']]);
+ }
 });

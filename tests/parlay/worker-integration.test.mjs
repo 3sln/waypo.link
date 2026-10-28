@@ -24,12 +24,14 @@ const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connec
 test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the item-classification fragment pinned by digest',async()=>{
  const client=clientMetadata();assert.equal(client.token_endpoint_auth_method,'private_key_jwt');
  // Extensions rev 3.2 (CR-X3-27): no occupant or consumer declarations; Parlay claims the mailbox and intake contracts and
- // requests the Bindle item-classification fragment (CR-X3-25) as an optional setup grant, pinned by its digest, with
- // the generic contract's classify method only; it sends its own categories with each call.
+ // requests the shared Bindle item-classification fragment (CR-X3-25, IC-4) as an optional setup grant, pinned by its
+ // digest: the text and fallback classifier fields with capabilities and classify, and their detail fields; it sends its
+ // own categories with each call.
  assert.equal(client.bindle_integration.extensions,undefined);
  const classifier=JSON.parse(await readFile(new URL('../../docs/artefacts/fragments/item-classification-v1.json',import.meta.url)));assert.equal(fragmentOutcome(classifier).status,'valid');
  const setup=client.bindle_integration.setup.fragments.find(f=>f.fragment===classifier.id);assert.equal(setup.required,false);assert.equal(setup.digest,'sha256-'+await digest(crypto,canonical(classifier)));
- assert.deepEqual(setup.methods,{classifiers:{'https://spec.bindle.example/contracts/item-classification/v1':['classify']}});assert.equal(JSON.stringify(client).includes('decision-model'),false);assert.equal(JSON.stringify(client).includes('item-classifier/v1'),false);
+ assert.deepEqual(setup.fields,['text','fallback','textDetail','fallbackDetail']);for(const field of setup.fields)assert.ok(Object.hasOwn(classifier.fields,field),field);
+ assert.deepEqual(setup.methods,{text:{'https://spec.bindle.example/contracts/item-classification/v1':['capabilities','classify']},fallback:{'https://spec.bindle.example/contracts/item-classification/v1':['capabilities','classify']}});assert.equal(JSON.stringify(client).includes('decision-model'),false);assert.equal(JSON.stringify(client).includes('item-classifier/v1'),false);
  const parsed=validateIntegrationManifest(client.bindle_integration,{clientId:client.client_id,confidential:true});assert.equal(parsed.status,'valid');assert.equal(parsed.manifest.extensions,undefined);
  assert.deepEqual(parsed.manifest.resources.contracts,['https://spec.bindle.example/messaging/v1/contracts/mailbox','https://spec.bindle.example/contracts/public-intake/v1']);
  assert.equal((await metadataPort()('/bindle/client.json')).bindle_integration.v,1);

@@ -50,13 +50,13 @@ test('#1(b)-(d): a password-only reissue cannot recover for 7 days; the owner\'s
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_pending' });
   let record = await f.identity(); assert.equal(record.status, 'active'); assert.equal(record.sessions.length, 2, 'no session was wiped');
   // A forged or other file cannot cancel.
-  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: staged.recoveryToken, identityBackup: staged.backup, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'recovery_reissue_not_pending' });
-  const cancelled = await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, identityBackup: f.file.backup, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' });
+  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: staged.recoveryToken, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'recovery_reissue_not_pending' });
+  const cancelled = await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' });
   assert.equal(cancelled.cancelled, true); assert.equal(cancelled.restored, true);
   record = await f.identity();
   assert.equal(record.recoveryHash, (await f.identityBefore()).recoveryHash, 'the previous credential is current again');
   assert.equal(record.recoveryPrevious, undefined);
-  assert.equal(await f.keyState(staged.backup.keychain.signing.kid), 'retired', 'P15: the voided file no longer holds the current signing key');
+  assert.equal(record.recoveryFileId, f.file.fileId, 'the previous file id is current again (files hold no keys: nothing to rotate)');
   const e2 = await federationEpoch(record); assert.notEqual(e2, e0, 'restoring the credential never revives older grants'); assert.notEqual(e2, e1);
   assert.ok(f.mail.some(m => m.type === 'recovery-reissue-cancelled'));
   await assert.rejects(f.recover(staged), { code: 'unauthorized' }, 'the voided file never works');
@@ -100,7 +100,7 @@ test('#1: after the window the new file recovers and the previous one is gone; a
   const staged = f.parse(await f.begin()); await f.confirm(staged);
   await f.stepUp('password'); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
   f.advance(RECOVERY_REISSUE_WINDOW_MS);
-  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, identityBackup: f.file.backup, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'recovery_reissue_not_pending' });
+  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'recovery_reissue_not_pending' });
   await assert.rejects(f.recover(f.file), { code: 'unauthorized' });
   assert.equal((await f.recover(staged)).resumed, false);
 });
@@ -290,7 +290,7 @@ test('#1 passkey branch: a passkey-authorized reissue cannot be cancelled (or re
   assert.equal((await f.identity()).recoveryPrevious.credential.kind, 'passkey');
   // The previous file (perhaps the leaked one this reissue retires) can neither recover nor cancel.
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_locked' });
-  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, identityBackup: f.file.backup }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'reissue_cancel_not_allowed' });
+  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'reissue_cancel_not_allowed' });
   assert.equal((await f.owner()).recovery.pendingReissue.previousFileCanCancel, false);
   // An earlier session can.
   assert.equal((await f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx)).cancelled, true);
@@ -309,7 +309,7 @@ test('#1 password branch: on an account without a passkey the previous file stil
   await f.confirm(f.parse(await f.begin({ acknowledged: true }, thief)), {}, thief);
   assert.equal((await f.identity()).recoveryPrevious.credential.kind, 'password');
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_pending' });
-  assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, identityBackup: f.file.backup }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' })).cancelled, true);
+  assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' })).cancelled, true);
 });
 
 test('#1 swapped email: an email replaced within 30 days before the reissue still gets the notices and the cancel link; older replacements do not', async t => {
@@ -361,7 +361,7 @@ test('R1: a password thief who enrols a passkey, swaps the email and revokes ses
   assert.equal((await f.identity()).recoveryPrevious.fileLocked, false, '(i) a passkey enrolled after the file is not file-proof');
   assert.ok(f.mail.find(m => m.email === owner && m.type === 'recovery-reissued').cancelToken, 'password branch: the replaced address gets the link');
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_pending' });
-  assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, identityBackup: f.file.backup }, base)).cancelled, true);
+  assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, base)).cancelled, true);
   const record = await f.identity();
   assert.equal(record.sessions.length, 0, 'the thief session (created at the begin) ended with the cancel');
   assert.equal((await f.recover(f.file)).resumed, false);
@@ -432,12 +432,13 @@ test('a cancel from the session that staged and confirmed the replacement report
   await assert.doesNotReject(g.owner(earlier));
 });
 
-test('item 7: a cancel whose identity write never lands leaves the current (new) file restorable', async t => {
+test('item 7: a cancel whose identity write never lands leaves the current (new) file current', async t => {
   const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); await f.stepUp('password');
   const staged = f.parse(await f.begin()); await f.confirm(staged);
   const swap = f.service.repository.compareAndSwap; f.service.repository = new Proxy(f.service.repository, { get: (o, n) => n === 'compareAndSwap' ? async () => false : Reflect.get(o, n).bind?.(o) ?? Reflect.get(o, n) }); void swap;
   await assert.rejects(f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx), { code: 'conflict' });
-  assert.equal(await f.c.recoveryKeysMatch(f.id, staged.backup.keychain), true, 'the voided-to-be kid stays bound after the rotation');
+  f.service.repository = f.repository;
+  assert.equal((await f.identity()).recoveryFileId, staged.fileId, 'nothing changed: the new file stays current');
 });
 
 test('item 8: a configured identity token key that is too short fails loudly instead of using a per-instance key', async () => {
@@ -468,7 +469,7 @@ test('V1: a pre-file rogue passkey, session-cap eviction and an email swap no lo
   f.advance(10 * DAY);
   const owner10 = await f.secondSession(); await f.service.stepUpBegin({}, owner10); await f.service.stepUp({ method: 'passkey', response: { id: 'owner-passkey' } }, owner10);
   const ownerStaged = f.parse(await f.begin(undefined, owner10)); await f.confirm(ownerStaged, {}, owner10);
-  const ownerFile = { recoveryToken: ownerStaged.recoveryToken, backup: ownerStaged.backup };
+  const ownerFile = { recoveryToken: ownerStaged.recoveryToken, fileId: ownerStaged.fileId };
   f.advance(7 * DAY + MINUTE); await f.secondSession(); f.advance(MINUTE);
   const mark = f.mail.length; let thief; for (let i = 0; i < 10; i++) thief = await f.secondSession();
   assert.ok(f.mail.slice(mark).some(m => m.type === 'sessions-evicted'), 'eviction notified'); assert.ok((await f.identity()).authorityEvents.some(e => e.kind === 'sessions-evicted'));
@@ -477,7 +478,7 @@ test('V1: a pre-file rogue passkey, session-cap eviction and an email swap no lo
   const staged = f.parse(await f.begin({ acknowledged: true }, thief)); await f.confirm(staged, {}, thief);
   assert.equal((await f.identity()).recoveryPrevious.fileLocked, false);
   assert.ok(f.mail.slice(mark).some(m => m.email === 'owner@reissue.example' && m.cancelToken));
-  assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: ownerFile.recoveryToken, identityBackup: ownerFile.backup }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' })).cancelled, true);
+  assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: ownerFile.recoveryToken }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' })).cancelled, true);
 });
 
 test('V1 boundary: an event inside the lookback at the begin still counts at a confirm after it aged out; right after the lookback both the event and the replaced address are gone', async t => {

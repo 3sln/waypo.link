@@ -67,10 +67,11 @@ export function createExportAdapterPorts({repository,notice,contributorPorts={},
  return {...ports,identitySecurity:identitySecurityPort(repository),notice,contributorPorts:{identity:owner=>repository.get(owner),...contributorPorts}};
 }
 const PUSHED={'export-created':'export-created','export-grant-created':'export-created','export-downloaded':'export-downloaded'};
-/** Public key history only (§1.1 `keys`); private keys leave only through the protected identity backup. */
+/** Public key history only (§1.1 `keys`); identity private keys never leave the provider (recovery file v3 holds none,
+ * and the identity encryption key was removed, 2026-10-28). */
 async function exportKeys(c,owner){
- const history=[];for(const purpose of ['signing','encryption'])history.push(...await c.identityKeyHistory(owner,{purpose}));
- return {publicKeys:history.map(k=>({kid:k.kid,purpose:k.purpose,alg:k.alg,publicJwk:k.publicJwk,state:k.state,current:k.current,createdAt:k.createdAt,retiredAt:k.retiredAt,revokedAt:k.revokedAt})),keyIds:history.map(k=>k.kid),certificates:[],backupWorkflow:'Private keys leave only through the separately protected identity backup in your security settings.'};
+ const history=[...await c.identityKeyHistory(owner,{purpose:'signing'})];
+ return {publicKeys:history.map(k=>({kid:k.kid,purpose:k.purpose,alg:k.alg,publicJwk:k.publicJwk,state:k.state,current:k.current,createdAt:k.createdAt,retiredAt:k.retiredAt,revokedAt:k.revokedAt})),keyIds:history.map(k=>k.kid),certificates:[],backupWorkflow:'Identity private keys stay with the provider. Your recovery file restores access to this account; it contains no keys.'};
 }
 /** The host-held logical-key to provider-object mapping (§1.5): references only, never external bytes or tokens. */
 export function externalStorageMapping(c){return {async page({owner,cursor,limit}){

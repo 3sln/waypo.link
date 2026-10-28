@@ -59,7 +59,7 @@ test('writer Actions honor account, percentage and kill; cached engines do not c
  const killed=await account(t,{flags:{INTEGRATIONS_ENABLED:record({fallthrough:true})},env:{INTEGRATIONS_ENABLED:'false'}});assert.equal((await killed.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault?.code,'not_found');
 });
 
-test('classifier engine gates both owner and verified client; dependency kills and store outage refuse new work',async t=>{
+test('extension flags gate both owner and verified client; dependency kills and store outage refuse new work',async t=>{
  const rules=[{when:{accounts:[owner],clients:[client]},serve:{value:true}}],flags={INTEGRATIONS_ENABLED:record({rules}),EXTENSIONS_ENABLED:record({rules})},e=engine({config:{flags:port(flags)}});
  for(const [id,clientId,allowed]of [[owner,client,true],[other,client,false],[owner,'https://excluded.example',false]])assert.equal((await read(e,new Decision({actor:{kind:'system',owner:id},id:'EXTENSIONS_ENABLED',input:{clientId}}))).value,allowed);
  const f=await account(t,{flags:{FEDERATION_ENABLED:record({fallthrough:true}),DEVICE_AUTHORIZATION_ENABLED:record({fallthrough:true})},env:{FEDERATION_ENABLED:'false'}});assert.deepEqual(await f.invoke('approvalNoticeContacts'),{subscriptions:[]});

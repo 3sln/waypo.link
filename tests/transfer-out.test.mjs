@@ -376,7 +376,7 @@ test('moved tombstone retention and windows are pure',()=>{
 
 test('identity port: verifyRecovery never consumes, refuses other owners and wrong tokens alike; markMoved is idempotent per statement',async t=>{
  const fx=await transferFixture(t);const port=fx.ports.identity;
- const ok=await port.verifyRecovery(OWNER,fx.token);assert.equal(ok.version,2);assert.equal(await port.verifyRecovery(OWNER,fx.token).then(v=>v.ref),ok.ref);
+ const ok=await port.verifyRecovery(OWNER,fx.token);assert.equal(ok.version,3);assert.equal(await port.verifyRecovery(OWNER,fx.token).then(v=>v.ref),ok.ref);
  for(const bad of [null,'x',`${OWNER}.short`,`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.${'r'.repeat(43)}`,`${OWNER}.${'q'.repeat(43)}`])assert.equal(await port.verifyRecovery(OWNER,bad),null);
  const current=await port.get(OWNER),expect={securityEpoch:current.security.epoch,recoveryRef:current.recovery.ref,recoveryIssuedAt:current.recovery.issuedAt};
  await assert.rejects(port.markMoved(OWNER,{moved:{v:1,statementDigest:'sha256-x'}}),TypeError);
@@ -414,11 +414,11 @@ test('privacy: the copied channel snapshot is dropped when a transfer ends or af
 
 test('a path (b) request inside the 30-day window after an elevated abort is contested',async t=>{
  const fx=await transferFixture(t);await fx.start();
- const hash=(await fx.identityRecord()).recoveryHash,issuedAt=(await fx.identityRecord()).recoveryIssuedAt;
+ const {recoveryHash:hash,recoveryIssuedAt:issuedAt,recoveryFileId:fileId}=await fx.identityRecord();
  await fx.elevate({side:'disputer'},{credentialId:'pk-two'});
  // Garbage credentials never reach the contest (F4); the current credential does.
  await assert.rejects(fx.waiting({recoveryToken:'garbage'}),{code:'recovery_invalid'});assert.equal((await fx.lock()).contested,undefined);
- await fx.patchIdentity(a=>({...a,recoveryHash:hash,recoveryIssuedAt:issuedAt}));
+ await fx.patchIdentity(a=>({...a,recoveryHash:hash,recoveryIssuedAt:issuedAt,recoveryFileId:fileId,recoveryBackupVersion:3}));
  await assert.rejects(fx.waiting(),{code:'transfer_contested'});assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
 });
 

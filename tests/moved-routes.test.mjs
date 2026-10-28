@@ -96,21 +96,22 @@ async function integration(t,{flagOn=true}={}){
  const h=identityEngine({config:{origin:ORIGIN,rpID:'3sln.example',rpName:'Fixture',termsVersion:'2026-10-11'}});
  const {owner,file}=await activate(h.act,signupInput({handle:'mover'})),id=owner.account.id;t.after(()=>h.engine.dispose());
  h.clock.advance(20*DAY);
- const record=await h.repository.get(id);Object.assign(record,{recoveryBackupVersion:2,recoveryKeyKid:'bound',verifiedEmail:'owner@moved.example',emailVerifiedAt:h.clock.now()-15*DAY});record.revision++;assert(await h.repository.compareAndSwap(id,record.revision-1,record));
+ const record=await h.repository.get(id);Object.assign(record,{verifiedEmail:'owner@moved.example',emailVerifiedAt:h.clock.now()-15*DAY});record.revision++;assert(await h.repository.compareAndSwap(id,record.revision-1,record));
  const login=await h.act('loginPassword',{handle:'mover',password:PASSWORD,turnstileToken:'verified'}),ctx=sessionContext(login);
  const state={on:flagOn,killed:false},notices=[],rpc=[],base=createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}}});
  const mine=name=>['IDENTITY_TRANSFER_OUT_ENABLED','FEDERATION_ENABLED'].includes(name);
  const flags={for:context=>({...base.for(context),enabled:name=>mine(name)?state.on&&!state.killed:base.for(context).enabled(name),background:name=>mine(name)?!state.killed:base.for(context).background(name),global:name=>mine(name)?state.on&&!state.killed:base.for(context).global(name)})};
  const attestation=await keyPair(),metadata=new SqliteMetadata(':memory:'),dueDb=new SqliteMetadata(':memory:');t.after(()=>{metadata.close();dueDb.close();});
- const transferPorts={identity:transferIdentityPort(h.repository,{clock:h.clock.now}),notices:{async deliver(notice){notices.push(notice);return {accepted:true};}},attestor:attestorFromJwk({kid:'att-1',jwk:attestation.privateJwk}),issuer:ORIGIN,due:transferDueIndex(dueDb),hold:async()=>({held:false})};
+ // Recovery file v3 holds no keychain: the dormant transfer-out engine's key-possession check is the test seam `keyProof`.
+ let signer;const transferPorts={keyProof:async(owner,proof)=>owner===id&&proof?.signing?.kid===signer?.kid,identity:transferIdentityPort(h.repository,{clock:h.clock.now}),notices:{async deliver(notice){notices.push(notice);return {accepted:true};}},attestor:attestorFromJwk({kid:'att-1',jwk:attestation.privateJwk}),issuer:ORIGIN,due:transferDueIndex(dueDb),hold:async()=>({held:false})};
  const deletionPorts={identity:lifecycleIdentityPort(h.repository,{clock:h.clock.now}),hold:async()=>({held:false}),billing:null,erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null},exports:null};
  const controller=new AccountController({metadata,gate:new SerialGate(),blobs:bucket(),archives:bucket(),sql:metadata.sql,config:{APP_ORIGIN:ORIGIN,flags,LIFECYCLE_CLOCK:h.clock.now,LIFECYCLE_LOG:()=>{},KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),ACCOUNT_DELETION_PORTS:deletionPorts,TRANSFER_OUT_PORTS:transferPorts,IDENTITY_ACCOUNT:o=>h.repository.get(o)}});
- await controller.warm(id);const keychain=await controller.identityKeychain(id);
+ await controller.warm(id);signer=await controller.signingKey(id);const keychain={signing:{kid:signer.kid}};
  const authority={clients:[{id:'app',origin:'https://app.example'}],ready:()=>true,beginAuthorization:async()=>({requestId:'unused'})};
  const env={APP_ORIGIN:ORIGIN,MOVED_CLOCK:h.clock.now,flags,ABUSE_HASH_KEY:'moved-routes-test-hash',ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:h.repository,IDENTITY_ENGINE:()=>createIdentityEngine(h.resources),FEDERATION_AUTHORITY:authority,
   ACCOUNTS:{get:owner=>({invoke:async call=>{rpc.push(call.method);return owner===id?controller.invoke(call):{$fault:{code:'not_found',message:'Not found.',status:404}};}})}};
  const request=(path,{method='GET',value,headers={},auth=true,origin=ORIGIN,context=ctx}={})=>http.fetch(new Request(ORIGIN+path,{method,headers:{...method==='POST'?{'Content-Type':'application/json',Origin:origin}:{},...auth?{Cookie:'__Host-bindle_session='+encodeURIComponent(context.sessionToken),'X-CSRF-Token':context.csrfToken}:{},...headers},...value===undefined?{}:{body:JSON.stringify(value)}}),env,{});
- const signing=await crypto.subtle.importKey('jwk',keychain.signing.privateJWK,{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
+ const signing=signer.privateKey;
  const statement=(transfer,payload={})=>signMoveStatement({kid:keychain.signing.kid,payload:{bindle:'identity-move',v:1,sub:id,kind:'person',seq:1,prev:null,from:{iss:ORIGIN,identity:`${ORIGIN}/identity/${id}`},to:{iss:DEST,identity:`${DEST}/identity/${id}`},iat:Math.floor(h.clock.now()/1000),...payload}},signing);
  return {h,id,ctx,env,state,controller,metadata,notices,rpc,request,keychain,statement,attestation,file,
   stepUp:()=>h.act('stepUp',{method:'password',password:PASSWORD},ctx),

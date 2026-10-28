@@ -49,8 +49,8 @@ Intents supplies two things to signaling, and nothing else: the kind registry an
 ## Profiles
 
 - **`webrtc`.** Offer, answer and candidates, with every SDP and candidate rule of Annex A (no address before the claim, the owner's IP policy: `relay` by default across entities, `public` by opt-in, raw host candidates only between own devices), fingerprint binding and the structural `m=` check. What media a connection carries is the endpoints' concern.
-- **`data`.** No transport negotiation: small opaque `data` messages after the claim, for rendezvous, app-level key agreement or device pairing. A payload is 1 to 4,096 bytes, and a leg's payloads total at most 65,536 bytes. Each provider bounds the aggregate `data` bytes it relays per entity in a rolling window (provisional engine value 1 MiB per hour per entity, `BOUNDS.dataBytes`). It is not a transfer channel.
-- **Production gate for `data`** (spec §3.5): the aggregate budget enforced and tested at the engine level (done locally), a cost-model row (done: `dataEconomics()` in `scripts/cost-model.mjs`), and the AMD-SG-S1 custody statement reconciled with security.md (not done). At the full provisional budget Paid's worst-case margin is under the 50% floor (45.6%, or 33.6% with its full relay allowance; [unit economics](unit-economics.md) "Relayed signaling `data` bytes"). `tests/cost-model-margins.test.mjs` records this as a `todo` naming the release gate, so the budget needs lowering or tiering before release.
+- **`data`.** No transport negotiation: small opaque `data` messages after the claim, for rendezvous, app-level key agreement or device pairing. A payload is 1 to 4,096 bytes, and a leg's payloads total at most 65,536 bytes. Each provider bounds the aggregate `data` bytes it relays per entity in a rolling window (256 KiB per hour per entity on every plan, `BOUNDS.dataBytes`; owner-approved 2026-10-28). It is not a transfer channel.
+- **Production gate for `data`** (spec §3.5): the aggregate budget enforced and tested at the engine level (done locally), a cost-model row (done: `dataEconomics()` in `scripts/cost-model.mjs`), and the AMD-SG-S1 custody statement reconciled with security.md (not done). The budget is 256 KiB per hour per entity, the same on every plan (owner-approved 2026-10-28; it was 1 MiB). At that budget Paid's worst-case margin is 60.5%, over the 50% floor, but 48.5% with its full relay allowance as well ([unit economics](unit-economics.md) "Relayed signaling `data` bytes"). `tests/cost-model-margins.test.mjs` asserts the first and records the second as a `todo` naming the relay byte-cap gate.
 
 ## Establishment bases
 
@@ -165,7 +165,7 @@ Recorded in the DEVLOG entries above; each is provisional and unsigned, and a sp
 - the offer refresh lane requires the offer to admit the claimed sender (stricter than the text);
 - grant revocation also clears session handler approvals (L-7; §20.1.4 lists only connection end and manifest change);
 - any connection-generation change counts as connection end (above);
-- reference values: `data` budget 1 MiB per hour per entity with a pairing sub-budget of half; pairings capped at half of base pending capacity; maximum pairing expiry 366 days; fresh authentication within 5 minutes;
+- reference values: `data` budget 256 KiB per hour per entity with a pairing sub-budget of half (lowered from 1 MiB; owner-approved 2026-10-28); pairings capped at half of base pending capacity; maximum pairing expiry 366 days; fresh authentication within 5 minutes;
 - offer expiry, the pending-pairing limit and pairing expiry are also enforced at use, not only by sweeps (L-1).
 
 # Part II: superseded record, RTC signaling design revision 1 (2026-10-26)

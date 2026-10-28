@@ -60,7 +60,7 @@ export function changeTags(m,actions,provenance,now,{owner=false}={}){
 /** Rules match the immutable snapshot (delivery tags + live automated evidence), never rule/owner output,
  * and each rule fires at most once per message: no chains, no oscillation, idempotent replays. */
 export const automatedSnapshot=m=>Object.keys(m.automated??{}).filter(t=>!m.tagSuppressed?.includes(t));
-export async function applyRules(m,rules,{phase='intake',newly=[],now,active=async()=>true}={}){
+export async function applyRules(m,rules,{phase='intake',newly=[],now,active=async()=>true,effects=null}={}){
  const snapshot=new Set([...m.deliveryTags??[],...automatedSnapshot(m)]),origin={collection:Object.hasOwn(m,'deliveryCollection')?m.deliveryCollection:m.collection,mimeType:m.mimeType,grantId:m.grantId??null};
  const matches=([f,v])=>f==='tagsAll'?v.every(t=>snapshot.has(t)):f==='source'?true:origin[f]===v,sourced=rule=>!rule.match.source||rule.match.tagsAll.filter(isSuspectedTag).every(t=>m.automated?.[t]?.[rule.match.source]);
  for(const rule of rules){
@@ -72,6 +72,8 @@ export async function applyRules(m,rules,{phase='intake',newly=[],now,active=asy
   // A post-intake tag overflow skips only the tag changes; quarantine/collection still apply.
   try{changeTags(m,rule.actions,t=>from(t)?{...base,from:from(t)}:base,now);}catch(e){if(phase==='intake'||e.code!=='invalid_actions')throw e;Object.assign(m,backup);note(m,{at:now,op:'skip',ruleId:rule.id,reason:'tag_limit'});}
   // Only explicit owner action releases quarantine; automation never re-quarantines a released item.
+  // With `effects`, effectful actions are listed for the caller to execute later instead of applied now.
+  if(effects){if(rule.actions.quarantined)effects.push({kind:'quarantine',ruleId:rule.id});if(rule.actions.collection)effects.push({kind:'move',collection:rule.actions.collection,ruleId:rule.id});continue;}
   if(rule.actions.quarantined&&!m.quarantineReleased)m.quarantined=true;if(rule.actions.collection&&!m.organizationOverrides?.collection)m.collection=rule.actions.collection;
  }
  return m;
@@ -98,13 +100,15 @@ export function stampRules(next,prior){
  return next.map(({default:_,revision:__,...rule})=>{const p=byId.get(rule.id);if(rule.id.startsWith('default:')&&!p?.default)fail('invalid_rules');return {...rule,revision:p?bodyOf(p)===bodyOf(rule)?p.revision??1:(p.revision??1)+1:1,...p?.default?{default:p.default}:{}};});
 }
 const plain=v=>v!==null&&typeof v==='object'&&Object.getPrototypeOf(v)===Object.prototype;
-/** Classifier/heuristic boundary input: registered suspected IDs only, with bounded evidence. */
+/** Classifier/heuristic boundary input: registered suspected IDs only, with bounded evidence. `unscored` (classifier
+ * only, item-classification §8.4) records that classification was wanted but produced no score, with a reason token. */
 export function normalizeAutomatedResult(input){
  const status=input?.status??'complete';
- if(!plain(input)||Object.keys(input).some(k=>!['source','status','model','version','schema','labels'].includes(k))||!['classifier','heuristic'].includes(input.source)||!['complete','skipped','failed'].includes(status)||!boundedString(input.version,64)||input.model!==undefined&&!boundedString(input.model,100)||input.schema!==undefined&&!boundedString(input.schema,128)||!Array.isArray(input.labels)||input.labels.length>TAG_CATEGORIES.length||status!=='complete'&&input.labels.length)fail('invalid_classification');
+ if(plain(input)&&(input.reason!==undefined||status==='unscored')&&(input.source!=='classifier'||status!=='unscored'||typeof input.reason!=='string'||!/^[a-z_]{1,32}$/.test(input.reason)))fail('invalid_classification');
+ if(!plain(input)||Object.keys(input).some(k=>!['source','status','model','version','schema','labels','reason'].includes(k))||!['classifier','heuristic'].includes(input.source)||!['complete','skipped','failed','unscored'].includes(status)||!boundedString(input.version,64)||input.model!==undefined&&!boundedString(input.model,100)||input.schema!==undefined&&!boundedString(input.schema,128)||!Array.isArray(input.labels)||input.labels.length>TAG_CATEGORIES.length||status!=='complete'&&input.labels.length)fail('invalid_classification');
  const labels=input.labels.map(l=>{if(!plain(l)||Object.keys(l).some(k=>!['tag','probability'].includes(k))||!isSuspectedTag(l.tag)||l.probability!==undefined&&!(Number.isFinite(l.probability)&&l.probability>=0&&l.probability<=1))fail('invalid_classification');return {tag:l.tag,...l.probability!==undefined?{probability:l.probability}:{}};});
  if(new Set(labels.map(l=>l.tag)).size!==labels.length)fail('invalid_classification');
- return {source:input.source,status,...input.model!==undefined?{model:input.model}:{},version:input.version,...input.schema!==undefined?{schema:input.schema}:{},labels};
+ return {source:input.source,status,...input.model!==undefined?{model:input.model}:{},version:input.version,...input.schema!==undefined?{schema:input.schema}:{},...input.reason!==undefined?{reason:input.reason}:{},labels};
 }
 /** Deterministic, sender-controlled hints: suspected tags only, never final. */
 export function heuristicSuspectedTags(headers={}){
@@ -119,9 +123,10 @@ export function tagDisplay(id,labels={}){const s=systemTag(id);return s?{id,labe
 
 // Internal evidence boundary; no operation accepts caller-authored automated results. Classification invokes this
 // only after its consent, metering, scope and model/version/schema threshold checks, inside the result transaction.
-export async function applyAutomatedTags(tx,item,input,now){
- const result=normalizeAutomatedResult(input),m=organizationOf(item),{source,labels,model,version,schema}=result,newly=[];
- if(canonical(m.classificationResult?.[source]?.result)===canonical(result))return m;
+/** Records automated evidence on `m` (no rules, no save). Returns the newly evidenced tags, or null when unchanged. */
+export function recordAutomated(m,input,now){
+ const result=normalizeAutomatedResult(input),{source,labels,model,version,schema}=result,newly=[];
+ if(canonical(m.classificationResult?.[source]?.result)===canonical(result))return null;
  m.classificationResult={...m.classificationResult,[source]:{result,at:now}};
  for(const {tag,probability} of labels){
   const prior=m.automated?.[tag];if(prior?.[source])continue;
@@ -129,10 +134,52 @@ export async function applyAutomatedTags(tx,item,input,now){
   newly.push(tag);m.automated={...m.automated,[tag]:{...prior,[source]:evidence}};
   if(!prior&&!m.tagSuppressed?.includes(tag))addTag(m,tag,{source,...evidence},now);
  }
+ return newly;
+}
+export async function applyAutomatedTags(tx,item,input,now){
+ const m=organizationOf(item),newly=recordAutomated(m,input,now);if(newly===null)return m;
  m.mimeType??=item.content?.mimeType;m.grantId??=item.jti;
  if(newly.length)await applyRules(m,await ownerRules(tx),{phase:'automated',newly,now});
  if(m.quarantined)m.notification=null;m.organizationRevision++;
  return saveOrganization(tx,{...item,notification:m.notification},m);
+}
+/**
+ * Rule runs for an item awaiting auto-classification (owner decisions 2026-10-28). Rules run once before auto-tagging
+ * (provisional) and again after it completes (final, whatever the outcome: scored, unscored or failed). Each run yields
+ * {tags, effects}:
+ *  - tags (rule-added and rule-removed tags, `classification` included) are a blank slate: a run first reverts the
+ *    previous run's tag changes, so the final run's tags replace the provisional ones. Owner choices are never
+ *    reverted: owner-provenance and suppressed tags survive.
+ *  - effects are the effectful or destructive actions: today `quarantine` and `move` (collection) from rules, plus the
+ *    held delivery notification (`notify`). A provisional run only lists them; they are executed once, after the final
+ *    run, idempotently keyed by item and rule generation. Owner choices win here too: a released quarantine is not
+ *    re-applied and an owner collection override is not moved. Any later rule action with an external effect
+ *    (forwarding, auto-reply, deletion) joins this list and is never executed before the final run.
+ */
+export function revertRuleRun(m,now){
+ const run=m.ruleRun;if(!run)return m;
+ for(const tag of run.added??[])if(m.tags.includes(tag)&&m.tagProvenance?.[tag]?.source==='rule')removeTag(m,tag,{source:'rule-revert',ruleRun:run.run},now);
+ for(const {tag,provenance} of run.removed??[])if(!m.tags.includes(tag)&&!m.tagSuppressed?.includes(tag)){m.tags=[...m.tags,tag];m.tagProvenance={...m.tagProvenance,[tag]:provenance};note(m,{at:now,op:'restore',tag,source:'rule-revert',ruleRun:run.run});}
+ m.firedRules=(m.firedRules??[]).filter(id=>!(run.fired??[]).includes(id));
+ m.classification=classificationOf(m.tags,m.tagProvenance);delete m.ruleRun;return m;
+}
+/** One blank-slate run: reverts the previous run's tags, applies this run's tags, returns (and records) its effects. */
+export async function runRulesFresh(m,rules,{now,run,active}={}){
+ revertRuleRun(m,now);
+ const before={tags:new Set(m.tags),provenance:{...m.tagProvenance},fired:new Set(m.firedRules??[])},effects=[];
+ await applyRules(m,rules,{phase:'intake',now,effects,...active?{active}:{}});
+ const added=m.tags.filter(t=>!before.tags.has(t)&&m.tagProvenance?.[t]?.source==='rule'),removed=[...before.tags].filter(t=>!m.tags.includes(t)).map(tag=>({tag,provenance:before.provenance[tag]??{source:'unknown'}}));
+ m.ruleRun={run,added,removed,fired:(m.firedRules??[]).filter(id=>!before.fired.has(id)),effects};
+ m.classification=classificationOf(m.tags,m.tagProvenance);return effects;
+}
+/** Executes the final run's effects once per (item, generation). Returns the item's notification after them. */
+export function executeRuleEffects(m,effects,{generation,notification=null}){
+ const key=`${m.id}#${generation}`;if(m.effectsExecuted===key)return m.quarantined?null:notification;
+ for(const effect of effects){
+  if(effect.kind==='quarantine'&&!m.quarantineReleased)m.quarantined=true;
+  if(effect.kind==='move'&&!m.organizationOverrides?.collection)m.collection=effect.collection;
+ }
+ m.effectsExecuted=key;return m.quarantined?null:notification;
 }
 export function createTagsProvider({PARLAY_ENABLED=false}={}){
  return class TagsProvider extends OwnerScopedProvider {

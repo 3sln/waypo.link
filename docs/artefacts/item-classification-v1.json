@@ -2,105 +2,332 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spec.bindle.example/contracts/item-classification/v1",
   "title": "Item classification v1",
-  "description": "The item-classification/v1 contract of docs/spec/extensions/item-classification.md (draft, provisional, unsigned). Scores one item (text, bounded caller hints and optionally one inline media object) against a taxonomy the caller supplies with every call. The provider hard-codes no categories. Validates the contract method/args projection of a Bindle RPC envelope; the resource applies every rule of the specification (UTF-8 byte bounds, control-character refusal, one score per supplied label, no retention of item content, labels or scores).",
-  "type": "object",
-  "required": [
-    "method",
-    "args"
-  ],
-  "properties": {
-    "method": {
-      "const": "classify"
-    },
-    "args": {
-      "$ref": "#/$defs/classifyArgs"
-    }
-  },
-  "additionalProperties": false,
-  "$defs": {
-    "classifyArgs": {
+  "description": "The item-classification/v1 contract of docs/spec/extensions/item-classification.md (draft, provisional, unsigned). `capabilities` reports which kinds of items a classifier accepts; `classify` scores one item, given inline as base64url or as a presigned HTTPS URL the classifier fetches, against labels the caller supplies with every call, under the detail level the owner allows. The classifier hard-codes no categories. Validates the contract method/args projection of a Bindle RPC envelope; a classifier applies every rule of the specification (decoded size, UTF-8 text, presigned-URL and fetch rules, detail/tag consistency, one score per supplied label, no retention).",
+  "oneOf": [
+    {
       "type": "object",
       "required": [
-        "item",
-        "labels"
+        "method",
+        "args"
       ],
       "properties": {
-        "item": {
+        "method": {
+          "const": "capabilities"
+        },
+        "args": {
           "type": "object",
-          "anyOf": [
-            {
-              "required": [
-                "text"
-              ]
-            },
-            {
-              "required": [
-                "media"
-              ]
-            }
+          "maxProperties": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "method",
+        "args"
+      ],
+      "properties": {
+        "method": {
+          "const": "classify"
+        },
+        "args": {
+          "$ref": "#/$defs/classifyArgs"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "inlineItem": {
+      "type": "object",
+      "required": [
+        "kind",
+        "mediaType",
+        "size",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "text",
+            "image",
+            "audio",
+            "video",
+            "document",
+            "other"
+          ]
+        },
+        "mediaType": {
+          "type": "string",
+          "maxLength": 127,
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 349526,
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "description": "The item's bytes, exactly `size` of them. This schema validates the JSON transport, where they are unpadded base64url; under the planned CBOR transport they are a native byte string with the same bound."
+        }
+      },
+      "additionalProperties": false
+    },
+    "urlItem": {
+      "type": "object",
+      "required": [
+        "kind",
+        "mediaType",
+        "size",
+        "url"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "text",
+            "image",
+            "audio",
+            "video",
+            "document",
+            "other"
+          ]
+        },
+        "mediaType": {
+          "type": "string",
+          "maxLength": 127,
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 104857600
+        },
+        "url": {
+          "type": "object",
+          "required": [
+            "href",
+            "expiresAt"
           ],
           "properties": {
-            "text": {
+            "href": {
               "type": "string",
-              "maxLength": 4096
+              "maxLength": 4096,
+              "pattern": "^https://[^/?#@:]+(?:/[^#]*)?$"
             },
-            "hints": {
-              "type": "array",
-              "maxItems": 16,
-              "uniqueItems": true,
-              "items": {
-                "type": "string",
-                "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
-              }
-            },
-            "media": {
-              "type": "object",
-              "required": [
-                "type",
-                "data"
-              ],
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "pattern": "^[a-z]{1,20}/[a-z0-9][a-z0-9.+-]{0,99}$"
-                },
-                "data": {
-                  "type": "string",
-                  "maxLength": 349526,
-                  "pattern": "^[A-Za-z0-9_-]*$"
-                }
-              },
-              "additionalProperties": false
+            "expiresAt": {
+              "type": "integer",
+              "minimum": 0
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tags": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "type": "string",
+          "maxLength": 35,
+          "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,7}$"
         },
-        "labels": {
+        "source": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$"
+        },
+        "origin": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "context": {
           "type": "array",
           "minItems": 1,
           "maxItems": 16,
+          "uniqueItems": true,
           "items": {
-            "type": "object",
-            "required": [
-              "id",
-              "description"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
-              },
-              "description": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
-              }
-            },
-            "additionalProperties": false
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
           }
         }
       },
       "additionalProperties": false
+    },
+    "labels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "classifyArgs": {
+      "type": "object",
+      "required": [
+        "detail",
+        "item",
+        "labels"
+      ],
+      "properties": {
+        "detail": {
+          "enum": [
+            "minimal",
+            "standard",
+            "full"
+          ]
+        },
+        "item": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/inlineItem"
+            },
+            {
+              "$ref": "#/$defs/urlItem"
+            }
+          ]
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "detail": {
+              "const": "minimal"
+            },
+            "tags": {
+              "maxProperties": 0
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "standard"
+            },
+            "tags": {
+              "properties": {
+                "source": false,
+                "origin": false,
+                "context": false
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "full"
+            }
+          }
+        }
+      ]
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "capabilitiesResult": {
+      "type": "object",
+      "required": [
+        "kinds",
+        "maxLabels"
+      ],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "mediaTypes",
+              "inputs",
+              "maxBytes"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "mediaTypes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "items": {
+                  "type": "string",
+                  "maxLength": 127,
+                  "pattern": "^(?:\\*/\\*|[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/\\*|[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62})$"
+                }
+              },
+              "inputs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "maxLength": 32
+                }
+              },
+              "maxBytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 104857600
+              }
+            }
+          }
+        },
+        "maxLabels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        }
+      }
     },
     "classifyResult": {
       "type": "object",
@@ -112,9 +339,6 @@
         "scores": {
           "type": "object",
           "maxProperties": 16,
-          "propertyNames": {
-            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
-          },
           "additionalProperties": {
             "type": "number",
             "minimum": 0,
@@ -122,33 +346,23 @@
           }
         },
         "model": {
-          "type": "object",
-          "required": [
-            "id",
-            "version"
-          ],
-          "properties": {
-            "id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 100
-            },
-            "version": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64
-            }
-          }
+          "$ref": "#/$defs/model"
         }
       }
     }
   },
   "x-methods": {
+    "capabilities": {
+      "request": "#",
+      "result": "#/$defs/capabilitiesResult",
+      "effect": "read",
+      "permission": "Exact capabilities grant on an owner-assigned classifier. Side-effect-free: no charge, no item."
+    },
     "classify": {
       "request": "#",
       "result": "#/$defs/classifyResult",
       "effect": "write",
-      "permission": "Exact classify grant on an owner-assigned resource. Each call may debit the owner's paid classification allowance; item content, labels and scores are never retained."
+      "permission": "Exact classify grant on an owner-assigned classifier. Discloses the item (and tags up to the owner's detail level) to the classifier and may cost the owner; the item, URL, tags, labels and scores are never retained."
     }
   }
 }

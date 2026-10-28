@@ -8,7 +8,7 @@ DEVLOG.md is integrator-owned during this wave; this note supplies the B8 handof
 | SQLite-backed DO KV API and co-transactional recovery alarm | ___ | ___ | ___ |
 | Trusted service adapter/verifier interfaces below | ___ | ___ | ___ |
 | Monotonic local authorization snapshots and connection binding | ___ | ___ | ___ |
-| Slot snapshots/digests, including the classifier shared with B5/X10 | ___ | ___ | ___ |
+| Fragment snapshots/digests, including the shared item-classification fragment used by B5 | ___ | ___ | ___ |
 
 ## Placement and configuration
 
@@ -128,9 +128,12 @@ validation, local broker authority and SET ordering. Test keys/verifiers are fix
 BB-CUT still needs every other prerequisite, bridge/archive integration and simulator/browser gates; this
 workstream does not authorize cutover. Provider directory, introspection, installation/occupancy, ordinary
 credential storage and storage-resource adapters require integration and independent review. The classifier
-is requested through the Bindle item-classification fragment (contract `item-classification/v1`, extensions
-CR-X3-25); Parlay sends its own message categories with every call (`packages/messaging-engine/domains/categories.mjs`),
-and B5's consumer remains conservative about ambiguous dispatch failures (no failover after dispatch).
+is requested through the shared Bindle item-classification fragment (contract `item-classification/v1`, extensions
+CR-X3-25): the text and fallback classifier fields and their detail fields. Parlay sends its own message categories with
+every call (`packages/messaging-engine/domains/categories.mjs`), honours the owner's detail level, fails over to the
+fallback only on `unsupported_item` or a proven no-effect failure, and records items it could not score as `unscored`.
+Items the owner wants classified enter `classify.begin` (pending, notification held, provisional tags only) and
+`classify.item` completes them with the final rule run, whose effects (quarantine, moves, notification) then run once. No host adapter supplies the classifier port yet.
 
 Local gate results (2026-10-20, concurrent Wave 3 checkout): B8's 15 tests pass, including the workerd crash/
 recovery, finite SSE RPC transport, conversation index and live peer-authorization checks. Final `npm test`:

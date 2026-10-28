@@ -66,7 +66,10 @@ export function transferPortsFor(c,service){
   destinationKeys:configured.destinationKeys??(typeof c.config.TRANSFER_IN_PORTS?.fetch==='function'?destinationKeysPort(portabilityClient({fetch:c.config.TRANSFER_IN_PORTS.fetch,clock:clockOf(c)})):undefined),
   keys:configured.keys??{
    async current(owner){const history=await c.identityKeyHistory(owner,{purpose:'signing'});const key=history.find(entry=>entry.current===true&&entry.state==='active');return key?{kid:key.kid,publicJwk:key.publicJwk}:null;},
-   matches:(owner,keychain)=>c.recoveryKeysMatch(owner,keychain),
+   // Recovery file v3 (2026-10-28) holds no keychain, so no file proves key possession: transfer-out refuses with
+   // `recovery_invalid` until the portability revision (recovery and transfer spike, phase 2) replaces this check.
+   // `keyProof` is a seam for the dormant engine's own tests only; no adapter configures it.
+   matches:typeof configured.keyProof==='function'?configured.keyProof:async()=>false,
    destroy:owner=>destroyCustody(c,owner),
   },
   effects:configured.effects??{

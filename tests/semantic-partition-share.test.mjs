@@ -8,8 +8,12 @@ import {createTestEngine,OWNER} from './helpers/app-engine.mjs';
 import * as X from '../packages/runtime/account/classifier.mjs';
 import {clefRequest} from '../packages/runtime/account/classifier-models.mjs';
 // Caller-supplied taxonomy (item-classification/v1): these tests bring their own labels.
-const LABELS=['spam','social','promotional','recruitment','conversation','outreach','transactional','receipt','automation','verification','code'].map(id=>({id,description:'Category '+id+'.'}));
-const args=text=>X.classificationArgs({item:{text},labels:LABELS});
+const LABELS=['spam','social','promotional','recruitment','conversation','outreach'].map(id=>({id,description:'Category '+id+'.'}));
+import {encodeBase64url} from '../packages/sdk/src/item-classification.mjs';
+import {deterministicClassifierModel} from '../packages/runtime/account/classifier-models.mjs';
+const NOW=Date.UTC(2026,9,23,12),wire=text=>{const bytes=new TextEncoder().encode(text);return {detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:bytes.length,data:encodeBase64url(bytes)},labels:LABELS};};
+const STUB={configured:true,mediaTypes:['text/plain']};
+const args=text=>X.classificationArgs(wire(text),{now:NOW,ai:STUB});
 import {GlobalSemanticBudget} from '../packages/runtime/semantic-budget.mjs';
 import {LeasedSemanticSpend} from '../packages/runtime/semantic-leases.mjs';
 import {semanticShard,SEMANTIC_LAYOUT,semanticBudgetPartition} from '../packages/runtime/semantic-routing.mjs';
@@ -31,11 +35,11 @@ test('one account using its classifier allowance does not pause semantic search 
  const authorityFor=async id=>({partition:await semanticShard(id,SEMANTIC_LAYOUT.budgetShards),authority:{async reserveLease(input){const g=await authority.reserveLease(input);return {...g,owner:input.owner,partition:input.partition,layoutVersion:SEMANTIC_LAYOUT.version};}}});
  const spend=new LeasedSemanticSpend({metadata:global.metadata,clock:global.clock.now,authorityFor});
  const response=()=>({model:'clef-flash',answers:Object.fromEntries(LABELS.map(l=>[l.id,.01]))});
- const ai=X.classifierAI({binding:{async run(){return response();}},spend,clock:global.clock,version:'v1',eligible:async()=>true,admitWork:async()=>true});
+ const ai=X.classifierAI({model:{...deterministicClassifierModel(),run:async()=>response()},spend,clock:global.clock,version:'v1',plan:async()=>'ultra',admitWork:async()=>true});
  const e=await createTestEngine({clock:global.clock,providers:{config,ai}});t.after(()=>e.dispose());await e.metadata.put('owner',OWNER);
  const h=await createTestEngine({clock:e.clock,providers:{config,ai,accountStore:e.metadata}});t.after(()=>h.dispose());
  const perform=(Operation,input,actor=owner)=>h.perform(new Operation({actor,...input===undefined?{}:{input}}));
- let ok=0;for(let i=0;i<40;i++){try{await perform(X.ClassifierClassify,{item:{text:'probe '+i,hints:[]},labels:LABELS},system);ok++;}catch(error){if(error.code!=='semantic_global_budget')throw error;break;}}
+ let ok=0;for(let i=0;i<40;i++){if(i%20===19)global.clock.advance(60000);try{await perform(X.ClassifierClassify,wire('probe '+i),system);ok++;}catch(error){if(error.code!=='rate_limited')throw error;break;}}
  assert.ok(ok>0);
  const other=await createTestEngine();t.after(()=>other.dispose());
  const neighbourSpend=new LeasedSemanticSpend({metadata:other.metadata,clock:global.clock.now,authorityFor});
@@ -45,8 +49,9 @@ test('one account using its classifier allowance does not pause semantic search 
 
 test('a single account within its classifier allowance cannot exhaust semantic admission for partition neighbours',async()=>{
  const spend=partitions(),attacker=crypto.randomUUID(),victim=await neighbourOf(attacker);
- const ai=X.classifierAI({binding:{run:async()=>({})},spend,eligible:async()=>true,admitWork:async()=>true,version:'v1'});
- let calls=0;for(;calls<X.CLASSIFIER_LIMITS.dailyCalls;calls++){try{await ai.reserve(attacker);}catch{break;}}
+ const ai=X.classifierAI({binding:{run:async()=>({})},spend,plan:async()=>'ultra',admitWork:async()=>true,version:'v1'});
+ let calls=0;for(;calls<1000;calls++){try{await ai.reserve(attacker,3000);}catch{break;}}
+ assert.ok(calls>0,"the attacker leased until its owner share ran out");
  const victimSpend=new LeasedSemanticSpend({metadata:memory(),authorityFor:spend.authorityFor});
  for(let i=0;i<20;i++){await assert.doesNotReject(victimSpend.reserve({owner:victim,operation:'embed',units:512}),`after ${calls} classifier calls the victim's search #${i+1} was refused`);await assert.doesNotReject(victimSpend.reserve({owner:victim,operation:'query',units:384}));}
 });
@@ -71,32 +76,32 @@ test('one owner may spend only its configured share of a partition; neighbours k
 test('classifier leases use their own ledger and never consume semantic owner admissions',async()=>{
  const metadata=memory(),budget=new GlobalSemanticBudget({metadata,config:{SEMANTIC_GLOBAL_MAX_OWNERS:'1'},clock:()=>Date.UTC(2026,9,23,12)});
  const a='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',b='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
- const grant=await budget.reserveLease({owner:a,microUSD:500,upsertSlots:0,ledger:'classifier'});assert.equal(grant.ledger,'classifier');
- assert.equal(await metadata.get('semantic/stock'),undefined);assert.equal(await metadata.get('semantic/day'),undefined);assert.equal((await metadata.get('classifier/day')).microUSD,500);
+ const grant=await budget.reserveLease({owner:a,microUSD:500,upsertSlots:0,ledger:'ai'});assert.equal(grant.ledger,'ai');
+ assert.equal(await metadata.get('semantic/stock'),undefined);assert.equal(await metadata.get('semantic/day'),undefined);assert.equal((await metadata.get('ai/day')).microUSD,500);
  // The only semantic owner admission is still available to a different account.
  await budget.reserveLease({owner:b,microUSD:128,upsertSlots:0});assert.deepEqual(await metadata.get('semantic/stock'),{owners:1,upserts:0});
- await assert.rejects(budget.reserveLease({owner:a,microUSD:0,upsertSlots:1,ledger:'classifier'}),{code:'semantic_global_budget'});
+ await assert.rejects(budget.reserveLease({owner:a,microUSD:0,upsertSlots:1,ledger:'ai'}),{code:'semantic_global_budget'});
  await assert.rejects(budget.reserveLease({owner:a,microUSD:1,upsertSlots:0,ledger:'other'}),{code:'semantic_global_budget'});
 });
 
 test('classifier charges a request-sized estimate instead of a flat 1,000 microUSD',async()=>{
  const spend=partitions(),owner=crypto.randomUUID(),leases=[];
  const authorityFor=async id=>{const r=await spend.authorityFor(id);return {...r,authority:{reserveLease:async input=>{leases.push(input);return r.authority.reserveLease(input);}}};};
- const ai=X.classifierAI({binding:{run:async()=>({})},spend:{authorityFor},eligible:async()=>true,admitWork:async()=>true,version:'v1'});
+ const ai=X.classifierAI({binding:{run:async()=>({})},spend:{authorityFor},plan:async()=>'ultra',admitWork:async()=>true,version:'v1'});
  const small=clefRequest(args('hi')),large=clefRequest(args('x'.repeat(X.CLASSIFIER_LIMITS.textBytes)));
  assert.deepEqual(await ai.reserve(owner,X.classifierCostMicroUSD(small)),{microUSD:X.classifierCostMicroUSD(small)});await ai.reserve(owner,X.classifierCostMicroUSD(large));
- assert.equal(leases[0].ledger,'classifier');assert.ok(leases[0].microUSD<leases[1].microUSD);assert.ok(leases[1].microUSD<X.CLASSIFIER_LIMITS.microUSD);
+ assert.equal(leases[0].ledger,'ai');assert.ok(leases[0].microUSD<leases[1].microUSD);assert.ok(leases[1].microUSD<X.CLASSIFIER_LIMITS.microUSD);
  // Review follow-up: the state is conservatively priced once per question (tokens <= bytes, $0.038 per million).
  const b=v=>new TextEncoder().encode(typeof v==='string'?v:JSON.stringify(v)).length,questions=Object.values(small.questions);
  assert.equal(X.classifierCostMicroUSD(small),Math.ceil((questions.length*b(small.state)+questions.reduce((n,q)=>n+b(q),0)+b(small.model))*0.038));
- // Worst bounded requests (escape-heavy text near the 8 KiB request cap) stay under the classifier lease ceiling.
- for(const ch of ['\u0001','"','a','\u{1F600}'])for(let n=1;n<=2000;n+=37){let r;try{r=clefRequest(args(ch.repeat(n)));}catch(error){assert.doesNotMatch(error.message,/cost/);continue;}assert.ok(X.classifierCostMicroUSD(r)<=X.CLASSIFIER_LIMITS.microUSD);}
+ // Worst bounded requests (escape-heavy text up to the 2,000-byte capability) stay under the classifier lease ceiling.
+ for(const ch of ['\u0001','"','a','\u{1F600}'])for(let n=1;n*new TextEncoder().encode(ch).length<=2000;n+=37){const r=clefRequest(args(ch.repeat(n)));assert.ok(X.classifierCostMicroUSD(r)<=X.CLASSIFIER_LIMITS.microUSD);}
 });
 
 test('a budget whose owner share cannot hold one lease is rejected at construction',()=>{
  const metadata=memory();
  assert.throws(()=>new GlobalSemanticBudget({metadata,config:{SEMANTIC_GLOBAL_DAILY_MICRO_USD:'1270'}}),/semantic owner share is below one lease/);
- assert.throws(()=>new GlobalSemanticBudget({metadata,config:{CLASSIFIER_GLOBAL_DAILY_MICRO_USD:'29990'}}),/classifier owner share is below one lease/);
+ assert.throws(()=>new GlobalSemanticBudget({metadata,config:{AI_GLOBAL_DAILY_MICRO_USD:'29990'}}),/ai owner share is below one lease/);
  assert.throws(()=>new GlobalSemanticBudget({metadata,config:{SEMANTIC_GLOBAL_DAILY_MICRO_USD:'2000',SEMANTIC_OWNER_SHARE_PERCENT:'5'}}),TypeError);
  // Production partition defaults hold at least one lease for each ledger.
  for(let p=0;p<SEMANTIC_LAYOUT.budgetShards;p++)new GlobalSemanticBudget({metadata,config:semanticBudgetPartition({},p)});

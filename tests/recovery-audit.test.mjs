@@ -7,7 +7,8 @@ import { encryptRecoveryFile, decryptRecoveryFile, inspectRecoveryFile } from '.
 // Independently reviewed boundaries; the implementation owner's broader suite
 // is tests/recovery-file.test.mjs. These tests use real Argon2id and a second
 // AES-GCM API, not a substitute KDF or mocked authentication primitive.
-const payload = { version: 1, issuer: 'https://identity.example', handle: 'alice', recoveryToken: 'audit-only-random-token', warning: 'Private fixture' };
+const ENTITY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const payload = { version: 3, issuer: 'https://identity.example', entity: ENTITY, recoveryToken: `${ENTITY}.${'a'.repeat(43)}`, fileId: 'AAAAAAAAAAAAAAAAAAAAAA', issuedAt: 1798416000000 };
 const questions = [
   { id: 'leading', type: 'pin', prompt: 'Your PIN', hint: 'All digits matter' },
   { id: 'phrase', type: 'passphrase', prompt: 'Your phrase', hint: '' },
@@ -26,7 +27,7 @@ test('audit: real Argon2 tuple and envelope decrypt with independent Node AES-GC
   ]]));
   const key = await argon2id({ password, salt: Uint8Array.from({ length: 16 }, (_, i) => i + 1), memorySize: 65536, iterations: 3, parallelism: 1, hashLength: 32, outputType: 'binary' });
   const aad = Buffer.from(JSON.stringify([
-    '3sln-recovery', 1, '3sln-answers-v1',
+    '3sln-recovery', 2, 'AAAAAAAAAAAAAAAAAAAAAA', '3sln-answers-v1',
     [['leading', 'pin', 'Your PIN', 'All digits matter'], ['phrase', 'passphrase', 'Your phrase', '']],
     ['argon2id', 19, 65536, 3, 1, 32, 'AQIDBAUGBwgJCgsMDQ4PEA'],
     ['AES-256-GCM', 'AQIDBAUGBwgJCgsM'],

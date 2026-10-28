@@ -13,6 +13,7 @@ import {IdentityRepository} from '../packages/runtime/accounts.mjs';
 import {accountActor,personActor,actingAs,organizationPowers,requireFresh} from '../packages/orgs/authority.mjs';
 import {OrganizationService,ORG_RECORD,ORG_DELETION_DELAY_MS,ORG_CREATION_LIMIT,ORG_LABELS,allowlistPlanPort,organizationName} from '../packages/orgs/organizations.mjs';
 import {OrganizationCreation} from '../packages/orgs/creation.mjs';
+import {identityBackupPort} from '../packages/runtime/identity-backup.mjs';
 import {organizationIdentityPort,interactiveIdentity} from '../packages/identity/organizations.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick} from '../packages/app/domains/orgs.mjs';
 import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
@@ -43,8 +44,9 @@ async function world({seed=1,enabled=true,paid=[ALICE,BOB],purge}={}){
  const dispatch=(owner,{operation,actor,input})=>{const w=writer(owner);return w.gate.run(async()=>{const Operation=ORG_OPERATIONS.find(O=>O.operation===operation);if(!Operation)throw Object.assign(new Error('Not found.'),{code:'not_found'});const resolved=await accountActor({owner,requested:actor,Operation,issuer:ISSUER,organization:()=>w.metadata.get(ORG_RECORD)});await warm(w,owner);return run(w,new Operation({actor:resolved,...input===undefined?{}:{input}}));});};
  const system=(owner,Operation,input)=>{const w=writer(owner);return w.gate.run(async()=>{await warm(w,owner);return run(w,new Operation({actor:{kind:'system',owner},...input===undefined?{}:{input}}));});};
  const repository=new IdentityRepository({metadata:new SqliteMetadata(':memory:'),config:{}}),identity=organizationIdentityPort(repository,{clock:clock.now});
- const issued=[];let kid=0;
- const backup={async issue(account,recoveryToken,{rotation}={}){const rotated=Boolean(rotation?.always)&&issued.some(f=>f.entity===account.id);const file={entity:account.id,recoveryToken,keychain:{version:1,signing:{kid:`kid-${account.id.slice(0,4)}-${rotated?++kid:issued.some(f=>f.entity===account.id)?kid:++kid}`}}};issued.push(file);return {backup:file,rotation:{rotated,requested:Boolean(rotation)}};}};
+ // The real v3 port (no account calls for issuance), recording every file it issued.
+ const issued=[],realPort=identityBackupPort({config:{APP_ORIGIN:ISSUER},accounts:{get(){throw new Error('issuance never reaches an account writer');}}});
+ const backup={async issue(account,recoveryToken){const result=await realPort.issue(account,recoveryToken,{issuedAt:clock.now()});issued.push(result.file);return result;}};
  const creation=new OrganizationCreation({issuer:ISSUER,identity,backup,
   person:{reserve:(actor,input)=>dispatch(actor.entity.id,{operation:'orgs.reserve',actor,input}),confirm:(owner,input)=>system(owner,ConfirmOrganization,input)},
   org:{initialize:(org,input)=>system(org,InitializeOrganization,input)}});
@@ -94,7 +96,7 @@ test('ORG-1: creation needs the flag, a fresh authentication and a paid plan; it
  assert.equal(created.organization.name,'Acme Ltd');assert.equal(created.organization.label,'company');assert.deepEqual(created.organization.ownerOfRecord,{iss:ISSUER,sub:ALICE});
  assert.equal(created.recoveryFile.fileName,`3sln-organization-recovery-${org}.json`);assert.equal(JSON.parse(created.recoveryFile.content).entity,org);
  const identity=await w.identity.get(org);
- assert.equal(identity.kind,'organization');assert.equal(identity.status,'active');assert.equal(identity.handle,created.organization.handle);assert.ok(identity.recovery.issuedAt>0);assert.equal(identity.recovery.keyKid,JSON.parse(created.recoveryFile.content).keychain.signing.kid);
+ assert.equal(identity.kind,'organization');assert.equal(identity.status,'active');assert.equal(identity.handle,created.organization.handle);assert.ok(identity.recovery.issuedAt>0);assert.equal(identity.recovery.fileId,JSON.parse(created.recoveryFile.content).fileId);assert.equal(created.recoveryFile.content.includes('keychain'),false);
  const stored=await w.repository.get(org);assert.deepEqual([stored.credentials,stored.sessions,stored.passwordHash,stored.emailLoginEnabled],[[],[],null,false],'no interactive login');assert.equal(interactiveIdentity(stored),false);
  assert.equal((await transferIdentityPort(w.repository).get(org)).kind,'organization','portability sees the kind and keeps refusing organization moves');
  const list=await w.dispatch(ALICE,{operation:'orgs.list',actor:w.self(w.person(ALICE))});assert.deepEqual(list.organizations.map(o=>o.id),[org]);assert.deepEqual(list.pending,[]);
@@ -105,15 +107,15 @@ test('ORG-1: creation needs the flag, a fresh authentication and a paid plan; it
  assert.equal(w.issued.length,1);
 });
 
-test('ORG-1: an interrupted creation resumes with a rotated replacement file, and the superseded credential is never current',async t=>{
+test('ORG-1: an interrupted creation resumes with a replacement file, and the superseded credential is never current',async t=>{
  const w=await world();t.after(w.close);
  let crashes=1;
  w.creation.identity={...w.identity,bindRecovery:async(...args)=>{const result=await w.identity.bindRecovery(...args);if(crashes-->0)throw new Error('lost response');return result;}};
  await assert.rejects(w.create(BOB),/lost response/);
  const pending=await w.dispatch(BOB,{operation:'orgs.list',actor:w.self(w.person(BOB))});assert.equal(pending.organizations.length,0);assert.equal(pending.pending.length,1);
  const resumed=await w.create(BOB);
- assert.equal(w.issued.length,2);assert.notEqual(w.issued[0].keychain.signing.kid,w.issued[1].keychain.signing.kid,'the retry rotated the signing key');
- const stored=await w.repository.get(resumed.organization.id);assert.equal(stored.recoveryKeyKid,w.issued[1].keychain.signing.kid);
+ assert.equal(w.issued.length,2);assert.notEqual(w.issued[0].fileId,w.issued[1].fileId,'the retry issued a new file');
+ const stored=await w.repository.get(resumed.organization.id);assert.equal(stored.recoveryFileId,w.issued[1].fileId);assert.equal(stored.recoveryBackupVersion,3);
  assert.equal(JSON.parse(resumed.recoveryFile.content).recoveryToken,w.issued[1].recoveryToken);
  assert.deepEqual((await w.dispatch(BOB,{operation:'orgs.list',actor:w.self(w.person(BOB))})).pending,[]);
 });
@@ -191,7 +193,7 @@ test('ORG-1 chaos: concurrent creates keep one organization per request key and 
    assert.equal(new Set(list.organizations.map(o=>o.id)).size,list.organizations.length);
    for(const {id}of list.organizations){const identity=await w.identity.get(id);assert.equal(identity.kind,'organization');assert.equal(identity.status,'active');assert.equal((await w.record(id)).ownerOfRecord.sub,ALICE);}
    // Exactly one current file per organization: its bound kid is the newest issued for that entity.
-   for(const {id}of list.organizations){const files=w.issued.filter(f=>f.entity===id);assert.equal((await w.repository.get(id)).recoveryKeyKid,files.at(-1)?.keychain.signing.kid??(await w.repository.get(id)).recoveryKeyKid);}
+   for(const {id}of list.organizations){const files=w.issued.filter(f=>f.entity===id);assert.equal((await w.repository.get(id)).recoveryFileId,files.at(-1)?.fileId??(await w.repository.get(id)).recoveryFileId);}
   }finally{await w.close();}
  });
 });

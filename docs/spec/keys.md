@@ -2,7 +2,7 @@
 
 > **Group:** Bindle core
 >
-> **Status:** draft, 2026-10-27, provisional and unsigned (contacts and links spike CL-2, CR-K1). The text below is moved unchanged in substance from links §3.1 (the JWS profile) and links §7.2 (the signature-domain table); only its scope is generalized. The shared core module is `packages/core/signed-object.mjs` (contacts spike CR-C0). The Organizations link envelope keeps its own parser and signer in `packages/orgs/link-envelope.mjs`, which replaced the removed `packages/links/envelope.mjs` in contacts phase 4 (CR-C2); its verifier exceptions are stated in its annex §3.1. Nothing is production-verified.
+> **Status:** draft, 2026-10-27, provisional and unsigned (contacts and links spike CL-2, CR-K1). That this profile lives in a short core `keys.md` (contacts spike §11 Q2) is owner-approved 2026-10-28; the text itself is not signed off. The text below is moved unchanged in substance from links §3.1 (the JWS profile) and links §7.2 (the signature-domain table); only its scope is generalized. The shared core module is `packages/core/signed-object.mjs` (contacts spike CR-C0). The Organizations link envelope keeps its own parser and signer in `packages/orgs/link-envelope.mjs`, which replaced the removed `packages/links/envelope.mjs` in contacts phase 4 (CR-C2); its verifier exceptions are stated in its annex §3.1. Nothing is production-verified.
 >
 > **Covers:** the strict JSON rules and compact JWS profile every Bindle signed object uses, and the rule that keeps objects signed by one key separable (signature domains).
 >

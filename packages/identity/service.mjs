@@ -8,6 +8,8 @@ import { DeviceLogin } from './device-login.mjs';
 import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revokeAllLineage } from './linked-approval.mjs';
 import { interactiveIdentity } from './organizations.mjs';
 import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './authority-epoch.mjs';
+import {createRecoveryPayload,RECOVERY_FILE_ID} from '../recovery/index.mjs';
+import {recoveryReminder} from './recovery-reminder.mjs';
 
 /**
  * DX-6 identity security state (docs/architecture/account-deletion-export.md §2.1, §3, §6, R1-H1).
@@ -27,7 +29,7 @@ import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './aut
  *   verified email removed and the email-notice waiver (emailRemove), email sign-in enabled (configureEmailLogin
  *   false→true), credential added (registerPasskey, credentialFinish) or removed (removePasskey), password set
  *   (setPendingPassword; there is no other password-change path), recovery-file recovery (recover: start and resume)
- *   and recovery-file rotation (downloadRecovery, which every setup and recovery completion requires), an active-account
+ *   and recovery-file issuance (downloadRecovery, which every setup and recovery completion requires), an active-account
  *   reissue commit (reissueRecoveryConfirm) and its cancellation (reissueRecoveryCancel*, which also raises
  *   `federationGeneration` so no OAuth grant survives the restored credential).
  * Never bumped by: sessions (create, use, close, revoke), step-up, terms acceptance, renames, passkey counter
@@ -43,32 +45,43 @@ import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './aut
  *   Consumers: deletion grace (30 days when now - changedAt < 72 h; deadline >= changedAt + 14 d during grace),
  *   the export ready-delay (notBefore = changedAt + 72 h) and the export download binding (job epoch === epoch).
  *
- * Recovery credential and key binding (identity portability P14, P15; PORT-10):
- *   recoveryIssuedAt       identity clock (ms) at which the CURRENT reset credential (`recoveryHash`) was issued,
- *                          written in the same CAS as the hash. P14's 7-day age rule reads it through
- *                          `recoveryCredential(account)`; a record without it has no provable age (fails closed).
- *   recoveryKeyKid         the signing kid the current v2 file carries; `recoveryResumeKeyKid` the kid of the file
- *                          whose credential resumes an in-progress recovery. Both are bound in the same CAS as the
- *                          credential they describe and removed with it.
- *   downloadRecovery       rotates the signing key with keys.mjs continuity before issuing whenever an earlier file
- *                          may hold the current key (a re-download during setup, the replacement file after a
- *                          recovery, a future active-account reissue), so a superseded file holds a retired key that
- *                          signs nothing honoured. The first file of a new identity adopts the existing signer. A full
- *                          history of referenced keys issues without rotating; the audit records which happened.
- *   reissueRecoveryBegin / reissueRecoveryConfirm   the active-account reissue (recovery-identity spec "Active-account
+ * Recovery credential (recovery file v3, option C, owner approval 2026-10-28; identity portability P14):
+ *   The file is an opaque credential {version:3, issuer, entity, recoveryToken, fileId, issuedAt} encrypted on the device
+ *   (packages/recovery/index.mjs). It holds no keys, so issuing it never rotates or binds a key (P15 and the recovery kid
+ *   binding are withdrawn). Envelope v1 files (payloads v1 and v2) are not recognised: a record whose credential is not
+ *   v3 has no usable credential and the console asks for a new file (`reissueRequired: 'legacy-format'`).
+ *   recoveryHash           domain-separated hash of the CURRENT reset credential.
+ *   recoveryIssuedAt       identity clock (ms) at which it became the current credential, written in the same CAS as the
+ *                          hash. P14's 7-day age rule and the annual reminder read it through `recoveryCredential(account)`.
+ *                          The file payload's `issuedAt` is when the server minted the file. They are equal for the
+ *                          first file (one write) and for organization files (`bindRecovery` stores the payload's
+ *                          value); after a reissue the record holds the confirm time and the payload the begin time
+ *                          (earlier, within RECOVERY_REISSUE_TTL_MS), because the file is encrypted on the device before
+ *                          it can become current. Nothing compares them: the record decides, the check-up uses fileId.
+ *   recoveryFileId         the public id of the current file (envelope header and payload); the console's local
+ *                          check-up compares it. `recoveryBackupVersion` 3 marks a v3 credential.
+ *   recoveryResumeHash / recoveryResumeFileId / recoveryResumeBackupVersion   the credential that resumes an
+ *                          in-progress recovery.
+ *   recoveryReminder       {fileId, slot, at}: the last annual reminder slot sent for that file (recovery-reminder.mjs).
+ *   downloadRecovery       issues a new v3 file during setup or after a recovery (budgeted: 5 per setup token).
+ *   reissueRecoveryBegin / reissueRecoveryConfirm   the active-account reissue (recovery-identity "Active-account
  *                          reissue", provisional). Begin needs a fresh step-up with a credential enrolled >= 7 days
  *                          earlier (`session.stepUpCredential`, `passwordSetAt`), or an armed forced marker
- *                          `recoveryReissue` = {reason:'elevated-abort'|'transfer-in', at, kid?}; it rotates through the
- *                          account single writer (identityBackup.reissue) and stages `recoveryStaged` = {hash, kid,
- *                          encryptionKid, sessionId, preparedAt, expiresAt, base, forced?}. Confirm runs the account
- *                          gate (identityBackup.reissueCommit: refuses deletion/moved/contested and a staged file whose
- *                          keys no longer restore, cancels a live transfer-out)
- *                          and then makes the staged credential current in one CAS with a `security` bump, opening the
- *                          7-day cooling-off window `recoveryPrevious` (wargame 2026-10-23 #1, provisional): the new file
- *                          cannot start a recovery and the previous one can only cancel (`pendingReissue`). Begin needs a
- *                          passkey step-up whenever the account has a passkey.
+ *                          `recoveryReissue` = {reason:'elevated-abort'|'transfer-in', at}; it passes the account gate
+ *                          (identityBackup.reissue) and stages `recoveryStaged` = {hash, fileId, sessionId, preparedAt,
+ *                          expiresAt, base, forced?}. The current file is never cancelled before the owner
+ *                          acknowledges the new one: confirmation (the browser compared the hash of the re-uploaded
+ *                          encrypted file with the bytes it downloaded, then posts the staged token and file id) runs
+ *                          the account gate (identityBackup.reissueCommit: refuses deletion/moved/contested, cancels a
+ *                          live transfer-out) and then makes the staged credential current in one CAS with a
+ *                          `security` bump, opening the 7-day cooling-off window `recoveryPrevious` (wargame
+ *                          2026-10-23 #1, kept by owner approval 2026-10-28): the new file cannot start a recovery and
+ *                          the previous one can only cancel (`pendingReissue`). Begin needs a passkey step-up whenever
+ *                          the account has a passkey. An abandoned or expired staging leaves the current file current.
  *   reissueRecoveryCancel / ...CancelEmail / ...CancelFile   cancel the window from a session created before the reissue
  *                          began, the emailed link, or the previous file (cancelReissue).
+ *   sendRecoveryReminder   the annual reissue offer (a reminder only; it changes no credential): 30 days before the
+ *                          file's anniversary, on it, then every 30 days, by email and push; acceptance, not delivery.
  *
  * Email removal resources (constructor, both optional, both fail closed):
  *   flags            flags port {for(ctx)} or a thunk returning the current one; EMAIL_REMOVAL_ENABLED is read with
@@ -77,11 +90,14 @@ import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './aut
  *                    packages/runtime/account-channels.mjs. Missing ⇒ no other notice channel.
  */
 /** The current recovery credential's issuance facts for P14, or null when there is none that could start a recovery
- * now (not active, no credential, or a legacy record without a recorded issuance time). Pure. */
+ * now (not active, no credential, no recorded issuance time, or a legacy v1/v2 credential). `keyKid` is always null
+ * (v3 files hold no keys); dormant transfer-out still reads it. Pure. */
 export function recoveryCredential(account){
-  if(account?.status!=='active'||typeof account.recoveryHash!=='string'||!account.recoveryHash||!nonNegative(account.recoveryIssuedAt))return null;
-  return Object.freeze({issuedAt:account.recoveryIssuedAt,version:account.recoveryBackupVersion===2?2:1,keyKid:typeof account.recoveryKeyKid==='string'?account.recoveryKeyKid:null});
+  if(account?.status!=='active'||typeof account.recoveryHash!=='string'||!account.recoveryHash||!nonNegative(account.recoveryIssuedAt)||!currentFormat(account))return null;
+  return Object.freeze({issuedAt:account.recoveryIssuedAt,version:3,fileId:account.recoveryFileId,keyKid:null});
 }
+/** Whether the record's current credential belongs to a v3 file. Pure. */
+const currentFormat=account=>account?.recoveryBackupVersion===3&&typeof account.recoveryFileId==='string'&&RECOVERY_FILE_ID.test(account.recoveryFileId);
 /** Recovery-credential age for P14, and the reissue-authority credential age (P18, P19): 7 days. */
 export const RECOVERY_CREDENTIAL_AGE_MS = 7 * 86400000;
 /** How long a staged reissue waits for its confirmation (phase 2). */
@@ -100,15 +116,15 @@ export const SECURITY_LOOKBACK_MS = 30 * 86400000;
 const SECURITY_RETENTION_MS = SECURITY_LOOKBACK_MS + 3600000;
 /** One account security notice per account and type per 10 minutes; later ones are coalesced into the next. */
 export const SECURITY_NOTICE_COALESCE_MS = 600000;
-/** The live cooling-off record `account.recoveryPrevious` = {hash, issuedAt, kid, version, marker, reissuedAt,
- * preparedAt, until, newKid, cancelHash, credential}, or null when no reissue is pending at `now`. Pure. */
-export function pendingReissue(account, now){const p=account?.recoveryPrevious;return p&&typeof p==='object'&&Number.isSafeInteger(p.until)&&p.until>now&&Number.isSafeInteger(p.reissuedAt)&&Number.isSafeInteger(p.preparedAt)&&typeof p.newKid==='string'?p:null;}
+/** The live cooling-off record `account.recoveryPrevious` = {hash, issuedAt, fileId, version, marker, reissuedAt,
+ * preparedAt, until, newFileId, cancelHash, credential}, or null when no reissue is pending at `now`. Pure. */
+export function pendingReissue(account, now){const p=account?.recoveryPrevious;return p&&typeof p==='object'&&Number.isSafeInteger(p.until)&&p.until>now&&Number.isSafeInteger(p.reissuedAt)&&Number.isSafeInteger(p.preparedAt)&&typeof p.newFileId==='string'?p:null;}
 /** The step-up credential as the P17 contest window compares it: a passkey id, 'password', or null. */
 export const stepUpCredentialId = session => session?.stepUpCredential?.kind==='passkey'&&typeof session.stepUpCredential.id==='string'?session.stepUpCredential.id:session?.stepUpCredential?.kind==='password'?'password':null;
 const LOGIN_TOKEN=/^pl1\.([A-Za-z0-9_-]{1,800})\.([A-Za-z0-9_-]{43})$/;
-/** The armed forced-reissue marker `account.recoveryReissue` = {reason, at, kid?}, or null. Pure. */
+/** The armed forced-reissue marker `account.recoveryReissue` = {reason, at}, or null. Pure. */
 export function reissueMarker(account){const marker=account?.recoveryReissue;return marker&&typeof marker==='object'&&RECOVERY_REISSUE_REASONS.includes(marker.reason)&&Number.isSafeInteger(marker.at)&&marker.at>=0?marker:null;}
-const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.kid==='string'&&typeof value.encryptionKid==='string'&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
+const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.fileId==='string'&&RECOVERY_FILE_ID.test(value.fileId)&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
 /** Account security notices sent to every channel (review 2026-10-23 R1(ii)). */
 export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','password-changed']);
 export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','recovery-file-reissued','recovery-reissue-cancelled','account-recovery-started','recovery-setup-resumed']);
@@ -427,41 +443,60 @@ export class IdentityService {
     this.audit(account, 'password-configured'); this.securityChanged(account); if (account.status === 'recovering') this.queueNotice(account, 'password-changed', 'recovery'); await this.save(account, revision);
     return { readyForRecovery: true };
   }
+  /** A fresh v3 payload for `account` and the hash that binds its credential. The token is `<id>.<32 random bytes>` and
+   * the file id 16 random bytes; neither derives from anything else. */
+  async issueRecoveryFile(account){
+    const recoveryToken=`${account.id}.${this.crypto.random()}`,fileId=this.crypto.random(16),issuedAt=this.clock();
+    const payload=createRecoveryPayload({issuer:this.config.origin,entity:account.id,recoveryToken,fileId,issuedAt});
+    return {payload,recoveryToken,fileId,issuedAt,hash:await this.crypto.hash('recovery',recoveryToken)};
+  }
   async downloadRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     if (!account.passwordHash && !account.credentials.length) fail('credential_required', 'Set up your passkey or password first.');
-    // Each issuance after the first rotates the signing key (P15), so downloads are budgeted: at most 5 per setup token
-    // and the network/per-account windows (wargame 2026-10-23: unbounded rotation churn).
+    // Downloads are budgeted: at most 5 per setup token and the network/per-account windows (wargame 2026-10-23).
     if(!Number.isSafeInteger(account.recoveryDownloads??0)||(account.recoveryDownloads??0)>=5)fail('rate_limited','Please wait before trying again.');
     if(!await this.rateLimiter.check({operation:'recovery-download',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
     account.recoveryDownloads=(account.recoveryDownloads??0)+1;
-    const recoveryToken = `${account.id}.${this.crypto.random()}`;
-    // P15: any earlier file may hold the current signing key, so this issuance rotates first. `bound` are the kids the
-    // record still binds to a credential; a legacy record with an earlier file but no bound kid always rotates.
-    const bound=[account.recoveryKeyKid,account.recoveryResumeKeyKid].filter(kid=>typeof kid==='string'&&kid),earlier=Boolean(account.recoveryHash||account.recoveryResumeHash||nonNegative(account.recoveryIssuedAt));
-    account.recoveryHash = await this.crypto.hash('recovery', recoveryToken); account.recoveryIssuedAt = this.clock();
-    let backup;
-    if(this.identityBackup){
-      account.nameAssignmentId ||= this.crypto.id();
-      const issued=await this.identityBackup.issue(account,recoveryToken,{rotation:earlier?bound.length?{rotateIf:[...new Set(bound)]}:{always:true}:null,keep:[...new Set(bound)]});
-      // A port that predates PORT-10 resolves the bare file and cannot rotate.
-      const rotation=issued?.backup?issued.rotation:null;backup=issued?.backup??issued;
-      account.recoveryBackupVersion=2;account.recoveryKeyKid=backup.keychain.signing.kid;
-      if(rotation?.rotated)this.audit(account,'recovery-key-rotated');else if(rotation?.skipped)this.audit(account,'recovery-key-rotation-skipped');else if(earlier&&!rotation?.requested)this.audit(account,'recovery-key-rotation-unavailable');
-    }
+    // The identity signing key exists once setup issues a file (idempotent; no rotation, P15 withdrawn).
+    if(typeof this.identityBackup?.provision==='function')await this.identityBackup.provision(account);
+    const issued=await this.issueRecoveryFile(account);
+    account.recoveryHash=issued.hash;account.recoveryIssuedAt=issued.issuedAt;account.recoveryFileId=issued.fileId;account.recoveryBackupVersion=3;delete account.recoveryKeyKid;delete account.recoveryReminder;
+    account.nameAssignmentId ||= this.crypto.id();
     this.audit(account, 'recovery-file-issued'); this.securityChanged(account); await this.save(account, revision);
-    if(backup)return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),handle:account.handle,recoveryToken};
-    return { fileName: `3sln-recovery-${account.handle}.json`, content: JSON.stringify({ version: 1,
-      issuer: this.config.origin, handle: account.handle, recoveryToken,
-      warning: 'Keep this file private and backed up. It is the only way to recover this account without a verified email or phone. It starts one recovery transaction and can resume that transaction until replacement setup is confirmed.' }, null, 2), recoveryToken };
+    return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(issued.payload),handle:account.handle,recoveryToken:issued.recoveryToken,fileId:issued.fileId};
   }
   /** The owner's recovery-file status for the console. Hashes, kids and tokens never leave the record. */
   recoveryView(account,session){
-    const credential=recoveryCredential(account),marker=reissueMarker(account),pending=pendingReissue(account,this.clock());
-    return {issuedAt:credential?.issuedAt??null,version:credential?.version??null,transferEligibleAt:credential?.version===2?credential.issuedAt+RECOVERY_CREDENTIAL_AGE_MS:null,reissueRequired:marker?.reason??null,reissueAvailable:typeof this.identityBackup?.reissue==='function'&&typeof this.identityBackup?.reissueCommit==='function',
+    const now=this.clock(),credential=recoveryCredential(account),marker=reissueMarker(account),pending=pendingReissue(account,now);
+    // A credential of a withdrawn format (envelope v1: payloads v1 and v2) recovers nothing any more: ask for a new file.
+    const legacy=!credential&&account?.status==='active'&&typeof account.recoveryHash==='string'&&account.recoveryHash.length>0;
+    return {issuedAt:credential?.issuedAt??null,version:credential?.version??null,fileId:credential?.fileId??null,
+      // Transfer-out is dormant until the portability revision (recovery and transfer spike, phase 2): a v3 file never
+      // authorizes a move, so no eligibility date is shown.
+      transferEligibleAt:null,reissueRequired:marker?.reason??(legacy?'legacy-format':null),reissueAvailable:typeof this.identityBackup?.reissue==='function'&&typeof this.identityBackup?.reissueCommit==='function',
+      // The annual offer (a reminder only): none while a reissue is pending or a new file is required anyway.
+      reminder:credential&&!pending&&!marker?recoveryReminder(credential.issuedAt,now):null,
       // The cooling-off window of a committed reissue: the new file restores from `usableAt`; until then a session,
       // device or email that predates the reissue (or the previous file) can cancel it.
-      pendingReissue:pending?{reissuedAt:pending.reissuedAt,usableAt:pending.until,previousRestorable:typeof pending.hash==='string'&&pending.hash.length>0,previousFileCanCancel:typeof pending.hash==='string'&&pending.hash.length>0&&pending.fileLocked!==true,cancellable:Boolean(session)&&Number.isSafeInteger(session.createdAt)&&session.createdAt<pending.preparedAt}:null};
+      pendingReissue:pending?{reissuedAt:pending.reissuedAt,usableAt:pending.until,previousFileId:pending.version===3&&typeof pending.fileId==='string'?pending.fileId:null,previousRestorable:pending.version===3&&typeof pending.hash==='string'&&pending.hash.length>0,previousFileCanCancel:pending.version===3&&typeof pending.hash==='string'&&pending.hash.length>0&&pending.fileLocked!==true,cancellable:Boolean(session)&&Number.isSafeInteger(session.createdAt)&&session.createdAt<pending.preparedAt}:null};
+  }
+  /** The annual reissue offer (recovery and transfer spike §4.2, owner approval 2026-10-28): a reminder only, never a
+   * change to any credential. Trusted, not routed: a scheduler calls it per account. Sends at most once per reminder
+   * slot of the current file (recovery-reminder.mjs) to the verified email and push, after recording the slot in one
+   * CAS (so a lost race or a retry never double-sends). Nothing is sent while a reissue is pending or a forced marker
+   * asks for a new file anyway. Resolves {sent, slot?, notified?}; `notified` is transport acceptance, not delivery. */
+  async sendRecoveryReminder(owner){
+    for(let attempt=0;attempt<4;attempt++){
+      const account=await this.repository.get(owner),now=this.clock(),credential=recoveryCredential(account);
+      if(!credential||!interactiveIdentity(account)||pendingReissue(account,now)||reissueMarker(account))return {sent:false};
+      const due=recoveryReminder(credential.issuedAt,now),last=account.recoveryReminder;
+      if(due.stage==='none'||last?.fileId===credential.fileId&&Number.isSafeInteger(last.slot)&&last.slot>=due.slot)return {sent:false,nextAt:due.nextAt};
+      const revision=account.revision;account.recoveryReminder={fileId:credential.fileId,slot:due.slot,at:now};this.audit(account,'recovery-reminder-sent');account.revision=revision+1;
+      if(!await this.repository.compareAndSwap(account.id,revision,account))continue;
+      const notified=await this.reissueNotice(account,'recovery-reissue-reminder',{stage:due.stage,anniversaryAt:due.anniversaryAt});
+      return {sent:true,slot:due.slot,stage:due.stage,nextAt:due.nextAt,notified};
+    }
+    fail('conflict','The account changed; try again.');
   }
   /** Remembers a verified email that is being replaced or removed (`account.previousEmails`, up to 8 within retention;
    * further changes are refused rather than dropping one), so a reissue begun shortly after an email swap still notifies, and can be cancelled from, the
@@ -475,7 +510,11 @@ export class IdentityService {
    * Best effort after commit; acceptance is not delivery. */
   /** Whether a reissue authorized by `credential` is file-proof (review 2026-10-23 R1(i), V1, provisional): a passkey
    * step-up whose passkey was enrolled before the previous file was issued, with no channel-removing authority event in
-   * the 30 days before the begin. Otherwise the password branch applies and the previous file can cancel. */
+   * the 30 days before the begin. Otherwise the password branch applies and the previous file can cancel.
+   * Password removal (owner approval 2026-10-28, a later change): this is the single place the "password-authorized
+   * reissue stays cancellable by the previous file" rule lives (the `fileLocked` flag it computes); with passwords gone
+   * every reissue is passkey-authorized, so the non-passkey branch and the `fileLocked` distinction can be dropped here
+   * and in reissueRecoveryCancelFile / recover without touching anything else. */
   fileProofReissue(account,credential,at=this.clock()){
     if(credential?.kind!=='passkey'||typeof account.recoveryHash!=='string'||!account.recoveryHash)return false;
     const passkey=account.credentials.find(c=>c.id===credential.id);
@@ -508,6 +547,9 @@ export class IdentityService {
     try{if(typeof this.accountChannels?.notify==='function')notified.push=(await this.accountChannels.notify(account.id,type))?.accepted>0;}catch{}
     return notified;
   }
+  /** Hook for a later change (coordinator 2026-10-28): reissue will be refused while a sign-in-method removal is
+   * pending. Returns a refusal {code, message, status} or null; nothing is pending yet, so it always returns null. */
+  reissueRefusal(account){return null;}
   /** Who may reissue (recovery-identity spec "Active-account reissue"): a step-up within 5 minutes, made with a passkey
    * or password enrolled at least 7 days earlier (P18), or any fresh step-up while a forced path is armed (an elevated
    * abort, PORT-4 activation). `reauthentication_required` makes the console prompt again; `credential_too_new` means
@@ -527,11 +569,11 @@ export class IdentityService {
     if(account.credentials.length?account.credentials.some(c=>aged(c.createdAt)):account.passwordHash&&aged(account.passwordSetAt))fail('reauthentication_required',account.credentials.length?'Confirm with a passkey you have had for at least 7 days.':'Confirm with a password you have had for at least 7 days.');
     fail('credential_too_new','Replacing your recovery file needs a passkey or password you have had for at least 7 days.',409);
   }
-  /** Active-account reissue, phase 1 (recovery-identity spec "Active-account reissue"; identity portability P14, P15,
-   * P17). Authority as `reissueAuthority`. The account single writer refuses during a deletion, a move or a contest and
-   * rotates the signing key with continuity first (P15); the new file is then STAGED, bound to this session for 30
-   * minutes. The current file keeps working until phase 2 commits, so an interrupted reissue never leaves the owner
-   * without a file. A new begin replaces an older staged file, which then never becomes current. */
+  /** Active-account reissue, phase 1 (recovery-identity "Active-account reissue"; identity portability P14, P17).
+   * Authority as `reissueAuthority`. The account single writer refuses during a deletion, a move or a contest; the new
+   * v3 file is then STAGED, bound to this session for 30 minutes. No key changes (P15 withdrawn with recovery file v3).
+   * The current file keeps working until phase 2 commits, so an interrupted reissue never leaves the owner without a
+   * file. A new begin replaces an older staged file, which then never becomes current. */
   async reissueRecoveryBegin(input,context){
     const {account,session}=await this.authorized(context,true);const revision=account.revision;
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>name!=='acknowledged'))fail('invalid_request','Unsupported recovery request.',400);
@@ -539,56 +581,51 @@ export class IdentityService {
     if(typeof this.identityBackup?.reissue!=='function'||typeof this.identityBackup?.reissueCommit!=='function')fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
     // One cooling-off window at a time: a second reissue would push the trusted previous file out of the window.
     const open=pendingReissue(account,this.clock());if(open)throw Object.assign(new IdentityFault('recovery_reissue_pending','A recovery file replacement is still in its 7-day waiting period. Cancel it first, or wait until it ends.'),{status:409,usableAt:open.until});
+    const refusal=this.reissueRefusal(account);if(refusal)fail(refusal.code,refusal.message,refusal.status);
     const authority=this.reissueAuthority(account,session);
     if(!await this.rateLimiter.check({operation:'recovery-reissue',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
-    const sessionId=await this.sessionID(session),marker=reissueMarker(account),staged=stagedReissue(account.recoveryStaged);
-    // P15: every kid an issued file may hold (the current file, an abandoned staged file, an invalidated file) is
-    // rotated away. A transfer-in arrival's key was already rotated at activation, so its first file adopts it.
-    const bound=[...new Set([account.recoveryKeyKid,staged?.kid,marker?.kid].filter(kid=>typeof kid==='string'&&kid))];
-    const rotation=bound.length?{rotateIf:bound}:marker?.reason==='transfer-in'?null:{always:true};
-    const keep=account.recoveryHash&&typeof account.recoveryKeyKid==='string'?[account.recoveryKeyKid]:[];
-    const recoveryToken=`${account.id}.${this.crypto.random()}`;
+    const sessionId=await this.sessionID(session);
     // P17 compares the credential that confirmed the step-up, not the one the session signed in with.
-    const issued=await this.identityBackup.reissue(account,recoveryToken,{rotation,keep,actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId}});
-    const backup=issued?.backup,outcome=issued?.rotation;if(!backup?.keychain?.signing?.kid)fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
-    // Review 2026-10-23 item 3 (provisional): a reissue that had to rotate but could not (keys.mjs `key_history_full`, e.g. a
-    // moved identity whose published document has no headroom) never stages a file holding the same signing key.
-    if(rotation&&outcome?.skipped)fail('rotation_unavailable','Your identity key cannot be replaced right now, so a new recovery file would not protect you. Your current file keeps working.',409);
-    const now=this.clock();
-    account.recoveryStaged={hash:await this.crypto.hash('recovery',recoveryToken),kid:backup.keychain.signing.kid,encryptionKid:backup.keychain.encryption.kid,sessionId,preparedAt:now,expiresAt:now+RECOVERY_REISSUE_TTL_MS,base:account.recoveryHash||null,credential:authority.credential,fileLocked:this.fileProofReissue(account,authority.credential,now),...authority.forced?{forced:authority.forced}:{}};
-    if(outcome?.rotated)this.audit(account,'recovery-key-rotated');else if(outcome?.skipped)this.audit(account,'recovery-key-rotation-skipped');
+    const gate=await this.identityBackup.reissue(account,{actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId}});
+    const issued=await this.issueRecoveryFile(account),now=this.clock();
+    account.recoveryStaged={hash:issued.hash,fileId:issued.fileId,sessionId,preparedAt:now,expiresAt:now+RECOVERY_REISSUE_TTL_MS,base:account.recoveryHash||null,credential:authority.credential,fileLocked:this.fileProofReissue(account,authority.credential,now),...authority.forced?{forced:authority.forced}:{}};
     if(account.recoveryPrevious&&!pendingReissue(account,now))delete account.recoveryPrevious;
     this.audit(account,'recovery-reissue-prepared');await this.save(account,revision);
     // Wargame #1(c): every channel hears about the reissue when it begins, as well as when it commits.
     await this.reissueNotice(account,'recovery-reissue-started');
-    return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),recoveryToken,expiresAt:account.recoveryStaged.expiresAt,transferPending:issued.transferPending===true,forced:authority.forced};
+    return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(issued.payload),recoveryToken:issued.recoveryToken,fileId:issued.fileId,expiresAt:account.recoveryStaged.expiresAt,transferPending:gate?.transferPending===true,forced:authority.forced};
   }
-  /** Active-account reissue, phase 2: after the browser encrypted, saved and test-unlocked the staged file. The account
+  /** Active-account reissue, phase 2: the owner's acknowledgement. The browser encrypted the staged file, downloaded it,
+   * and compared the SHA-256 of the encrypted file the owner picked again with the bytes it offered for download (no
+   * decryption); only then does it post the staged token and file id. This server cannot see that comparison; it
+   * requires the staged credential and file id, so nothing but this confirmation makes the new file current. The account
    * single writer re-checks deletion, custody and contest, and CANCELS a pending or held transfer-out (spec rationale:
    * the move was authorized by the file this replaces; abort is the safe direction). Then one identity CAS makes the
    * staged credential current with `recoveryIssuedAt = now` (so P14 waits 7 days again), clears any forced marker and
    * bumps `security`. Notices go to the verified email and every push subscription after commit. */
   async reissueRecoveryConfirm(input,context){
     let {account,session}=await this.authorized(context,true);
-    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['recoveryToken','downloadConfirmed'].includes(name)))fail('invalid_request','Unsupported recovery request.',400);
-    if(input.downloadConfirmed!==true||typeof input.recoveryToken!=='string'||input.recoveryToken.length>150)fail('recovery_confirmation_required','Download and test your new recovery file before continuing.',400);
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['recoveryToken','fileId','downloadConfirmed'].includes(name)))fail('invalid_request','Unsupported recovery request.',400);
+    if(input.downloadConfirmed!==true||typeof input.recoveryToken!=='string'||input.recoveryToken.length>150||typeof input.fileId!=='string'||!RECOVERY_FILE_ID.test(input.fileId))fail('recovery_confirmation_required','Download your new recovery file and select it again before continuing.',400);
     if(typeof this.identityBackup?.reissueCommit!=='function')fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
     const hash=await this.crypto.hash('recovery',input.recoveryToken),sessionId=await this.sessionID(session);
-    const check=a=>{const staged=stagedReissue(a.recoveryStaged);if(!staged||staged.sessionId!==sessionId||!secureEqual(staged.hash,hash)||staged.expiresAt<=this.clock())fail('recovery_reissue_expired','Start replacing your recovery file again.',409);if((a.recoveryHash||null)!==staged.base)fail('recovery_changed','Your recovery file changed. Start again.',409);
+    const check=a=>{const staged=stagedReissue(a.recoveryStaged);if(!staged||staged.sessionId!==sessionId||!secureEqual(staged.hash,hash)||staged.fileId!==input.fileId||staged.expiresAt<=this.clock())fail('recovery_reissue_expired','Start replacing your recovery file again.',409);if((a.recoveryHash||null)!==staged.base)fail('recovery_changed','Your recovery file changed. Start again.',409);
       // The credential that authorized phase 1 must still exist (removing it revokes its sessions, but a password can be reset by recovery only).
       const used=staged.credential;if(used?.kind==='passkey'?!a.credentials.some(c=>c.id===used.id):used?.kind==='password'?!a.passwordHash:true)fail('recovery_reissue_expired','Start replacing your recovery file again.',409);return staged;};
     const first=check(account);
-    const gate=await this.identityBackup.reissueCommit(account.id,{actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId},kids:{signing:first.kid,encryption:first.encryptionKid}});
+    const gate=await this.identityBackup.reissueCommit(account.id,{actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId}});
     for(let attempt=0;attempt<4;attempt++){
       if(attempt)({account,session}=await this.authorized(context,true));
       const staged=check(account),revision=account.revision,now=this.clock();
       if(pendingReissue(account,now))fail('recovery_reissue_pending','A recovery file replacement is still in its 7-day waiting period.',409);
+      const refusal=this.reissueRefusal(account);if(refusal)fail(refusal.code,refusal.message,refusal.status);
       // Wargame 2026-10-23 #1(b)-(d), provisional: the staged file becomes current but cannot start a recovery until the
       // window ends; the previous credential is kept, able only to cancel this reissue, and becomes current again if
       // the reissue is cancelled. The cancel link goes only to an email verified before the reissue began.
       const preparedAt=Number.isSafeInteger(staged.preparedAt)?staged.preparedAt:now,fileLocked=staged.fileLocked===true&&this.fileProofReissue(account,staged.credential,preparedAt),emailCancel=this.reissueRecipients(account,preparedAt).some(recipient=>recipient.verifiedAt<preparedAt&&(recipient.current||!fileLocked)),cancelToken=emailCancel?`${account.id}.${this.crypto.random()}`:null;
-      account.recoveryPrevious={hash:account.recoveryHash||null,issuedAt:nonNegative(account.recoveryIssuedAt)?account.recoveryIssuedAt:null,kid:typeof account.recoveryKeyKid==='string'?account.recoveryKeyKid:null,version:account.recoveryBackupVersion===2?2:account.recoveryHash?1:null,marker:reissueMarker(account),reissuedAt:now,preparedAt:Number.isSafeInteger(staged.preparedAt)?staged.preparedAt:now,until:now+RECOVERY_REISSUE_WINDOW_MS,newKid:staged.kid,cancelHash:cancelToken?await this.crypto.hash('reissue-cancel',cancelToken):null,credential:staged.credential??null,fileLocked,stagedSessionId:staged.sessionId,confirmedSessionId:sessionId};
-      account.recoveryHash=staged.hash;account.recoveryIssuedAt=now;account.recoveryKeyKid=staged.kid;account.recoveryBackupVersion=2;delete account.recoveryStaged;delete account.recoveryReissue;
+      account.recoveryPrevious={hash:account.recoveryHash||null,issuedAt:nonNegative(account.recoveryIssuedAt)?account.recoveryIssuedAt:null,fileId:currentFormat(account)?account.recoveryFileId:null,version:currentFormat(account)?3:account.recoveryHash?'legacy':null,marker:reissueMarker(account),reminder:account.recoveryReminder??null,reissuedAt:now,preparedAt:Number.isSafeInteger(staged.preparedAt)?staged.preparedAt:now,until:now+RECOVERY_REISSUE_WINDOW_MS,newFileId:staged.fileId,cancelHash:cancelToken?await this.crypto.hash('reissue-cancel',cancelToken):null,credential:staged.credential??null,fileLocked,stagedSessionId:staged.sessionId,confirmedSessionId:sessionId};
+      // P14 and the annual reminder count from the commit: the file becomes current now.
+      account.recoveryHash=staged.hash;account.recoveryIssuedAt=now;account.recoveryFileId=staged.fileId;account.recoveryBackupVersion=3;delete account.recoveryKeyKid;delete account.recoveryReminder;delete account.recoveryStaged;delete account.recoveryReissue;
       this.audit(account,'recovery-file-reissued');this.securityChanged(account);account.revision=revision+1;
       if(!await this.repository.compareAndSwap(account.id,revision,account))continue;
       const notified=await this.reissueNotice(account,'recovery-reissued',{usableAt:account.recoveryPrevious.until},cancelToken?{token:cancelToken,before:preparedAt,currentOnly:fileLocked}:null,preparedAt);
@@ -598,22 +635,22 @@ export class IdentityService {
   }
   /** Cancels a committed reissue during its cooling-off window (wargame 2026-10-23 #1(c), provisional). `how`: 'session'
    * (a session created before the reissue began), 'email' (the cancel link sent to an email verified before it began)
-   * or 'file' (the previous recovery file). The account single writer first rotates the signing key away from the
-   * voided file and keeps the restored file's key bound (P15), then one identity CAS restores the previous credential
+   * or 'file' (the previous recovery file). One identity CAS restores the previous credential
    * (and any forced marker it replaced), raises `federationGeneration` so no grant from before or during the window
    * survives, and bumps `security` (which also re-arms the 7-day transfer look-back). Notices go to every channel. */
   async cancelReissue(id,how,matches){
     let account=await this.repository.get(id);const first=pendingReissue(account,this.clock());
     if(!account||account.status!=='active'||!first||!await matches(account,first))fail('recovery_reissue_not_pending','There is no recovery file replacement to cancel.',409);
-    let rotation=null;
-    if(typeof this.identityBackup?.reissueCancel==='function')rotation=(await this.identityBackup.reissueCancel(account.id,{voided:first.newKid,restored:typeof first.kid==='string'?first.kid:null}))?.rotation??null;
     for(let attempt=0;attempt<4;attempt++){
       if(attempt)account=await this.repository.get(id);
       const previous=pendingReissue(account,this.clock());
       if(!account||account.status!=='active'||!previous||previous.reissuedAt!==first.reissuedAt)fail('recovery_reissue_not_pending','There is no recovery file replacement to cancel.',409);
       const revision=account.revision;
-      if(typeof previous.hash==='string'&&previous.hash){account.recoveryHash=previous.hash;if(nonNegative(previous.issuedAt))account.recoveryIssuedAt=previous.issuedAt;else delete account.recoveryIssuedAt;if(typeof previous.kid==='string')account.recoveryKeyKid=previous.kid;else delete account.recoveryKeyKid;if(previous.version===2)account.recoveryBackupVersion=2;else delete account.recoveryBackupVersion;}
-      else{account.recoveryHash=null;delete account.recoveryIssuedAt;delete account.recoveryKeyKid;}
+      // A legacy previous credential is restored as it was: it still recovers nothing, and the console still asks for a
+      // new file.
+      if(typeof previous.hash==='string'&&previous.hash){account.recoveryHash=previous.hash;if(nonNegative(previous.issuedAt))account.recoveryIssuedAt=previous.issuedAt;else delete account.recoveryIssuedAt;if(previous.version===3&&typeof previous.fileId==='string'){account.recoveryFileId=previous.fileId;account.recoveryBackupVersion=3;}else{delete account.recoveryFileId;delete account.recoveryBackupVersion;}if(previous.reminder)account.recoveryReminder=previous.reminder;else delete account.recoveryReminder;}
+      else{account.recoveryHash=null;delete account.recoveryIssuedAt;delete account.recoveryFileId;delete account.recoveryBackupVersion;delete account.recoveryReminder;}
+      delete account.recoveryKeyKid;
       if(previous.marker&&RECOVERY_REISSUE_REASONS.includes(previous.marker.reason))account.recoveryReissue=previous.marker;
       delete account.recoveryPrevious;delete account.recoveryStaged;
       // Sessions created at or after the begin, and the sessions that staged and confirmed the reissue (perhaps the
@@ -622,7 +659,6 @@ export class IdentityService {
       await this.pruneSessions(account,s=>Number.isSafeInteger(s.createdAt)&&s.createdAt>=previous.preparedAt||ended.has(s.id));
       account.pendingSever={reason:'recovery',at:this.clock()};
       account.federationGeneration=(nonNegative(account.federationGeneration)?account.federationGeneration:0)+1;
-      if(rotation?.rotated)this.audit(account,'recovery-key-rotated');else if(rotation?.skipped)this.audit(account,'recovery-key-rotation-skipped');
       this.audit(account,'recovery-reissue-cancelled');this.securityChanged(account);account.revision=revision+1;
       if(!await this.repository.compareAndSwap(account.id,revision,account))continue;
       const notified=await this.reissueNotice(account,'recovery-reissue-cancelled');
@@ -687,16 +723,15 @@ export class IdentityService {
     return {cancelled:result.cancelled,restored:result.restored};
   }
   /** Cancel with the previous recovery file: during the window that is the only thing it can do (wargame #1(d)). The
-   * proof is a 256-bit token plus the provider-signed file, so no CAPTCHA is asked (the one the owner solved for the
-   * refused recovery attempt is already spent); the network windows still apply. */
+   * proof is the 256-bit token of a v3 file, so no CAPTCHA is asked (the one the owner solved for the refused recovery
+   * attempt is already spent); the network windows still apply. A legacy previous credential cannot cancel. */
   async reissueRecoveryCancelFile(input,context){
     this.origin(context);
-    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['recoveryToken','identityBackup','turnstileToken'].includes(name)))fail('invalid_request','Unsupported recovery request.',400);
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['recoveryToken','turnstileToken'].includes(name)))fail('invalid_request','Unsupported recovery request.',400);
     if(!await this.rateLimiter.check({phase:'attempt',operation:'recovery-reissue-cancel',remoteIP:context.remoteIP,region:context.region}))fail('rate_limited','Please wait before trying again.');
     const [id]=tokenParts(input.recoveryToken),proof=await this.crypto.hash('recovery',input.recoveryToken);
     const result=await this.cancelReissue(id,'file',async(current,previous)=>{
-      if(typeof previous.hash!=='string'||!secureEqual(previous.hash,proof))return false;
-      if(previous.version===2){if(!this.identityBackup||!input.identityBackup)return false;try{await this.identityBackup.verify(input.identityBackup,current,input.recoveryToken,typeof previous.kid==='string'?{expectedKid:previous.kid}:{});}catch{return false;}}
+      if(previous.version!==3||typeof previous.hash!=='string'||!secureEqual(previous.hash,proof))return false;
       // Coordinator decision 2026-10-23 (provisional): a passkey-authorized reissue may be retiring a leaked file, so that
       // file cannot undo it; only earlier sessions and the pre-reissue email can. A password-authorized one (no passkey
       // on the account) stays cancellable by the file, or a password thief could lock a password-only owner out.
@@ -743,7 +778,7 @@ export class IdentityService {
     if(account.systemIdentity)account.admission={...account.admission,initialSystemActivationRequired:false};
     const source=account.status==='recovering'?'recovery':'activation',activationCredentialAt=account.pendingCredentialAt;if(source==='recovery')raiseAuthorityEpoch(account,{reason:'recovery'});delete account.pendingCredentialAt;
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
-    delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid;
+    delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid; delete account.recoveryResumeFileId;
     this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
     await this.save(account, revision); if (account.pendingSever) await this.flushSever(account.id); return result;
   }
@@ -814,31 +849,25 @@ export class IdentityService {
     const proofHash = await this.crypto.hash('recovery', input.recoveryToken);
     const resumed = account?.status === 'recovering' && secureEqual(account.recoveryResumeHash, proofHash);
     // Wargame 2026-10-23 #1(b), (d): during a reissue's cooling-off window neither file starts a recovery. The new file
-    // waits until the window ends; the previous one can only cancel the reissue. Both answers come after full file
-    // verification, so they reveal the window only to a holder of a genuine file.
+    // waits until the window ends; the previous one can only cancel the reissue. Both answers need the file's 256-bit
+    // credential, so they reveal the window only to a holder of a genuine v3 file.
     const pending = account?.status === 'active' ? pendingReissue(account, this.clock()) : null;
     if (pending && !resumed) {
-      const previous = typeof pending.hash === 'string' && secureEqual(pending.hash, proofHash), current = secureEqual(account.recoveryHash, proofHash);
+      const previous = pending.version === 3 && typeof pending.hash === 'string' && secureEqual(pending.hash, proofHash), current = currentFormat(account) && secureEqual(account.recoveryHash, proofHash);
       if (previous || current) {
-        const version = previous ? pending.version : account.recoveryBackupVersion, kid = previous ? pending.kid : account.recoveryKeyKid;
-        if (version === 2) { if (!this.identityBackup || !input.identityBackup) fail('unauthorized', 'Provide the signed identity recovery file.'); try { await this.identityBackup.verify(input.identityBackup, account, input.recoveryToken, typeof kid === 'string' ? { expectedKid: kid } : {}); } catch { fail('unauthorized', 'Recovery failed.'); } }
         if (previous && pending.fileLocked === true) throw Object.assign(new IdentityFault('recovery_reissue_locked', 'This recovery file was replaced recently with a passkey confirmation. It cannot recover the account or cancel the replacement. Cancel it from a device that was signed in before it started, or from the link in the email notice.'), { status: 409, usableAt: pending.until, cancellable: false });
         if (previous) throw Object.assign(new IdentityFault('recovery_reissue_pending', 'This recovery file was replaced recently. During the 7-day waiting period you can use it only to cancel that replacement; once cancelled it works again.'), { status: 409, usableAt: pending.until, cancellable: true });
         throw Object.assign(new IdentityFault('recovery_not_ready', 'This recovery file is new. It can start a recovery once its 7-day waiting period ends.'), { status: 409, usableAt: pending.until });
       }
     }
     // Organization recovery (break-glass, design §5.11) is phase B (ORG-12): until then an organization file recovers nothing.
-    if (!account || !interactiveIdentity(account) || (!resumed && (!['active','pending'].includes(account.status) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
-    if((resumed?account.recoveryResumeBackupVersion:account.recoveryBackupVersion)===2){
-      if(!this.identityBackup||!input.identityBackup)fail('unauthorized','Provide the signed identity recovery file.');
-      const expectedKid=resumed?account.recoveryResumeKeyKid:account.recoveryKeyKid;
-      try{await this.identityBackup.verify(input.identityBackup,account,input.recoveryToken,typeof expectedKid==='string'?{expectedKid}:{});}catch{fail('unauthorized','Recovery failed.');}
-    }
+    // Only a v3 credential recovers or resumes (v1/v2 files are no longer recognised, owner approval 2026-10-28).
+    if (!account || !interactiveIdentity(account) || (resumed ? account.recoveryResumeBackupVersion !== 3 : (!['active','pending'].includes(account.status) || !currentFormat(account) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
     const revision = account.revision;
     if (!resumed) {
       account.recoveryResumeHash = account.recoveryHash;
-      account.recoveryResumeBackupVersion=account.recoveryBackupVersion||1;
-      if(typeof account.recoveryKeyKid==='string')account.recoveryResumeKeyKid=account.recoveryKeyKid;else delete account.recoveryResumeKeyKid;delete account.recoveryKeyKid;
+      account.recoveryResumeBackupVersion=3;account.recoveryResumeFileId=account.recoveryFileId;
+      delete account.recoveryKeyKid;delete account.recoveryResumeKeyKid;delete account.recoveryFileId;delete account.recoveryBackupVersion;delete account.recoveryReminder;
       this.queuePushEnds(account, await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(s => this.sessionID(s))));
       account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; delete account.passwordSetAt; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
       // The replacement file of the recovery supersedes any staged reissue and any forced-reissue marker.

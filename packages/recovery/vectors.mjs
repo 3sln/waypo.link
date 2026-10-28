@@ -1,7 +1,9 @@
-// Archived v1 interoperability input. Expected key/ciphertext are fixed by the
-// maintained Argon2id implementation and Web Crypto, never generated at test time.
-export const RECOVERY_V1_VECTOR = Object.freeze({
-  payload: { version: 1, issuer: 'https://identity.example', handle: 'alice', recoveryToken: 'account-id.independent-random-recovery-credential', warning: 'Keep this file private.' },
+// Archived envelope v2 / payload v3 interoperability input (recovery file v3, 2026-10-28). Expected key/ciphertext are
+// fixed by the maintained Argon2id implementation and Web Crypto, never generated at test time. The answers, salt, IV and
+// derived key are the earlier v1 vector's (the KDF input is unchanged); only the envelope header (fileId, version) and
+// the opaque payload differ. Envelope v1 files have no reader any more.
+export const RECOVERY_V2_VECTOR = Object.freeze({
+  payload: { version: 3, issuer: 'https://identity.example', entity: '0f8e6a52-3c1b-4d7e-9a2f-5b6c7d8e9f01', recoveryToken: '0f8e6a52-3c1b-4d7e-9a2f-5b6c7d8e9f01.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', fileId: 'ICEiIyQlJicoKSorLC0uLw', issuedAt: 1798416000000 },
   questions: [
     { id: 'name', type: 'text', prompt: 'A name with "quotes" and a \\?', hint: 'Public hint' },
     { id: 'birth', type: 'date', prompt: 'Your selected date', hint: '' },
@@ -16,5 +18,5 @@ export const RECOVERY_V1_VECTOR = Object.freeze({
   salt: 'AAECAwQFBgcICQoLDA0ODw',
   iv: 'EBESExQVFhcYGRob',
   keyHex: '1f916b78b1e77917d2098c972105b23b4b371e8291389d7175c9b4a64b0aed31',
-  ciphertext: 'V7sb4XdT0YtkvZlC6kMzsyFdzHUTHPs2t_BMA9rW_x0tBQXjduA90yoGa-ekTDJAPr16B3wWPJjmMA4amELrTVJUnMkp_rJEsWc6mqwjeSWafTW7CBOCOhEphe5X3d0lQnmSGXtnjh6niUfaSW2ri7SutFItC1sRmHbK2q0IEZptXsTM47Z0q1Onfn_1st0G60Eizpr1Jngdj-GJNziqVOl8EHtpLw-e-8soUFLT96zSAqSsqXvYqJDk',
+  ciphertext: 'V7sb4XdT0YtkvZlA6kMzsyFdzHUTHPs2t_BMA9rW_x0tBQXjduA90yoGa-ekTDJAPr13CGYbJITmMA5LkhPtHhFNjJZ__uxQ-SEn-aZlJSqKITrvCUaOeBtlzb5Vw4VpCj6QGXZsnRWh3WHUTGyqxKP-4Vd6GAgC1GmEm6tdFtktU5LF7KM37lT4JXSttshY8W9-zdrkfFE1uYKuKQWJNv5tME5ZNCb0mIamE6aD73hw-Y5n9J4ApM1w-g5K9-ZB0JalRsnKasyBzUKOPiyYtjp8V5PbDBuLheLfkDDH7d1zlLArDw1p0GRdV0LNL3BWLy_A5gFQQQsNYaCEdFGdU2-ZCVYQfjnDSFmvxmMNnQ',
 });

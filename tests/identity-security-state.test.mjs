@@ -147,11 +147,11 @@ for (const kind of REPOSITORIES) {
     tick(); const back = await expectBump(h, id, 'confirmRecovery (recovery completion)', 0, () => h.act('confirmRecovery', { pendingToken: resumed.pendingToken, recoveryToken: replacement.recoveryToken, downloadConfirmed: true }));
     ctx = sessionContext(back); await expectBump(h, id, 'owner read', 0, () => h.owner(ctx));
     // Active-account reissue (recovery-identity spec): staging the new file is not a security change; its commit bumps once.
-    await h.engine.container.use(['identity'], ({ identity }) => { identity.identityBackup = { reissue: async () => ({ backup: { keychain: { signing: { kid: 'k-reissued' }, encryption: { kid: 'e-1' } } }, rotation: { rotated: true } }), reissueCommit: async () => ({ committed: true, transferCancelled: false }), reissueCancel: async () => ({ rotation: { rotated: true, skipped: null } }) }; });
+    await h.engine.container.use(['identity'], ({ identity }) => { identity.identityBackup = { reissue: async () => ({ transferPending: false }), reissueCommit: async () => ({ committed: true, transferCancelled: false }), reissueCancel: async () => ({ rotation: { rotated: true, skipped: null } }) }; });
     { const a = await h.record(id); assert.equal(await h.audit.repository.compareAndSwap(id, a.revision, { ...structuredClone(a), passwordSetAt: h.clock.now() - 8 * 24 * HOUR, revision: a.revision + 1 }), true); }
     tick(); await h.service.stepUp({ method: 'password', password: 'another long recovery password' }, ctx);
     const staged = await expectBump(h, id, 'reissueRecoveryBegin', 0, () => h.act('reissueRecoveryBegin', { acknowledged: true }, ctx));
-    tick(); await expectBump(h, id, 'reissueRecoveryConfirm', 1, () => h.act('reissueRecoveryConfirm', { recoveryToken: staged.recoveryToken, downloadConfirmed: true }, ctx));
+    tick(); await expectBump(h, id, 'reissueRecoveryConfirm', 1, () => h.act('reissueRecoveryConfirm', { recoveryToken: staged.recoveryToken, fileId: staged.fileId, downloadConfirmed: true }, ctx));
     // Cancelling it in the cooling-off window (from this earlier session) restores the previous file: one bump.
     tick(); await expectBump(h, id, 'reissueRecoveryCancel', 1, () => h.act('reissueRecoveryCancel', { confirmed: true }, ctx));
     // A passkey signup bumps once more when its credential registers.

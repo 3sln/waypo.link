@@ -5,7 +5,7 @@ import {Engine,Action,Query,Provider} from '../../../../vendor/ngin/index.js';
 import {perform} from '../../../../packages/messaging-engine/engine.mjs';
 export const PAGE_SIZE=40;
 const disabled=()=>{throw Object.assign(new Error('Disabled'),{code:'not_found'});};
-export const initialState=({locale='en',online=true}={})=>({locale:locale.startsWith('es')?'es':'en',online,section:'conversations',rooms:[],views:[],outbox:[],requests:[],rejected:[],items:[],invites:[],contactMembers:[],freshInvite:null,detail:null,page:0,cursor:null,pages:[],resume:null,draft:'',pendingDraft:null,busy:false,error:null,notice:null,archive:null,generation:0});
+export const initialState=({locale='en',online=true}={})=>({locale:locale.startsWith('es')?'es':'en',online,section:'conversations',rooms:[],views:[],outbox:[],requests:[],rejected:[],items:[],invites:[],contactMembers:[],freshInvite:null,detail:null,page:0,cursor:null,pages:[],resume:null,draft:'',pendingDraft:null,busy:false,error:null,notice:null,archive:null,classification:null,generation:0});
 export class ClientState extends Query {
  static deps=['state'];
  fetch({state}){return structuredClone(state.value);}
@@ -28,6 +28,15 @@ async function snapshot(mailbox,s){
  if(s.snapshotSequence!==sequence)return;
  const invitations=values[5].invitations.filter(i=>!requests.some(r=>r.id===i.itemId)).map(i=>({...i,id:i.itemId,kind:'conversation-init',author:{verified:true,principal:i.creator}}));
  [s.rooms,s.views,s.outbox,s.requests,s.rejected]=[values[0].conversations,values[1].views,values[2],[...invitations,...requests],values[4]];
+ await classification(mailbox,s);
+}
+// Classification status (item-classification §8.4 and the owner direction of 2026-10-28): classifier gaps, and how many
+// items await auto-classification and how many of those are slow. A failure leaves the previous value; never blocks.
+async function classification(mailbox,s){
+ let status;try{status=await call(mailbox,'classify.status');}catch{return;}
+ if(!status||typeof status!=='object')return;
+ const count=v=>Number.isSafeInteger(v)&&v>=0?v:0;
+ s.classification={gaps:Array.isArray(status.gaps)?status.gaps.slice(0,16):[],pending:{count:count(status.pending?.count),slow:count(status.pending?.slow)}};
 }
 // Contacts spike phase 3 (rethink §4.4, §5; provisional): the owner's invitation links and the built-in Contacts list.
 async function invitations(mailbox,s){
@@ -55,6 +64,8 @@ export class Navigate extends ClientAction {
   if(view&&s.online){s.view=view;await selected(mailbox,s);}
   if(section==='contacts'&&s.online)await invitations(mailbox,s);
   if(section==='settings'&&mailbox.archive?.status&&s.online)s.archiveStatus=await call(mailbox,mailbox.archive.status.operation);
+  // Classifier gaps (no classifier, or none that can classify text) are shown in settings; a failure shows nothing.
+  if(section==='settings'&&s.online)await classification(mailbox,s);
  }
 }
 export class SaveDraft extends ClientAction {

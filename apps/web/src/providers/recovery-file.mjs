@@ -1,19 +1,13 @@
-import {validateIdentityBackup,verifyIdentityBackup} from '/packages/recovery/identity-backup.mjs';
 import { Provider } from '../shared/stack.mjs';
-function validatePayload(payload,issuer){
- if(payload?.version===2){const result=validateIdentityBackup(payload);if(result.issuer!==issuer)throw new Error('This recovery file belongs to another service.');return result;}
- if(!payload||Object.getPrototypeOf(payload)!==Object.prototype||Object.keys(payload).some(key=>!['version','issuer','handle','recoveryToken','warning'].includes(key))||payload.version!==1||payload.issuer!==issuer||typeof payload.handle!=='string'||!/^[a-z][a-z0-9_-]{2,31}$/.test(payload.handle)||typeof payload.recoveryToken!=='string'||!/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(payload.recoveryToken)||(payload.warning!==undefined&&typeof payload.warning!=='string'))throw new Error('This recovery file has an invalid payload or belongs to another service.');
- return payload;
+// Recovery file v3 (docs/3sln/accounts/recovery-file.md): the payload is an opaque credential checked by the provider,
+// so the browser only validates its schema and that it belongs to the selected provider. No authority fetch.
+async function validatePayload(payload,issuer){
+ const core=await import('/packages/recovery/index.mjs');const result=core.validateRecoveryPayload(payload);
+ if(result.issuer!==issuer)throw new Error('This recovery file belongs to another service.');
+ return result;
 }
 export default class RecoveryFileProvider extends Provider {
  #workers=new Set();#operations=new Set();#disposed=false;
- async #verify(payload,issuer,signal){
-  signal.throwIfAborted();
-  if(payload.version!==2)return payload;
-  const response=await fetch('/api/recovery/authority',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.any([signal,AbortSignal.timeout(10000)])});
-  if(!response.ok)throw new Error('The service could not verify this identity backup. Try again later.');
-  const authority=await response.json();const result=await verifyIdentityBackup(payload,authority,{issuer});signal.throwIfAborted();return result;
- }
  async #run(operation){
   if(this.#disposed||this.#operations.size)throw new Error('Recovery operation is unavailable.');
   const controller=new AbortController();this.#operations.add(controller);
@@ -21,8 +15,11 @@ export default class RecoveryFileProvider extends Provider {
  }
  async obtain(){return Object.freeze({
   inspect:async file=>{const text=await this.#read(file),core=await import('/packages/recovery/index.mjs');return {text,header:core.inspectRecoveryFile(text)};},
-  encrypt:async(payload,questions,answers,issuer)=>this.#run(async signal=>{payload=await this.#verify(validatePayload(payload,issuer),issuer,signal);const core=await import('/packages/recovery/index.mjs');return core.encryptRecoveryFile(payload,questions,answers,{deriveKey:options=>this.#derive(options,signal),crypto:globalThis.crypto});}),
-  decrypt:async(file,answers,issuer)=>this.#run(async signal=>{const core=await import('/packages/recovery/index.mjs');const result=await core.decryptRecoveryFile(file,answers,{deriveKey:options=>this.#derive(options,signal),crypto:globalThis.crypto});return this.#verify(validatePayload(result,issuer),issuer,signal);}),
+  encrypt:async(payload,questions,answers,issuer)=>this.#run(async signal=>{payload=await validatePayload(payload,issuer);signal.throwIfAborted();const core=await import('/packages/recovery/index.mjs');return core.encryptRecoveryFile(payload,questions,answers,{deriveKey:options=>this.#derive(options,signal),crypto:globalThis.crypto});}),
+  decrypt:async(file,answers,issuer)=>this.#run(async signal=>{const core=await import('/packages/recovery/index.mjs');const result=await core.decryptRecoveryFile(file,answers,{deriveKey:options=>this.#derive(options,signal),crypto:globalThis.crypto});signal.throwIfAborted();return validatePayload(result,issuer);}),
+  // The download acknowledgement: SHA-256 of the exact encrypted bytes, never decrypted. `input` is the text this
+  // browser offered for download, or a File the owner picked again (read as bytes, bounded before reading).
+  digest:async input=>{const core=await import('/packages/recovery/index.mjs');if(typeof input==='string')return core.recoveryFileDigest(input);if(!input||input.size>131072||typeof input.arrayBuffer!=='function')throw new Error('Choose an encrypted recovery file smaller than 128 KB.');return core.recoveryFileDigest(await input.arrayBuffer());},
   cancel:()=>this.#cancel()
  });}
  release(){}

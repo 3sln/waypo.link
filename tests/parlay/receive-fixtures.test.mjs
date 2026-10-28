@@ -87,6 +87,7 @@ export async function createWorld({seed=1,rules=[],classifier=null,userStorage=n
   async verify(to,{envelope,body},receipt){return B.verifyReceipt(receipt,{obligation:{principal:P[to].principal,ingress:INGRESS[to],operationId:envelope.payload.operationId,payloadDigest:await B.payloadDigest(envelope),bodyDigest:envelope.payload.content?await B.sha256(crypto,body):null,kind:envelope.payload.kind},resolveKey:directory.resolveKey,status:directory.status,now:w.clock.now()});},
   items:async name=>[...(await network.peers.get(name).store.list({prefix:'item/'})).values()],
   budget:name=>network.peers.get(name).store.get('budget/v1'),
+  store:name=>network.peers.get(name).store,
   dispose:()=>network.dispose(),
  };
  return w;

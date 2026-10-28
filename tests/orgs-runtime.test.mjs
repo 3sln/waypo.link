@@ -9,7 +9,7 @@ import {join} from 'node:path';
 import {createNodeServer} from '../apps/node/server.mjs';
 import {IdentityService} from '../packages/identity/service.mjs';
 import {identityBackupPort,recoveryAuthorityPublic} from '../packages/runtime/identity-backup.mjs';
-import {verifyIdentityBackup} from '../packages/recovery/identity-backup.mjs';
+import {validateRecoveryPayload} from '../packages/recovery/index.mjs';
 import {accountHandle} from '../packages/runtime/routes/shared.mjs';
 import {stages,allowedMethods} from '../packages/runtime/routes/orgs.mjs';
 import {personActor,actingAs} from '../packages/orgs/authority.mjs';
@@ -47,21 +47,20 @@ test('ORG-0 runtime: an explicit person actor and the legacy implicit owner disp
  await assert.rejects(f.object.dispatch(f.id,{operation:'views.list',actor:{principal:{iss:ORIGIN,sub:other},entity:{kind:'person',id:f.id}}}),{code:'forbidden'});
 });
 
-test('ORG-1 runtime: creation issues a real organization recovery file over provider-custodied keys; the organization never signs in',async t=>{
+test('ORG-1 runtime: creation issues a real organization recovery file (v3, no keys); the organization never signs in',async t=>{
  const f=await fixture(t);
  assert.deepEqual(allowedMethods('/api/orgs'),['GET','POST']);
  const created=await f.call('POST','/api/orgs',{input:{request:'runtime-create-000001',name:'Acme Ltd',label:'company'}});
  assert.equal(created.status,200,JSON.stringify(created.body));
  const org=created.body.organization.id,file=JSON.parse(created.body.recoveryFile.content);
  assert.equal(file.entity,org);assert.equal(file.issuer,ORIGIN);
- const verified=await verifyIdentityBackup(file,recoveryAuthorityPublic({RECOVERY_SIGNING_KEY:f.RECOVERY_SIGNING_KEY}),{issuer:ORIGIN,entity:org});
- assert.equal(await f.accounts.get(org).invoke({method:'recoveryKeysMatch',args:[org,verified.keychain]}),true,'the file restores the organization writer\'s current keys');
- const signing=await f.accounts.get(org).invoke({method:'identitySigningKey',args:[org,verified.keychain.signing.kid]});assert.equal(signing.active,true);
+ const verified=validateRecoveryPayload(file);assert.equal(verified.fileId,created.body.recoveryFile.fileId);
+ assert.equal(created.body.recoveryFile.content.includes('keychain'),false,'no keys in the organization file');
  const record=await f.repository.get(org);
- assert.equal(record.kind,'organization');assert.equal(record.status,'active');assert.equal(record.recoveryHash,await new IdentityCrypto().hash('recovery',file.recoveryToken));assert.equal(record.recoveryKeyKid,verified.keychain.signing.kid);assert.equal(record.recoveryBackupVersion,2);
+ assert.equal(record.kind,'organization');assert.equal(record.status,'active');assert.equal(record.recoveryHash,await new IdentityCrypto().hash('recovery',file.recoveryToken));assert.equal(record.recoveryFileId,verified.fileId);assert.equal(record.recoveryBackupVersion,3);assert.equal(record.recoveryKeyKid,undefined);
  assert.deepEqual([record.credentials.length,record.sessions.length,record.passwordHash,record.emailLoginEnabled],[0,0,null,false]);
  // No interactive path: the organization's own file recovers nothing (break-glass is phase B), and login finds nothing.
- await assert.rejects(f.identity.recover({recoveryToken:file.recoveryToken,identityBackup:file,turnstileToken:'ok'},f.base),{code:'unauthorized'});
+ await assert.rejects(f.identity.recover({recoveryToken:file.recoveryToken,turnstileToken:'ok'},f.base),{code:'unauthorized'});
  await assert.rejects(f.identity.loginPassword({handle:record.handle,password:PASSWORD,turnstileToken:'ok'},f.base),{code:'unauthorized'});
  assert.equal((await f.repository.get(org)).status,'active','a refused recovery changes nothing');
  // The organization's own account is never removed by the inactivity lifecycle.

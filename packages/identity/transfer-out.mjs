@@ -158,12 +158,14 @@ export class TransferOutService {
     if (now - identity.security.changedAt < TIMING.securityLookback) fail('recent_security_change', 'Wait 7 days after a security change before moving your identity.', 409);
     return { identity, lock, allowRestart };
   }
-  /** P14 and §1.1: the current v2 credential, issued ≥ 7 days ago, whose keychain still restores. */
+  /** P14 and §1.1: the current (v3) credential, issued ≥ 7 days ago, plus a key-possession proof (`keys.matches`).
+   * Recovery file v3 carries no keychain, so in production `matches` refuses and transfer-out stays dormant until the
+   * portability revision (recovery and transfer spike, phase 2) replaces this check. */
   async credential(owner, identity, { recoveryToken, keychain }, now) {
     if (typeof recoveryToken !== 'string' || recoveryToken.length > 150) fail('recovery_required', 'Load your current recovery file.', 400);
     const verified = await this.port('identity').verifyRecovery(owner, recoveryToken);
     // A superseded, consumed, resume-only or legacy credential fails exactly like a wrong one.
-    if (!verified || verified.version !== 2 || verified.issuedAt !== identity.recovery?.issuedAt || verified.ref !== identity.recovery?.ref) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
+    if (!verified || verified.version !== 3 || verified.issuedAt !== identity.recovery?.issuedAt || verified.ref !== identity.recovery?.ref) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
     if (now - verified.issuedAt < TIMING.credentialAge) fail('recovery_too_new', 'Your recovery file must be at least 7 days old before you can move your identity.', 409);
     let matches = false; try { matches = await this.port('keys').matches(owner, keychain) === true; } catch { matches = false; }
     if (!matches) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
@@ -949,18 +951,18 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
       });
     },
     /** Elevated-proof abort and the owner's "reissue" choice: the current credential stops being current at once.
-     * `reason: 'elevated-abort'` also arms the forced reissue (`recoveryReissue`, recovery-identity spec), keeping the
-     * invalidated file's kid so the reissue rotates it away (P15). A staged reissue is discarded. */
+     * `reason: 'elevated-abort'` also arms the forced reissue (`recoveryReissue`, recovery-identity spec). A staged
+     * reissue is discarded. Recovery file v3 holds no keys, so nothing is rotated. */
     async invalidateRecovery(owner, { reason } = {}) {
       return cas(owner, (account) => {
         if (account.status !== 'active') return { ok: false, status: account.status };
         const arm = reason === 'elevated-abort';
         if (!account.recoveryHash && !arm && !account.recoveryStaged) return { ok: true };
         if(arm&&account.recoveryReissue?.reason!=='elevated-abort')raiseAuthorityEpoch(account,{reason:'elevated-abort'});
-        if (arm) account.recoveryReissue = { reason, at: clock(), kid: typeof account.recoveryKeyKid === 'string' ? account.recoveryKeyKid : account.recoveryReissue?.kid ?? null };
+        if (arm) account.recoveryReissue = { reason, at: clock() };
         delete account.recoveryStaged;
         if (!account.recoveryHash) { audit(account, 'recovery-reissue-required'); return { ok: true, write: true }; }
-        account.recoveryHash = null; delete account.recoveryIssuedAt; delete account.recoveryKeyKid;
+        account.recoveryHash = null; delete account.recoveryIssuedAt; delete account.recoveryKeyKid; delete account.recoveryFileId; delete account.recoveryBackupVersion; delete account.recoveryReminder;
         audit(account, 'recovery-file-invalidated'); bump(account); return { ok: true, write: true };
       });
     },

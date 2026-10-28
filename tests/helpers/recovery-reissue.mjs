@@ -41,16 +41,16 @@ export async function reissueFixture(t, { wrap = target => target, start = Date.
   const snapshot = await raw.get(id);
   const f = {
     app, service, repository: raw, c, id, handle, ctx, sessionId: session.sessionContext, mail, push, clock,
-    file: { recoveryToken: downloaded.recoveryToken, backup: JSON.parse(downloaded.content) },
+    file: { recoveryToken: downloaded.recoveryToken, fileId: downloaded.fileId, payload: JSON.parse(downloaded.content) },
     now: () => now, advance: ms => { now += ms; }, patch,
     identity: () => raw.get(id), identityBefore: async () => snapshot,
     /** Every credential enrolled more than 7 days ago. */
     age: () => patch(a => ({ ...a, passwordSetAt: now - 8 * DAY, credentials: a.credentials.map(entry => ({ ...entry, createdAt: now - 8 * DAY })) })),
     stepUp: (method = 'password', context = ctx) => service.stepUp({ method, password: PASSWORD }, context),
     begin: (input = { acknowledged: true }, context = ctx) => service.reissueRecoveryBegin(input, context),
-    parse: result => ({ ...result, backup: JSON.parse(result.content) }),
-    confirm: (staged, extra = {}, context = ctx) => service.reissueRecoveryConfirm({ recoveryToken: staged.recoveryToken, downloadConfirmed: true, ...extra }, context),
-    recover: file => service.recover({ recoveryToken: file.recoveryToken, identityBackup: file.backup, turnstileToken: 'ok' }, base),
+    parse: result => ({ ...result, payload: JSON.parse(result.content) }),
+    confirm: (staged, extra = {}, context = ctx) => service.reissueRecoveryConfirm({ recoveryToken: staged.recoveryToken, fileId: staged.fileId, downloadConfirmed: true, ...extra }, context),
+    recover: file => service.recover({ recoveryToken: file.recoveryToken, turnstileToken: 'ok' }, base),
     owner: (context = ctx) => service.owner({}, context),
     async secondSession() { const result = await service.loginPassword({ handle, password: PASSWORD, turnstileToken: 'ok' }, base); return { ...base, sessionToken: result.sessionToken, csrfToken: result.csrfToken, sessionId: result.sessionContext }; },
     keyState: async kid => (await c.identitySigningKey(id, kid))?.state,

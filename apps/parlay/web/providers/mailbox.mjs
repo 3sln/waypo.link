@@ -2,7 +2,9 @@
 // Contacts spike phase 3 (provisional): invitations and lists. invites.mint-bound (system actor) and receive.* (ingress) stay out.
 // Phase 4: contact-link operations (contacts.list/add/remove, shell.conversation-create) are gone; new conversations use
 // conversations.create with list members. mailbox.reset-contact-links is a system operation and stays out.
-export const WEB_OPERATIONS=Object.freeze(['conversations.create','receive.body','conversations.list','conversations.get','conversations.send','conversations.status','conversations.invitations','conversations.accept','contacts.block','views.list','views.create','incoming.query','incoming.update','intake.requests','intake.rejected','intake.rescue','intake.accept','outbox.list','outbox.get','outbox.retry-missing','invites.inspect','invites.redeem','invites.create','invites.list','invites.revoke','lists.list','lists.members','lists.add','lists.remove']);
+export const WEB_OPERATIONS=Object.freeze(['conversations.create','receive.body','conversations.list','conversations.get','conversations.send','conversations.status','conversations.invitations','conversations.accept','contacts.block','views.list','views.create','incoming.query','incoming.update','intake.requests','intake.rejected','intake.rescue','intake.accept','outbox.list','outbox.get','outbox.retry-missing','invites.inspect','invites.redeem','invites.create','invites.list','invites.revoke','lists.list','lists.members','lists.add','lists.remove',
+ // Read-only classification status (consent, pins and the owner-visible classifier gaps, item-classification §8.4).
+ 'classify.status']);
 // Exact BB-B6/B4 operations; composition enables this map only once archive/key-holder ports are wired.
 export const ARCHIVE_CAPABILITIES=Object.freeze({status:{operation:'archive.status'},checkpoint:{operation:'archive.checkpoint'},verify:{operation:'archive.verify'},export:{operation:'archive.export',confirm:true},import:{operation:'archive.import',confirm:true},rejoin:{operation:'conversations.rejoin',confirm:true}});
 export const ARCHIVE_WEB_OPERATIONS=Object.freeze(Object.values(ARCHIVE_CAPABILITIES).map(c=>c.operation));

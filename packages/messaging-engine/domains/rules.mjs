@@ -29,7 +29,11 @@ export function createRulesProvider({PARLAY_ENABLED=false}={}){
    },remove(id){if(!boundedString(id))fault('invalid_rules');return transaction(async tx=>{const rules=await ownerRules(tx),remaining=rules.filter(r=>r.id!==id);await tx.put(RULES,remaining);return remaining;});},restore(id){
     const fresh=seedDefaultRules([],null).rules.find(r=>r.id===id);if(!fresh)fault('not_found','Default rule not found.',404);
     return transaction(async tx=>{const rules=await ownerRules(tx),at=rules.findIndex(r=>r.id===id),prior=rules[at],next={...fresh,enabled:prior?.enabled??fresh.enabled,revision:(prior?.revision??0)+1};if(at>=0)rules[at]=next;else{if(rules.length>=100)fault('invalid_rules');rules.push(next);}await tx.put(RULES,rules);return next;});
-   },apply(id){return transaction(async tx=>{const item=await incomingItem(tx,id),m=organizationOf(item),before=JSON.stringify(m);m.mimeType??=item.content?.mimeType;m.grantId??=item.jti;
+   },apply(id){return transaction(async tx=>{const item=await incomingItem(tx,id),m=organizationOf(item),before=JSON.stringify(m);
+    // An item awaiting auto-classification gets its rules from classify.begin and classify.item (blank-slate runs); an
+    // untracked run in between would survive the final run, so it is a no-op here.
+    if(m.classificationPending)return m;
+    m.mimeType??=item.content?.mimeType;m.grantId??=item.jti;
     await applyRules(m,await ownerRules(tx),{now:clock.now()});if(JSON.stringify(m)===before)return m;
     if(m.quarantined)m.notification=null;m.organizationRevision++;return saveOrganization(tx,{...item,notification:m.notification},m);
    });}};

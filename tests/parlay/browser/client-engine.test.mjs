@@ -39,3 +39,18 @@ test('archive HTTP operations require an explicit composed capability and reques
  const oversized=new Request(url,{method:'POST',headers:{Authorization:'Bearer test-token','Content-Type':'application/json'},body:'x'.repeat(131073)});assert.equal((await createWebHTTP(options)(oversized)).status,413);
  const transport=httpMailbox({base:'https://box.example',token:()=> 'token',fetch:async()=>Response.json({enabled:true})});await assert.rejects(transport.run('archive.export'));assert.equal(transport.archive,undefined);
 });
+
+// Owner direction 2026-10-28 and item-classification §8.4: classifier gaps, pending items and the slow warning reach the UI.
+test('classification status: gaps in settings, a pending marker per item and a slow warning, in both locales',async t=>{
+ const {webView}=await import('../../../apps/parlay/web/ui/app.mjs');
+ const c=make(t);await c.run('load');let s=await c.read();assert.deepEqual(s.classification,{gaps:[],pending:{count:0,slow:0}});
+ const html=state=>JSON.stringify(webView(state,()=>{}));
+ assert.equal(html(s).includes('longer than usual'),false);
+ c.classification.pending={count:2,slow:1};c.classification.gaps=[{kind:'text',mediaType:'text/plain',reason:'no_classifier',at:1}];await c.run('load');s=await c.read();
+ assert.ok(html(s).includes('Auto-classification is taking longer than usual'));
+ await c.run('navigate',{section:'settings'});s=await c.read();assert.ok(html(s).includes('No classifier is set up for text'));
+ await c.run('locale',{locale:'es'});s=await c.read();assert.ok(html(s).includes('No hay ningún clasificador configurado para texto'));assert.ok(html(s).includes('La clasificación automática está tardando'));
+ c.pendingItems.add('item-0');await c.run('locale',{locale:'en'});await c.run('navigate',{section:'views'});await c.run('navigate',{view:{id:'all',revision:1,builtin:true}});s=await c.read();assert.ok(html(s).includes('Auto-classification pending'));
+ // A failing status call leaves the last value and never breaks a load.
+ c.mailbox.run=(orig=>async(name,args)=>{if(name==='classify.status')throw new Error('down');return orig(name,args);})(c.mailbox.run.bind(c.mailbox));await c.run('load');assert.equal((await c.read()).classification.pending.slow,1);
+});

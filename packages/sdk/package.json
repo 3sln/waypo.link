@@ -17,6 +17,8 @@
     "./identity.mjs": "./src/identity.mjs",
     "./capabilities.mjs": "./src/capabilities.mjs",
     "./testing.mjs": "./src/testing.mjs",
-    "./member.mjs": "./src/member.mjs"
+    "./member.mjs": "./src/member.mjs",
+    "./item-classification.mjs": "./src/item-classification.mjs",
+    "./item-classification-fetch.mjs": "./src/item-classification-fetch.mjs"
   }
 }

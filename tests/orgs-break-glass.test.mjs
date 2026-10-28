@@ -377,7 +377,7 @@ test('ORG-12r: the owner’s recovery-file reissue needs an aged credential; a r
  await rejects(w.run('orgs.recovery-reissue-begin',A,{},{verification:w.verification({enrolledAt:w.clock.now()-DAY})}),'tight_verification_required');
  await rejects(w.run('orgs.recovery-reissue-begin',A,{},{verification:w.verification({securityChangedAt:w.clock.now()-DAY})}),'recovery_reissue_cooling');
  await rejects(w.run('orgs.recovery-reissue-begin',B,{}),'not_found','admins can never reissue');
- await w.run('orgs.recovery-reissue-begin',A,{});await w.run('orgs.recovery-reissue-done',A,{kid:'k1'});assert.equal((await w.summary()).recovery.state,'issued');
+ await w.run('orgs.recovery-reissue-begin',A,{});await w.run('orgs.recovery-reissue-done',A,{fileId:'k1'});assert.equal((await w.summary()).recovery.state,'issued');
  const c=await waiting(w);await w.reach(c.waitEndsAt);await w.settle();assert.equal((await w.summary()).recovery.state,'missing');
  await w.run('orgs.recovery-reissue-begin',B,{},{verification:w.verification({securityChangedAt:w.clock.now()-DAY})});
  const notices=[...(await w.metadata.list({prefix:'org/outbox/pending/'})).values()].filter(n=>n.type==='organization-recovery-reissue-started');assert.ok(notices.length>=2&&notices.every(n=>n.recipients.length>0));

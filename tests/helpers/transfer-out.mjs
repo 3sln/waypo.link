@@ -25,7 +25,7 @@ export async function transferFixture(t,{seed=1,identity:overrides={},accept=tru
   verifiedEmail:EMAIL,emailVerifiedAt:now-60*DAY,emailLoginEnabled:true,passwordHash:'hash',
   sessions:[{id:'s-old',createdAt:now-30*DAY,expiresAt:now+400*DAY,hash:'h1',credentialId:'pk-old'},{id:'s-two',createdAt:now-20*DAY,expiresAt:now+400*DAY,hash:'h2'}],
   credentials:[{id:'pk-old',createdAt:now-60*DAY},{id:'pk-two',createdAt:now-50*DAY}],
-  recoveryHash:await hashing.hash('recovery',token),recoveryIssuedAt:now-10*DAY,recoveryBackupVersion:2,recoveryKeyKid:'kid-1',
+  recoveryHash:await hashing.hash('recovery',token),recoveryIssuedAt:now-10*DAY,recoveryBackupVersion:3,recoveryFileId:'ICEiIyQlJicoKSorLC0uLw',
   security:{epoch:3,changedAt:now-20*DAY},audit:[],challenges:[],emailChallenges:[],...overrides};
  if(!await repository.create(record))throw new Error('fixture identity');
  await idDb.put(`email/${EMAIL}`,OWNER);

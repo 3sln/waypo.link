@@ -19,6 +19,8 @@
 // Ports from config: ORGANIZATION_PLANS ({check}) or the organization entitlement port (ORGANIZATIONS_PAID_ALLOWLIST as
 // the operator override, then verified sandbox Polar state; packages/orgs/ownership.mjs), and ORGANIZATION_PURGE
 // ((org) -> {handedOff}) for the deletion executor hand-off (absent: a due deletion holds).
+// ORGANIZATION_IDENTITY (organizationIdentityPort over the identity repository, packages/identity/organizations.mjs) clears
+// the organization's recovery credential at a change of owner (absent: the recovery-rotate effect holds and retries).
 //
 // Organization billing and ownership transfer (ORG-D18, ORG-D21; packages/orgs/ownership.mjs, SANDBOX ONLY):
 //   orgsBillingWebhook(org, verified)   a signature-verified Polar event for this organization (from billingWebhookVerified)
@@ -69,11 +71,15 @@ export function orgsEngine(c){
   const service=new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,supportCases,metadata:c.metadata,clock,random:cryptoRandom,flags:{for:ctx=>flagsFor(c.config,ctx)},plans,issuer:c.config.APP_ORIGIN??null,invitationSigner:owner=>c.signingKey(owner),memberEvents:c.config.ORGANIZATION_MEMBER_EVENTS,
    billing,alert:entry=>lifecycleLog(c.config,entry),accounts:{get:sub=>typeof c.config.IDENTITY_ACCOUNT==='function'?c.config.IDENTITY_ACCOUNT(sub):null},
    effects:{
-    // Invalidates the previous owner's recovery file at an ownership change: an ordinary signing rotation (not the
-    // issuance rotation, which keeps the outgoing kid bound for P15 races) clears the recovery binding, so the old file
-    // no longer restores (identity keys header; recoveryKeysMatch). The new file comes from the new owner's reissue.
-    // Copies of past private keys in the old file cannot be recalled; the encryption key is not rotated (residual).
-    rotateRecovery:async org=>{const current=(await c.identityKeyHistory(org,{purpose:'signing'})).find(k=>k.current);if(!current)return {rotated:false};await c.rotateIdentityKey(org,{purpose:'signing',expectedKid:current.kid});return {rotated:true};},
+    // At an ownership change (and after a refused reissue confirmation): the organization's recovery credential is
+    // cleared on the identity record (ORGANIZATION_IDENTITY.invalidateRecovery, one CAS that bumps the security epoch),
+    // then the signing key rotates as before. Recovery file v3 holds no keys, so only the cleared credential hash makes the
+    // previous owner's file stop working. The effect reports success only after that write, so the organization's
+    // `missing` state means no valid file exists. Without the port it fails closed (the state stays rotation-pending).
+    rotateRecovery:async org=>{
+     if(typeof c.config.ORGANIZATION_IDENTITY?.invalidateRecovery!=='function')return {rotated:false};
+     const cleared=await c.config.ORGANIZATION_IDENTITY.invalidateRecovery(org);if(cleared?.ok!==true)return {rotated:false};
+     const current=(await c.identityKeyHistory(org,{purpose:'signing'})).find(k=>k.current);if(!current)return {rotated:true};await c.rotateIdentityKey(org,{purpose:'signing',expectedKid:current.kid});return {rotated:true};},
     index:async(person,input)=>{const stub=c.config.CONVERSATION_ACCOUNT?.(person);if(!stub)return false;const result=await stub.invoke({method:'orgsOwnershipIndexApply',args:[person,input]});return !result?.$fault&&result?.indexed===true;}
    },
    // ORG-10f (design §8b.6 "deletion takes effect", production gate 5): the hand-off waits for the relations pre-purge
@@ -99,9 +105,11 @@ export const methods={
   if(Operation.entities?.includes('organization')){const sweep=await run(this,new MembershipSweep({actor:{kind:'system',owner}}));if(Number.isSafeInteger(sweep?.wakeAt))await this.scheduleAlarm(sweep.wakeAt);if(OWNERSHIP_OPERATIONS.includes(Operation)||BREAK_GLASS_OPERATIONS.includes(Operation))await ownershipFollowUp(this,owner);}
   return result;
  },
- async orgsSigningProvenance(owner){await this.warm(owner);const key=(await this.identityKeyHistory(owner,{purpose:'signing'})).find(k=>k.current);if(!key)throw new StorageError('identity_keys_unavailable','Identity key unavailable.',503);return {kid:key.kid,publicKey:key.publicJwk,certificationKid:null,authentication:'same-host-session'};},
+ async orgsSigningProvenance(owner){await this.warm(owner);await this.signingKey(owner);/* recovery file v3: issuance no longer creates the key, so ensure it here */const key=(await this.identityKeyHistory(owner,{purpose:'signing'})).find(k=>k.current);if(!key)throw new StorageError('identity_keys_unavailable','Identity key unavailable.',503);return {kid:key.kid,publicKey:key.publicJwk,certificationKid:null,authentication:'same-host-session'};},
  async orgsMemberSnapshot(owner,input){await this.warm(owner);return run(this,new MemberSnapshot({actor:{kind:'system',owner},input:structuredClone(input)}));},
- async orgsInitialize(owner,input){await this.warm(owner);const view=await run(this,new InitializeOrganization({actor:{kind:'system',owner},input:structuredClone(input)}));return view;},
+ async orgsInitialize(owner,input){await this.warm(owner);const view=await run(this,new InitializeOrganization({actor:{kind:'system',owner},input:structuredClone(input)}));
+  // The organization's identity signing key is created at creation, as recovery-file issuance used to do before v3.
+  await this.signingKey(owner);return view;},
  async orgsConfirm(owner,input){await this.warm(owner);return run(this,new ConfirmOrganization({actor:{kind:'system',owner},input:structuredClone(input)}));},
  async orgsAlarm(){
   // ORG-12b review M1: a person account retries undelivered owner-liveness signals.

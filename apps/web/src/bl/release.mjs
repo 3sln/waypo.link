@@ -148,7 +148,7 @@ export class InspectRecovery extends Flow {
 }
 export class RecoverAccount extends Flow {
  async perform(r,ctx,detail){const s=current(r),turnstileToken=r.browser.recoveryChallenge(s.config),file=r.browser.secret('restoreFile');if(!file)throw new Error('Choose your encrypted recovery file first.');const answers=s.unlockQuestions.map(question=>detail.values['unlock:'+question.id]);let payload;try{payload=await r.recoveryFile.decrypt(file,answers,s.config.origin);}finally{answers.fill('');}if((current(r).beamGeneration??0)!==(s.beamGeneration??0)||r.browser.secret('restoreFile')!==file)return;
- const proof={recoveryToken:payload.recoveryToken,...payload.version===2?{identityBackup:payload}:{}};let result;
+ const proof={recoveryToken:payload.recoveryToken};let result;
  // A file whose replacement is in its 7-day window can only cancel that replacement (recovery-identity spec "Active-account
  // reissue"): keep its proof in memory so the owner can choose to cancel; nothing is sent until they do.
  try{result=await r.api.request('/api/auth/recover',{...proof,turnstileToken});}catch(error){if(error?.code==='recovery_reissue_pending'&&r.browser.secret('restoreFile')===file){r.browser.storeSecret('reissueCancelProof',proof);update(r,ctx,{restoreReissuePending:true});}throw error;}

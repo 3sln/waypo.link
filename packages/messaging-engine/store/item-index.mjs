@@ -5,7 +5,7 @@ import {fault} from '../faults.mjs';
 import {classificationOf} from '../domains/tags.mjs';
 const ROW='bb:incoming:row/',OVERLAY='bb:incoming:organization/',REV='bb:incoming:revision',CURSORS='bb:incoming:cursors';
 export const validItemId=id=>typeof id==='string'&&id.length>0&&id.length<=1024&&!/[\u0000-\u001f\u007f]/.test(id);
-export const organizationFields=['tags','tagProvenance','tagHistory','tagSuppressed','automated','classificationResult','firedRules','classification','deliveryTags','deliveryCollection','quarantineReleased','quarantined','readAt','seenActivityRevision','organizationRevision','organizationOverrides','collection'];
+export const organizationFields=['tags','tagProvenance','tagHistory','tagSuppressed','automated','classificationResult','firedRules','classification','deliveryTags','deliveryCollection','quarantineReleased','quarantined','readAt','seenActivityRevision','organizationRevision','organizationOverrides','collection','classificationPending','ruleRun','heldNotification','ruleGeneration','effectsExecuted'];
 const select=(item,fields)=>Object.fromEntries(fields.filter(k=>Object.hasOwn(item,k)).map(k=>[k,structuredClone(item[k])]));
 export function organizationOf(item){
  const tags=[...new Set((item.tags??[]).map(t=>typeof t==='string'?t:t.id))],tagProvenance={...item.tagProvenance};

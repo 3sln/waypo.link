@@ -1,4 +1,5 @@
-// Seeded chaos for the active-account recovery reissue (docs/spec/recovery-identity.md "Active-account reissue"):
+// Seeded chaos for the active-account recovery reissue (docs/3sln/accounts/recovery-identity.md "Active-account reissue";
+// recovery file v3: files hold no keys, so the ordinary rotation below is independent of every file):
 // two sessions reissuing, an ordinary signing-key rotation, a recovery with the current file, a transfer-out commit and
 // a deletion request, interleaved at every identity-repository and account-object call. The account-side events are
 // logged from inside the single-writer gate, so the log is their linearization order.
@@ -13,7 +14,7 @@ const ALLOWED = new Set(['conflict', 'unauthorized', 'recovery_reissue_expired',
   // committed reissue superseded, waits for the window.
   'recovery_reissue_pending']);
 
-test('seeded chaos: reissue vs rotation vs recovery vs transfer commit vs deletion keeps one current file, never commits over a move or a deletion, and never commits an unrestorable file', async t => {
+test('seeded chaos: reissue vs rotation vs recovery vs transfer commit vs deletion keeps one current file, never commits over a move or a deletion, and never ties a file to a key', async t => {
   await forEachSeed(16, async random => {
     let scheduler = null; const wrap = (target, label) => new Proxy(target, { get: (object, name) => { const value = Reflect.get(object, name); if (typeof value !== 'function' || !scheduler) return typeof value === 'function' ? value.bind(object) : value; return scheduler.wrap(object, label)[name]; } });
     const f = await reissueFixture(t, { wrap }), { c, id } = f;
@@ -22,8 +23,9 @@ test('seeded chaos: reissue vs rotation vs recovery vs transfer commit vs deleti
     if (transfer) await f.seedTransfer({ state: 'pending' });
     // Log the account-side outcomes from inside the gate (instance methods shadow the slice's).
     const prepare = c.recoveryReissuePrepare, commit = c.recoveryReissueCommit;
-    c.recoveryReissuePrepare = async function (...args) { const result = await prepare.apply(this, args); order.push(`prepare:${result.keychain.signing.kid}`); return result; };
-    c.recoveryReissueCommit = async function (...args) { const result = await commit.apply(this, args); order.push(`commit:${args[1].kids.signing}`); return result; };
+    const sessionOf = args => args[1]?.actor?.sessionId ?? 'none';
+    c.recoveryReissuePrepare = async function (...args) { const result = await prepare.apply(this, args); order.push(`prepare:${sessionOf(args)}`); return result; };
+    c.recoveryReissueCommit = async function (...args) { const result = await commit.apply(this, args); order.push(`commit:${sessionOf(args)}`); return result; };
     const second = await f.secondSession();
     // A client retries a whole step on `conflict` (another write won the identity revision), as the console does.
     const retry = async step => { for (let attempt = 0; ; attempt++) try { return await step(); } catch (error) { if (error?.code !== 'conflict' || attempt >= 3) throw error; } };
@@ -53,20 +55,15 @@ test('seeded chaos: reissue vs rotation vs recovery vs transfer commit vs deleti
     for (const [index, event] of order.entries()) if (event.startsWith('commit:')) {
       assert.equal(order.slice(0, index).includes('transfer-commit'), false, `a reissue committed over a committed move: ${order.join(' ')}`);
       assert.equal(order.slice(0, index).includes('deletion'), false, `a reissue committed after a deletion request: ${order.join(' ')}`);
-      const kid = event.slice(7), prepared = order.indexOf(`prepare:${kid}`);
-      assert.ok(prepared >= 0 && prepared < index); assert.equal(order.slice(prepared, index).includes('rotation'), false, `a staged file was committed after a rotation cleared its binding: ${order.join(' ')}`);
+      const session = event.slice(7), prepared = order.indexOf(`prepare:${session}`);
+      assert.ok(prepared >= 0 && prepared < index, 'every commit follows its own prepare');
     }
     if (confirmed.length && transfer) assert.notEqual((await c.metadata.get(TRANSFER_KEY)).state, 'committed', 'a committed reissue cancelled the pending move first');
-    // Every file that was current once and no longer is holds a retired key (P15). A recovering account's original
-    // file is its resume credential instead, which keeps its key until the replacement download rotates (PORT-10).
-    if (record.status === 'active') {
-    const signing = (await c.identityKeyHistory(id, { purpose: 'signing' })).find(entry => entry.current)?.kid;
-    for (const file of [f.file, ...confirmed.slice(0, -1)]) if (!current.includes(file)) assert.notEqual(file.backup.keychain.signing.kid, signing, 'a superseded file never holds the current key');
-    }
-    // The current file restores unless an ordinary rotation (which retires every older file by design) followed it.
-    if (current.length && record.status === 'active') {
-      const [file] = current, kid = file.backup.keychain.signing.kid, prepared = order.indexOf(`prepare:${kid}`);
-      if (!order.slice(Math.max(prepared, 0)).includes('rotation')) assert.equal(await c.recoveryKeysMatch(id, file.backup.keychain), true, `the current file restores: ${order.join(' ')}`);
-    }
+    // Files and keys are independent: the signing history grows only by the ordinary rotation, and no file names a key.
+    const rotations = order.filter(event => event === 'rotation').length;
+    const history = (await c.identityKeyHistory(id, { purpose: 'signing' })).length; // keys are created lazily
+    assert.ok(rotations ? history === 1 + rotations : history <= 1, `only ordinary rotations change keys: ${order.join(' ')}`);
+    for (const file of files) assert.equal(JSON.stringify(file.payload).includes('kid'), false);
+    if (current.length && record.status === 'active') assert.equal(record.recoveryFileId, current[0].fileId ?? current[0].payload.fileId);
   });
 });

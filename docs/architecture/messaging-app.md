@@ -155,7 +155,7 @@ This section follows [extensions](../spec/extensions.md), [integrations](../spec
 | --- | --- | --- | --- | --- |
 | `…/slots/messaging-ingress/v1` (Bindle Messaging spec §2.1) | `exclusive` | `provider` only | The user's **mailbox resource**, a brokered resource implementing `…/parlay/v1/contracts/mailbox` (`describe`, effect `read`; `linkRevoked`) | Occupant (`ref: mailbox`) |
 | `…/slots/public-message-intake/v1` (spec §9, published by the messaging spec as in extensibility design §7.1) | `exclusive` | `provider`, `application` | The same mailbox resource, also implementing `…/contracts/public-intake/v1` (`deliver`) | Occupant. The 3sln.me `email-bridge` feature is a provider consumer. |
-| `…/slots/item-classifier/v1` (extensions §2; extensibility design §7.2) | `ordered` | `application`, `provider` | Decision-model resource: a 3sln.me built-in over Workers AI, or third party | **Consumer** (`ref: triage`), optional (§12) |
+| `…/fragments/item-classification/v1` (shared Bindle fragment, [item classification §8](../spec/extensions/item-classification.md#8-fragment-and-applications); replaces the withdrawn classifier slot, 2026-10-28) | `exclusive` per kind field, plus a fallback field | `application` | The 3sln.me paid built-in (text only), or classifier resources of integrations the owner adds | **Consumer**, optional (§12): the `text` and `fallback` fields and their detail fields |
 
 **Why the mailbox is a slot occupant.** The exclusive slot guarantees exactly one inbound handler per user. The owner chooses which integration fills it, and a newly connected app never displaces the current occupant. Only provider features consume it, so no other app can obtain a mailbox credential (review P-17).
 
@@ -165,7 +165,7 @@ This section follows [extensions](../spec/extensions.md), [integrations](../spec
 
 - the owner's assignment of the mailbox to both occupant slots, made in the provider's own interface, never preselected;
 - a storage fragment with an `object-storage/v1` field (§8);
-- an optional consumer request for the classifier slot;
+- an optional grant on the shared item-classification fragment (text and fallback classifier fields, and their detail fields);
 - the activity method grant (§14);
 - `key-delegation.v1` consent (§4).
 
@@ -434,7 +434,9 @@ Receipt budgets carry over unchanged from [messaging](../../apps/parlay/docs/leg
 
 Core keeps the generic identifier and label validation and the reusable rule machinery for activity. Parlay starts from a copy and the two diverge ([extraction](messaging-extraction.md) §2).
 
-**The classifier is a slot.** Parlay is an optional `application` consumer of `item-classifier/v1` (extensibility design §7.2), calling `decide`.
+> **Update (2026-10-28).** Classification now follows the [item classification spec](../spec/extensions/item-classification.md) (provisional, unsigned). Parlay requests the shared fragment's `text` and `fallback` classifier fields with their detail fields, reads `capabilities`, calls `classify` with its own categories under the owner's detail level for the field used (splitting its labels when a classifier takes fewer), fails over to the fallback only on `unsupported_item` or a proven no-effect failure, and records an item it meant to classify but could not score as `unscored` (public requests are then held quietly, never rejected). When no classifier can handle text it tells the owner in settings. An item entering auto-classification (`classify.begin`) is visibly pending with its notification held, the owner is warned when classification is slow, and rules run once before auto-tagging and again when it completes (scored, unscored or failed). Each run yields tags and a list of effects: tags are a blank slate (the final run replaces the provisional one), and effects (quarantine, moves, the held notification, and any later forwarding, reply or deletion action) are executed only after the final run, once per item and generation (`packages/messaging-engine/domains/tags.mjs`). The slot, `decide` and `any-error` failover described in this section are withdrawn; 3sln.me's built-in classifier remains for paid tiers, now on the new contract. The rest of the section (minimization, what gets classified, thresholds) stands.
+
+**The classifier (historical: slot).** Parlay was an optional `application` consumer of the withdrawn `item-classifier/v1` slot, calling `decide`.
 
 **Occupant available.** Parlay invokes the first available occupant directly through the brokered resource. The slot's `any-error` failover *permits* advancing after any error. Parlay deliberately advances **only** after failures that prove the occupant received nothing, the pre-dispatch class of extensions §3.3. Crafted content that makes one classifier time out therefore cannot push the same text to the next occupant (review S-7). The input is normative and minimal:
 
@@ -470,7 +472,7 @@ Messages from accepted peers and established conversations are never auto-reject
 **Threshold pinning.** Thresholds are pinned to the occupant's `{model, version, schema}`, which `decide` results carry as evidence.
 
 - When an occupant reports a model, version or schema different from the pinned one, Parlay **does not silently carry the thresholds over**. It enters calibration mode: "very likely" auto-rejection is suspended, and every item at or above `T_high` is treated as "could be spam" until the new version has a pinned threshold.
-- A pinned threshold comes from the host's published calibration for that model version (the 3sln.me built-in classifier publishes one), or from the owner explicitly accepting the defaults for it.
+- A pinned threshold comes from the host's published calibration for that model version (the owner's provider may publish one), or from the owner explicitly accepting the defaults for it.
 - An owner occupant change behaves the same way.
 - Rules use a new `minProbability` match field. It reads the stored evidence only, and applies only to `classifier` evidence.
 
@@ -495,7 +497,7 @@ Messages from accepted peers and established conversations are never auto-reject
 - per sender principal or sender address: 5 requests per day;
 - per sender domain, for email: 50 per day;
 - per owner: 200 public requests per day;
-- classifier calls bounded by the owner's metered allowance. When the allowance runs out, the fallback above applies, so there is no auto-reject.
+- classifier calls bounded by the owner's metered allowance. When the allowance runs out, the request is `unscored` and held quietly (update 2026-10-28), so there is no auto-reject.
 
 Requests over limits are refused before classification, with the ordinary `rate_limited` response for link deliveries, or held and dropped by the bridge's own budgets for email. Rejected-view writes come from a separate small reserve, so a flood cannot evict legitimate requests.
 

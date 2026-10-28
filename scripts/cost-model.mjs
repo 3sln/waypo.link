@@ -159,7 +159,8 @@ export function relayAbuseStress(a = relayStressAssumptions, r = relayAssumption
 // an entity's legs send and receive the whole aggregate `data` budget (SIGNALING_BOUNDS.dataBytes per dataWindowMs,
 // enforced at the engine level) every window of the month, as 4 KiB messages. Each message is one Worker request and
 // one account Durable Object request at each provider. Request prices are a planning snapshot NOT rechecked against a
-// primary source; recheck before declaring `data` in production. The budget is the same for every plan today.
+// primary source; recheck before declaring `data` in production. The budget is 256 KiB per hour, the same on every plan
+// (owner-approved 2026-10-28).
 export const dataAssumptions = Object.freeze({ workerUSDPerMillion: .30, objectUSDPerMillion: .15, messageBytes: 4096,
   budgetBytes: SIGNALING_BOUNDS.dataBytes, windowMs: SIGNALING_BOUNDS.dataWindowMs });
 export function dataEconomics(a = dataAssumptions) {
