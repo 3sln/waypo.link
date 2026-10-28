@@ -171,7 +171,10 @@ export async function handleConversationIngress(request,{edge,conversationEdge,d
   const input={contentType:headers['content-type'],body:request.body,authorization:headers.authorization,idempotencyKey:headers['idempotency-key'],ingress:request.url};
   if(p.kind!=='conversation-record'&&typeof deliverFirst==='function'&&typeof edge?.hosted==='function'){
    // The adapter supplies `source`; a client-sent forwarding header is never trusted here (review L1).
-   budget?.charge({source:request.source??'unknown',owner:p.recipient.owner});
+   // Credential-less first contact also meets the per-(owner, issuer host) refusal bucket (review L2; invites.mjs
+   // createFirstContactBudget documents its bound). Hosted or not, the check runs here, before any lookup or wake.
+   const credentialLess=credential.scheme===null,claimedIssuer=credentialLess?p.author?.principal?.issuer:undefined;
+   budget?.charge({source:request.source??'unknown',owner:p.recipient.owner,...credentialLess?{issuer:String(claimedIssuer)}:{}});
    const owner=await edge.hosted(p.recipient.issuer,p.recipient.owner);
    const scheme=P.checkCredentialKind(delivery.envelope,credential);
    if(scheme==='BindleInvite'){
@@ -180,7 +183,10 @@ export async function handleConversationIngress(request,{edge,conversationEdge,d
     return ok({receipt:(await deliverInvite(owner,input)).receipt});
    }
    if(scheme!==null)protocol('malformed');
-   return ok({receipt:(await deliverFirst(owner,input)).receipt});
+   let delivered;
+   try{delivered=await deliverFirst(owner,input);}
+   catch(error){if(error?.code==='not_authorized'&&typeof budget?.refused==='function')budget.refused({owner:p.recipient.owner,issuer:String(claimedIssuer)});throw error;}
+   return ok({receipt:delivered.receipt});
   }
   if(p.kind!=='conversation-record')protocol(credential.scheme==='BindleInvite'?'invite_invalid':'not_authorized');
   P.checkCredentialKind(delivery.envelope,credential);

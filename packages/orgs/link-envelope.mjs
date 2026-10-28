@@ -4,12 +4,16 @@
 // the contact link type, audiences, `bindle_data` responses and the replay digest (CL-3). Organization and relation
 // invitations are its only users. Pure functions, no I/O.
 //
-// Why this is not rebuilt over packages/core/signed-object.mjs: the annex (§3.1, §3.2) permits both ES256 and EdDSA meta
-// signatures, accepts a high-S ES256 signature and signs canonically encoded segments, while the core signed-object
-// module is ES256-only, low-S and encodes in member order. Rebuilding would change verdicts for stored invitations; the
-// strict-JSON and exact-member rules already come from packages/core/strict-json.mjs. Recorded as a CR-C2 divergence.
+// Why this is not rebuilt over packages/core/signed-object.mjs: the verifier (annex §3.1, §3.2) still accepts EdDSA and
+// high-S ES256 signatures, for stored legacy metas, and the signer encodes segments canonically, while the core
+// signed-object module is ES256-only, low-S on both sides and encodes in member order. Rebuilding would change verdicts
+// for stored invitations; the strict-JSON and exact-member rules already come from packages/core/strict-json.mjs.
+// Recorded as a CR-C2 divergence. Issuance follows the annex §3.1 issuance rule (2026-10-28 review, CR-C2 verdict):
+// ES256 only, normalized to low-S after WebCrypto signing (which may return either S). Single use is keyed on `jti`
+// and the exact stored bytes, so a high-S twin of a stored meta is refused, never counted twice.
 import { fail, base64url, fromBase64url, textEncoder, boundedString, canonical } from '../core/records.mjs';
 import { strictIJSON as strictJSON, plainObject, exactMembers } from '../core/strict-json.mjs';
+import { normalizeLowS } from '../core/signed-object.mjs';
 
 export const LINK_META_TYP = 'bindle-link-meta+jwt';
 export const LINK_LIMITS = Object.freeze({ meta: 4096, data: 2048, target: 8192 });
@@ -84,8 +88,9 @@ export async function verifyLinkSignature(crypto, parsed, { alg, publicJwk }) {
 const encodeSegment = value => base64url(textEncoder.encode(canonical(value)));
 /** Signs a meta: header exactly {alg, kid, typ: LINK_META_TYP}. */
 export async function signLinkJWS({ header, claims, privateKey, crypto = globalThis.crypto }) {
-  if (!exactMembers(header, ['alg', 'kid', 'typ']) || !algorithms[header.alg] || header.typ !== LINK_META_TYP || !boundedString(header.kid) || !plainObject(claims)) fail('invalid_token');
+  // Issuance is ES256 only (EdDSA issuance dropped; EdDSA metas already stored still verify).
+  if (!exactMembers(header, ['alg', 'kid', 'typ']) || header.alg !== 'ES256' || header.typ !== LINK_META_TYP || !boundedString(header.kid) || !plainObject(claims)) fail('invalid_token');
   const input = `${encodeSegment(header)}.${encodeSegment(claims)}`;
-  const signature = await crypto.subtle.sign(algorithms[header.alg][1], privateKey, textEncoder.encode(input));
-  return `${input}.${base64url(new Uint8Array(signature))}`;
+  const signature = await crypto.subtle.sign(algorithms.ES256[1], privateKey, textEncoder.encode(input));
+  return `${input}.${base64url(normalizeLowS(new Uint8Array(signature)))}`;
 }

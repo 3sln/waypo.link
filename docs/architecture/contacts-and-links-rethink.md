@@ -384,7 +384,7 @@ It then writes its marker last, and updates `export-contributors.mjs` (remove th
 
 Keys pinned only by `link/` become prunable under normal key policy.
 
-Parlay drops contact-link parents, link edge-index entries and contacts added from links (their principals were unverified claims), and seeds the "Contacts" list (`can message you`) from accepted conversation peers. This is logged in DEVLOG when implemented.
+Parlay drops contact-link parents, link edge-index entries and contacts added from links (their principals were unverified claims), and seeds the "Contacts" list (`can message you`) from accepted two-party conversation peers, but only in a mailbox whose owner has never curated a list and only for peers in no list, so a narrower placement or a removal made under phase 3 is never undone (2026-10-28 review M1, provisional). This is logged in DEVLOG when implemented.
 
 ## 10. Phased order
 

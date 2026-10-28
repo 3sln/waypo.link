@@ -104,3 +104,28 @@ test('strict JSON parsers: seeded differential against JSON.parse, bounded depth
     assert.throws(() => linkJSON(deep), { code: 'invalid_json' });
   }
 });
+
+// Annex §3.1 issuance rule (2026-10-28 review, CR-C2 verdict; provisional): the signer emits ES256 low-S only (WebCrypto
+// returns either S, so roughly half of unnormalized signatures are high-S), refuses EdDSA issuance, and the verifier still
+// accepts a stored legacy high-S meta while single use stays keyed on `jti` and the exact bytes.
+test('meta issuance: ES256 low-S only, EdDSA issuance refused, a legacy high-S meta still verifies', async () => {
+  const { signLinkJWS, parseLinkMeta, verifyLinkSignature, LINK_META_TYP } = await import('../packages/orgs/link-envelope.mjs');
+  const { lowS } = await import('../packages/core/signed-object.mjs');
+  const { base64url, fromBase64url } = await import('../packages/core/records.mjs');
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']), publicJwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
+  const now = Math.floor(Date.now() / 1000), claims = i => ({ bindle: 'link-meta', v: 1, type: 'https://spec.bindle.example/links/org-invitation/v1', iss: 'https://h.example', aud: 'https://h.example/p', jti: `j${i}`, iat: now, exp: now + 60 });
+  const header = { alg: 'ES256', kid: 'k1', typ: LINK_META_TYP };
+  for (let i = 0; i < 48; i++) {
+    const meta = await signLinkJWS({ header, claims: claims(i), privateKey: pair.privateKey });
+    assert.equal(lowS(fromBase64url(meta.split('.')[2])), true, `signature ${i} is low-S`);
+    assert.equal(await verifyLinkSignature(crypto, parseLinkMeta(meta), { alg: 'ES256', publicJwk }), true);
+  }
+  await assert.rejects(signLinkJWS({ header: { ...header, alg: 'EdDSA' }, claims: claims(99), privateKey: pair.privateKey }), { code: 'invalid_token' });
+  // A legacy high-S twin (r, n - s) of a meta still verifies; its bytes differ, so exact-bytes single use refuses it.
+  const meta = await signLinkJWS({ header, claims: claims(100), privateKey: pair.privateKey }), [h, c, sig] = meta.split('.'), bytes = fromBase64url(sig);
+  const N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551n; let s = 0n; for (const b of bytes.subarray(32)) s = (s << 8n) | BigInt(b);
+  let v = N - s; const twin = new Uint8Array(bytes); for (let i = 63; i >= 32; i--) { twin[i] = Number(v & 255n); v >>= 8n; }
+  const high = `${h}.${c}.${base64url(twin)}`;
+  assert.equal(lowS(twin), false); assert.notEqual(high, meta);
+  assert.equal(await verifyLinkSignature(crypto, parseLinkMeta(high), { alg: 'ES256', publicJwk }), true, 'stored legacy high-S metas still verify');
+});

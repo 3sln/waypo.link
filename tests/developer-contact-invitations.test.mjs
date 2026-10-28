@@ -84,6 +84,24 @@ test('contacts phase 4: with intent links on for the account the answer also nam
  for(const truthy of ['true',1,{}])assert.equal((await w.route('POST',{intentRoute:truthy})).value.intent.route,undefined,'only a boolean true enables the route');
 }finally{w.close();}});
 
+// Review L1: the route is named only while the reviewed `connect` kind is actually pinned, which artefact-pins does for a
+// site-global INTENT_LINKS_ENABLED only. An account (or cohort) rollout of the flag alone keeps the scheme URL, since
+// `/i` could not resolve `connect` for that account.
+test('review L1: an account-only INTENT_LINKS_ENABLED rollout returns the scheme URL, a site-wide one also the /i route',async()=>{const w=await world();try{
+ w.state.tier='paid';
+ const {stages}=await import('../packages/runtime/routes/developer-contact.mjs');
+ const {reviewedIntentKindsPinned}=await import('../packages/runtime/artefact-pins.mjs');
+ // Flag double: the account evaluation is on; the site-global value is `site`.
+ const flagsWith=site=>({for:ctx=>({version:1,evaluate:name=>({value:name==='INTENT_LINKS_ENABLED'&&(site||ctx?.subject?.kind==='account'),reason:'rule'}),envState:()=>({state:'unset'}),global:name=>name==='INTENT_LINKS_ENABLED'&&site,enabled:()=>false})});
+ Object.assign(w.env,{ABUSE_HASH_KEY:'k'.repeat(32),ABUSE:{consume:async()=>true,consumeWindow:async()=>true,hit:async()=>true}});
+ const post=async()=>{const response=await stages.owner({request:new Request(origin+'/api/developer-contact',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),env:w.env,path:'/api/developer-contact',owner:{account:{id:w.userId}},object:new Proxy({},{get:(_,method)=>async(...args)=>{const r=await w.controller.invoke({method,args});if(r?.$fault)throw Object.assign(Error(r.$fault.message),r.$fault);return r;}}),context:{remoteIP:'192.0.2.1'}});return {status:response.status,value:await response.json()};};
+ w.env.flags=flagsWith(false);assert.equal(reviewedIntentKindsPinned(w.env),false);
+ const accountOnly=await post();assert.equal(accountOnly.status,200,JSON.stringify(accountOnly.value));
+ assert.equal(accountOnly.value.intent.route,undefined,'no /i route while connect is not pinned site-wide');assert.match(accountOnly.value.intent.url,/^web\+bindle:\/\/intent\?bintent=/);
+ w.env.flags=flagsWith(true);assert.equal(reviewedIntentKindsPinned(w.env),true);
+ const site=await post();assert.equal(site.status,200);assert.equal(site.value.intent.route,origin+'/i#bintent='+site.value.intent.value);
+}finally{w.close();}});
+
 test('developer contact is unavailable without a mint hook, a developer handle or the developer identity',async()=>{
  const w=await world({mint:false});try{for(const method of ['GET','POST'])assert.deepEqual(await w.route(method),{status:200,value:{available:false,reason:'developer-unavailable'},headers:{}});}finally{w.close();}
  const v=await world();try{

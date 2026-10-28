@@ -236,9 +236,11 @@ test('email bridge (seeded): occupancy filled, emptied, refusing or failing unde
 });
 
 test('Parlay env rename: PARLAY_* wins; an unset PARLAY_* reads the retired BINDLEBOX_* value; the core alias stays retired',()=>{
- assert.deepEqual(PARLAY_ENV_NAMES.slice(0,2),['ENABLED','SERVICES']);
- assert.equal(parlayEnv({BINDLEBOX_ENABLED:'true'}).PARLAY_ENABLED,'true');
- assert.equal(parlayEnv({BINDLEBOX_ENABLED:'true',PARLAY_ENABLED:'false'}).PARLAY_ENABLED,'false','the new name wins');
+ // Review L3 (2026-10-28): the switch has no alias; BINDLEBOX_ENABLED is retired, so it never turns Parlay on.
+ assert.equal(PARLAY_ENV_NAMES.includes('ENABLED'),false);assert.equal(PARLAY_ENV_NAMES[0],'SERVICES');
+ assert.equal(parlayEnv({BINDLEBOX_ENABLED:'true'}).PARLAY_ENABLED,undefined);
+ assert.equal(parlayEnv({BINDLEBOX_ENABLED:'true',PARLAY_ENABLED:'false'}).PARLAY_ENABLED,'false');
+ assert.equal(parlayEnv({BINDLEBOX_KEY_ENCRYPTION_KEY:'k',PARLAY_KEY_ENCRYPTION_KEY:'n'}).PARLAY_KEY_ENCRYPTION_KEY,'n','the new name wins');
  assert.equal(parlayEnv({}).PARLAY_ENABLED,undefined);
  const binding={get(){}},env=parlayEnv({LINK_INDEX:binding,BINDLEBOX_SERVICES:binding});assert.equal(env.LINK_INDEX,binding);assert.equal(env.PARLAY_SERVICES,binding,'bindings pass through');
  // Core: BINDLEBOX_ENABLED stays retired, and LINKS_ENABLED (its rename) was retired by contacts phase 4; no core flag is

@@ -28,8 +28,9 @@ function room(cid,peers,{state='active',peerState='accepted'}={}){
  return rows;
 }
 const P={alice:person('alice',2),bob:person('bob',3),carol:person('carol',4),dave:person('dave',5),erin:person('erin',6),frank:person('frank',7),gina:person('gina',8)};
-// Pre-phase-4 mailbox: link families (sized to need several pages), invitations, lists, a block and conversations.
-function legacyMailbox({links=7}={}){
+// Pre-phase-4 mailbox: link families (sized to need several pages), a block and conversations. `curated` adds what a
+// mailbox that used phase 3 lists holds: invitations, the built-in list row and alice in Contacts through an invitation.
+function legacyMailbox({links=7,curated=false}={}){
  const rows=[['owner',OWNER],['config',{principal:ME,ingress:'https://owner.box.example/ingress',plan:'free'}]];
  for(let i=0;i<links;i++){
   rows.push([`parent/jti-${i}`,{jti:`jti-${i}`,iss:ME.issuer,revoked:false,link:'https://owner.provider.example/c?bindle_meta=a.b.c'}]);
@@ -41,10 +42,12 @@ function legacyMailbox({links=7}={}){
  // Queued edge publications: two contact-link entries (no kind) and one live hosted-recipient entry.
  rows.push(['edge-outbox/0000000000000001',{iss:ME.issuer,jti:'jti-0',claimsDigest:'d',revoked:false,generation:1}],['edge-outbox/0000000000000002',{kind:'host',issuer:ME.issuer,subject:ME.subject,active:true,generation:2}],['edge-outbox/0000000000000003',{iss:ME.issuer,jti:'jti-1',claimsDigest:'d',revoked:true,generation:3}],['edge-seq',3]);
  // Invitations and lists (kept): alice joined through an invitation and is already in Contacts.
- rows.push(['inv/link/'+uuid(900),{id:uuid(900),state:'live',tokenDigest:'t'.repeat(43)}],['inv/token/'+'t'.repeat(43),uuid(900)],['inv/rule/'+uuid(901),{id:uuid(901),when:{link:uuid(900)},place:['contacts']}]);
- rows.push(['list/contacts',{id:'contacts',name:'Contacts',policy:'message',builtin:true,createdAt:NOW-1}],[memberKey('contacts',P.alice),{principal:who(P.alice),list:'contacts',addedAt:NOW-1,via:{kind:'invite',invite:uuid(900)}}],[memberOf(P.alice,'contacts'),{list:'contacts'}]);
+ if(curated){
+  rows.push(['inv/link/'+uuid(900),{id:uuid(900),state:'live',tokenDigest:'t'.repeat(43)}],['inv/token/'+'t'.repeat(43),uuid(900)],['inv/rule/'+uuid(901),{id:uuid(901),when:{link:uuid(900)},place:['contacts']}]);
+  rows.push(['list/contacts',{id:'contacts',name:'Contacts',policy:'message',builtin:true,createdAt:NOW-1}],[memberKey('contacts',P.alice),{principal:who(P.alice),list:'contacts',addedAt:NOW-1,via:{kind:'invite',invite:uuid(900)}}],[memberOf(P.alice,'contacts'),{list:'contacts'}]);
+ }
  rows.push([`block/${principalKey(P.carol)}`,{principal:who(P.carol),at:NOW-1}]);
- // Conversations: alice (already a member), bob (seeded), carol (blocked), dave (invited only), erin (group only),
+ // Conversations: alice (two-party and group), bob, carol (blocked), dave (invited only), erin (group only),
  // frank (two-party but the room is no longer active).
  rows.push(...room(uuid(501),[P.alice]),...room(uuid(502),[P.bob]),...room(uuid(503),[P.carol]),...room(uuid(504),[P.dave],{peerState:'invited'}),...room(uuid(505),[P.erin,P.alice]),...room(uuid(506),[P.frank],{state:'left'}));
  rows.push([`item/x`,{id:'x',state:'inbox'}]);
@@ -76,14 +79,14 @@ test('the reset deletes the link families in bounded pages, in order, seeds Cont
  const flat=log.flat(),markerAt=flat.findIndex(([op,k])=>op==='put'&&k===CONTACT_LINKS_RESET_MARKER),seededAt=flat.findIndex(([op,k])=>op==='put'&&k===memberKey('contacts',P.bob)),lastParent=flat.findLastIndex(([op,k])=>op==='delete'&&k.startsWith('parent/'));
  assert.ok(lastParent<seededAt&&seededAt<markerAt);assert.equal(markerAt,flat.length-1,'the marker is the last write');
  assert.deepEqual(log.at(-1).map(([,k])=>k).sort(),[`${CONTACT_LINKS_RESET_MARKER}/outbox`,`${CONTACT_LINKS_RESET_MARKER}/rooms`,CONTACT_LINKS_RESET_MARKER].sort());
- assert.equal(calls.at(-1).done,true);assert.equal(calls.reduce((n,r)=>n+r.seeded,0),1);
+ assert.equal(calls.at(-1).done,true);assert.equal(calls.reduce((n,r)=>n+r.seeded,0),2);
  // Everything retired is gone; the live edge publication and every other family is untouched.
  const after=await snapshot(store);
  assert.deepEqual([...after.keys()].filter(isLegacy),[]);
  assert.deepEqual([...after.keys()].filter(k=>k.startsWith('edge-outbox/')),['edge-outbox/0000000000000002']);
- // Untouched, except that the existing member alice gains the binding her conversation verified.
- for(const [key,value] of before)if(!isLegacy(key)&&!(key.startsWith('edge-outbox/')&&key!=='edge-outbox/0000000000000002')&&key!==memberKey('contacts',P.alice))assert.deepEqual(after.get(key),value,key);
- const {binding,...rest}=after.get(memberKey('contacts',P.alice));assert.deepEqual(rest,before.get(memberKey('contacts',P.alice)));assert.equal(binding.ingress,'https://alice.box.example/ingress');
+ // Untouched; the reset writes no list row (the built-in Contacts definition is implied).
+ for(const [key,value] of before)if(!isLegacy(key)&&!(key.startsWith('edge-outbox/')&&key!=='edge-outbox/0000000000000002'))assert.deepEqual(after.get(key),value,key);
+ assert.equal(after.get('list/contacts'),undefined);
  assert.ok(await store.get(CONTACT_LINKS_RESET_MARKER));
 });
 
@@ -91,12 +94,12 @@ test('seeding: accepted two-party peers only, with their binding; no group, bloc
  const store=memoryStore(legacyMailbox());await runToEnd(store,{});
  const m=await members(store);
  assert.deepEqual([...m.keys()].sort(),[principalKey(P.alice),principalKey(P.bob)].sort());
- assert.deepEqual(m.get(principalKey(P.alice)).via,{kind:'invite',invite:uuid(900)},'an existing membership keeps its provenance');
+ assert.deepEqual(m.get(principalKey(P.alice)).via,{kind:'reset',reset:'parlay-contact-links-retired-v1'});
  const bob=m.get(principalKey(P.bob));assert.deepEqual(bob.principal,who(P.bob));assert.deepEqual(bob.via,{kind:'reset',reset:'parlay-contact-links-retired-v1'});
  assert.deepEqual(bob.binding,{keyId:`${P.bob.identityURI}#k1`,ingress:'https://bob.box.example/ingress',identityURI:P.bob.identityURI});
  assert.deepEqual(await store.get(memberOf(P.bob,'contacts')),{list:'contacts'});
- // The existing member gained the binding its conversation verified; its membership is not duplicated.
- assert.ok(m.get(principalKey(P.alice)).binding);assert.equal((await store.list({prefix:`member-of/${principalKey(P.alice)}/`})).size,1);
+ // Alice is in a two-party and a group room: one membership, with the two-party binding.
+ assert.equal(m.get(principalKey(P.alice)).binding.ingress,'https://alice.box.example/ingress');assert.equal((await store.list({prefix:`member-of/${principalKey(P.alice)}/`})).size,1);
  for(const p of [P.carol,P.dave,P.erin,P.frank,ME])assert.equal(await store.get(memberKey('contacts',p)),undefined,p.issuer);
  assert.ok(await store.get(`block/${principalKey(P.carol)}`),'the block stays');
 });
@@ -159,9 +162,13 @@ test('the instance-index half deletes retired link entries in pages, keeps invit
 test('seeded chaos: the reset interleaved with blocks, list changes and new conversations keeps the seeding model',async()=>{
  const people=Array.from({length:10},(_,i)=>person(`p${i}`,200+i));
  await forEachSeed(25,async random=>{
-  const rows=legacyMailbox({links:3}).filter(([k])=>!k.startsWith('conv/')&&!k.startsWith('block/')&&!k.startsWith('list-member/')&&!k.startsWith('member-of/'));
+  const rows=legacyMailbox({links:3}).filter(([k])=>!k.startsWith('conv/')&&!k.startsWith('block/'));
   const store=memoryStore(rows),e=createTestEngine({seed:random.seed,owner:OWNER,store,providers:{contacts:ContactsDomain,receive:ReceiveDomain}});
   try{
+   // Curation (any lists.add or lists.remove) stops seeding for good (M1): `atCuration` is the set of reset-created
+   // memberships just before the first curation; no reset membership exists afterwards that was not in it.
+   let atCuration=null;const resetMembers=async()=>new Set([...await members(store)].filter(([,m])=>m.via?.kind==='reset').map(([k])=>k));
+   const curate=async()=>{if(!atCuration)atCuration=await resetMembers();};
    const blocked=new Set(),removed=new Set(),unblocked=new Set(),everEligible=new Set(),groupOnly=new Set(),twoParty=new Set(),rooms=new Map();let cid=1000;
    const pkOf=p=>principalKey(p);
    const accept=async(peers,{active=true}={})=>{const id=uuid(++cid);await store.transaction(async tx=>{for(const [k,v] of room(id,peers,{state:active?'active':'left'}))await tx.put(k,v);});rooms.set(id,{peers,active});
@@ -171,7 +178,7 @@ test('seeded chaos: the reset interleaved with blocks, list changes and new conv
    for(const p of people.slice(0,6))if(random.chance(.6)){await accept([p]);initial.add(pkOf(p));}
    await accept([people[6],people[7]]);
    // Some initial peers are already list members (added by hand): the reset must keep those rows, never re-create them.
-   const manualBefore=new Set();for(const p of people.slice(0,6))if(random.chance(.3)){await e.run('lists.add',{input:{list:'contacts',principal:who(p)}});manualBefore.add(pkOf(p));}
+   const manualBefore=new Set();if(random.chance(.4))for(const p of people.slice(0,6))if(random.chance(.3)){await curate();await e.run('lists.add',{input:{list:'contacts',principal:who(p)}});manualBefore.add(pkOf(p));}
    for(const p of people)if(random.chance(.15)){await e.run('contacts.block',{input:{principal:who(p)}});blocked.add(pkOf(p));}
    const blockedBefore=new Set(blocked),blockedDuring=new Set();
    for(const p of initial)if(blocked.has(p))everEligible.delete(p);
@@ -182,7 +189,7 @@ test('seeded chaos: the reset interleaved with blocks, list changes and new conv
     if(roll===0)done=(await e.run('mailbox.reset-contact-links',{input:{limit:1+random.int(4),page:1+random.int(2)}})).done;
     else if(roll===1){await e.run('contacts.block',{input:{principal:who(p)}});blocked.add(pkOf(p));blockedDuring.add(pkOf(p));}
     else if(roll===2){await e.run('contacts.block',{input:{principal:who(p),blocked:false}});if(blocked.delete(pkOf(p)))unblocked.add(pkOf(p));}
-    else if(roll===3){if(random.chance(.5)){await e.run('lists.add',{input:{list:'contacts',principal:who(p)}});}else{await e.run('lists.remove',{input:{list:'contacts',principal:who(p)}});removed.add(pkOf(p));}}
+    else if(roll===3){await curate();if(random.chance(.5)){await e.run('lists.add',{input:{list:'contacts',principal:who(p)}});}else{await e.run('lists.remove',{input:{list:'contacts',principal:who(p)}});removed.add(pkOf(p));}}
     else if(roll===4)await accept(random.chance(.7)?[p]:[p,random.pick(people.filter(x=>x!==p))],{active:random.chance(.85)});
     else{for(const [id,r] of rooms)if(r.active&&random.chance(.1)){await store.transaction(async tx=>{const row=await tx.get(`conv/room/${id}`);await tx.put(`conv/room/${id}`,{...row,state:'left'});});r.active=false;}}
    }
@@ -191,10 +198,11 @@ test('seeded chaos: the reset interleaved with blocks, list changes and new conv
    // Lower bound.
    const contacts=await members(store);
    const stayed=p=>[...rooms.values()].some(r=>r.peers.length===1&&pkOf(r.peers[0])===p&&r.active);
-   for(const p of initial)if(!blockedBefore.has(p)&&!blockedDuring.has(p)&&!removed.has(p)&&stayed(p))assert.ok(contacts.has(p),`missing ${p}`);
+   if(!atCuration)for(const p of initial)if(!blockedBefore.has(p)&&!blockedDuring.has(p)&&!removed.has(p)&&stayed(p))assert.ok(contacts.has(p),`missing ${p}`);
    // Upper bound and provenance.
    for(const [key,m] of contacts){
-    if(m.via?.kind==='reset'){assert.ok(twoParty.has(key),`group-only or unknown ${key}`);assert.ok(everEligible.has(key)||unblocked.has(key),`never eligible ${key}`);}
+    if(m.via?.kind==='reset'){assert.ok(twoParty.has(key),`group-only or unknown ${key}`);
+     if(atCuration)assert.ok(atCuration.has(key),`seeded after curation ${key}`);assert.equal(removed.has(key),false,`removed ${key} re-added`);assert.ok(everEligible.has(key)||unblocked.has(key),`never eligible ${key}`);}
     else assert.equal(m.via?.kind,'manual');
    }
    for(const key of groupOnly)if(!twoParty.has(key))assert.notEqual(contacts.get(key)?.via?.kind,'reset',`group peer ${key} seeded`);
@@ -226,4 +234,47 @@ test('a peer blocked when the reset reaches its room is not seeded, even if unbl
   await e.run('contacts.block',{input:{principal:who(P.dave),blocked:false}});
   const m=await members(store);assert.ok(m.has(principalKey(P.bob)));assert.equal(m.has(principalKey(P.dave)),false);
  }finally{await e.dispose();}
+});
+
+// ---- M1 (review 2026-10-28): seeding never widens a narrower placement and never undoes a removal.
+import {firstContactPolicy} from '../../packages/messaging-engine/domains/invites.mjs';
+const LIST_ID='11111111-1111-4111-8111-111111111111';
+for(const policy of ['request','receive-only'])test(`M1: a peer the owner placed only in a ${policy} list is not added to Contacts`,async()=>{
+ const rows=legacyMailbox({curated:true});
+ rows.push([`list/${LIST_ID}`,{id:LIST_ID,name:'Narrow',policy,builtin:false,createdAt:NOW-1}],[memberKey(LIST_ID,P.bob),{principal:who(P.bob),list:LIST_ID,addedAt:NOW-1,via:{kind:'manual'}}],[memberOf(P.bob,LIST_ID),{list:LIST_ID}]);
+ const store=memoryStore(rows);assert.equal(await firstContactPolicy(store,P.bob),policy);
+ const calls=await runToEnd(store,{});assert.equal(calls.reduce((n,r)=>n+r.seeded,0),0);
+ assert.equal(await store.get(memberKey('contacts',P.bob)),undefined);assert.equal(await firstContactPolicy(store,P.bob),policy,'the policy is not widened');
+ // The curated mailbox's existing member keeps its row exactly; nobody else is seeded.
+ assert.deepEqual(await store.get(memberKey('contacts',P.alice)),{principal:who(P.alice),list:'contacts',addedAt:NOW-1,via:{kind:'invite',invite:uuid(900)}});
+ assert.deepEqual([...(await members(store)).keys()],[principalKey(P.alice)]);
+});
+
+test('M1: a peer with any membership is skipped even where no list row exists (second guard)',async()=>{
+ const rows=legacyMailbox();rows.push([memberKey(LIST_ID,P.bob),{principal:who(P.bob),list:LIST_ID,addedAt:NOW-1,via:{kind:'manual'}}],[memberOf(P.bob,LIST_ID),{list:LIST_ID}]);
+ const store=memoryStore(rows);await runToEnd(store,{});
+ const m=await members(store);assert.equal(m.has(principalKey(P.bob)),false);assert.equal(m.has(principalKey(P.alice)),true);
+});
+
+test('M1: a peer the owner removed from Contacts before the reset is not re-added',async t=>{
+ const store=memoryStore(legacyMailbox()),e=createTestEngine({owner:OWNER,store,providers:{contacts:ContactsDomain,receive:ReceiveDomain}});t.after(()=>e.dispose());
+ // Phase 3: the owner added bob, then removed him. The removal leaves no membership row behind.
+ await e.run('lists.add',{input:{list:'contacts',principal:who(P.bob)}});await e.run('lists.remove',{input:{list:'contacts',principal:who(P.bob)}});
+ assert.equal((await store.list({prefix:`member-of/${principalKey(P.bob)}/`})).size,0);
+ for(let i=0;i<100;i++)if((await e.run('mailbox.reset-contact-links')).done)break;
+ assert.ok(await store.get(CONTACT_LINKS_RESET_MARKER));
+ assert.equal(await store.get(memberKey('contacts',P.bob)),undefined,'the removal stands');
+ assert.equal(await firstContactPolicy(store,P.bob),null);
+});
+
+test('M1: removing a seeded peer between two slices stops seeding, so another room of that peer cannot re-add it',async t=>{
+ // alice has two active two-party rooms (501 and 507); bob's room (502) sorts between them.
+ const rows=legacyMailbox();rows.push(...room(uuid(507),[P.alice]));
+ const store=memoryStore(rows),e=createTestEngine({owner:OWNER,store,providers:{contacts:ContactsDomain,receive:ReceiveDomain}});t.after(()=>e.dispose());
+ let done=false;for(let i=0;i<200&&!done&&!await store.get(memberKey('contacts',P.alice));i++)done=(await e.run('mailbox.reset-contact-links',{input:{limit:1,page:1}})).done;
+ assert.equal(done,false);assert.ok(await store.get(memberKey('contacts',P.alice)),'alice was seeded from her first room');
+ await e.run('lists.remove',{input:{list:'contacts',principal:who(P.alice)}});
+ for(let i=0;i<200&&!done;i++)done=(await e.run('mailbox.reset-contact-links',{input:{limit:1,page:1}})).done;
+ assert.equal(done,true);assert.equal(await store.get(memberKey('contacts',P.alice)),undefined,'alice stays removed');
+ assert.equal(await store.get(memberKey('contacts',P.bob)),undefined,'seeding stopped once the owner curated');
 });

@@ -30,7 +30,9 @@ Contacts spike phase 4 reset `parlay-contact-links-retired-v1` (provisional, uns
 open before the requested operation, in at most 64 bounded slices, and again from the alarm until its marker
 `migration/parlay-contact-links-retired-v1` exists. It deletes queued contact-link edge publications, `decision/`,
 `contact-link/`, `known/`, `contact/` and then `parent/` rows, seeds the built-in Contacts list from accepted two-party
-conversation peers (never group-only peers or blocked peers, never a duplicate) and writes its marker last. Each
+conversation peers (never group-only peers, blocked peers or peers already in any list, never a duplicate, and only
+while the owner has never curated a list: a mailbox with any `list/` row is not seeded, so a narrower placement or a
+removal is never undone; review M1) and writes its marker last. Each
 ingress-index shard (Worker `LinkIndexObject`, Node `links.sqlite`) deletes its retired `link/` entries once before
 serving (`resetEdgeIndexLinks`, marker last).
 

@@ -161,6 +161,48 @@ test('first-contact budgets: per-source and per-owner 429s are identical for hos
  assert.doesNotThrow(()=>perSource.charge({source:'a',owner:'x'}));assert.throws(()=>perSource.charge({source:'a',owner:'y'}),{code:'rate_limited'});
 });
 
+// Review L2 (coordinator decision, provisional): a per-(owner, claimed issuer host) refusal bucket at the edge. Only
+// verified policy refusals charge it; it is checked before the source and owner budgets, so a host that is collecting
+// refusals no longer spends the owner's budget for other hosts; it never crosses owners; invitations are exempt.
+test('review L2: verified refusals from one issuer host trip that host for that owner only, before the owner budget',async t=>{
+ let m;const budget=createFirstContactBudget({limits:{windowMs:60000,perSource:1000,perOwner:6,perIssuerRefusals:2,keys:64},now:()=>m.clock.now()});m=await mesh(t,{budget});
+ const send=async(from,to='alice')=>post(m,to,(await oneOffRequest(m,from,to)).request);
+ await m.run('alice','lists.add',{list:CONTACTS_LIST,principal:who(m.party('bob'))});await m.run('alice','lists.add',{list:CONTACTS_LIST,principal:who(m.party('dave'))});
+ assert.notEqual(new URL(m.party('dave').principal.issuer).host,new URL(ONE).host,'dave is at another issuer');
+ // carol (one.provider) is on no list: two verified refusals, then the host is refused early, without waking alice.
+ const carol=[];for(let i=0;i<5;i++)carol.push(await send('carol'));
+ assert.deepEqual(carol.map(r=>r.json.error),['not_authorized','not_authorized','rate_limited','rate_limited','rate_limited']);
+ // bob is in Contacts but shares carol's host: refused for the rest of the window, like every per-owner 429.
+ assert.equal((await send('bob')).json.error,'rate_limited');
+ // dave's host is unaffected, and the early 429s above did not spend alice's owner budget (6): 2 refusals + 4 here.
+ for(let i=0;i<4;i++)assert.equal((await send('dave')).status,200,`dave ${i}`);
+ assert.equal((await send('dave')).json.error,'rate_limited','the per-owner budget still caps everyone');
+ // The key names the owner: carol's host is not limited towards bob.
+ assert.equal((await send('carol','bob')).json.error,'not_authorized');
+ // A new window clears it.
+ m.clock.set(m.clock.now()+60001);assert.equal((await send('bob')).status,200);
+});
+
+test('review L2: forged issuer claims never charge the host bucket; the check is uniform for unhosted owners; invitations are exempt',async t=>{
+ const budget=createFirstContactBudget({limits:{windowMs:60000,perSource:1000,perOwner:1000,perIssuerRefusals:2,keys:64}}),m=await mesh(t,{budget});
+ await m.run('alice','lists.add',{list:CONTACTS_LIST,principal:who(m.party('bob'))});
+ // Claims that fail verification (here a tampered signature naming one.provider principals) are author_unverifiable
+ // and leave the bucket empty: locking a host takes principals that really verify there.
+ for(let i=0;i<5;i++){const r=await oneOffRequest(m,'carol','alice'),e=structuredClone(r.envelope);e.proof.signature=B.base64url(new Uint8Array(64));const wire=B.encodeDelivery(e,{body:encoder.encode('hello')});r.request.headers['content-type']=wire.contentType;r.request.body=wire.bytes;assert.equal((await post(m,'alice',r.request)).json.error,'author_unverifiable');}
+ assert.equal((await post(m,'alice',(await oneOffRequest(m,'bob','alice')).request)).status,200,'bob still reaches alice');
+ // The check runs before the hosted lookup: a full bucket answers the same 429 for an unhosted owner as for a hosted one.
+ const ghost=crypto.randomUUID();for(const owner of [ghost,m.party('alice').owner])for(let i=0;i<2;i++)budget.refused({owner,issuer:ONE});
+ const hosted=await post(m,'alice',(await oneOffRequest(m,'bob','alice')).request),unhosted=await post(m,'alice',(await oneOffRequest(m,'bob','alice',{recipientOwner:ghost})).request);
+ assert.deepEqual([hosted.status,hosted.json],[unhosted.status,unhosted.json]);assert.equal(hosted.json.error,'rate_limited');
+ // An invitation redemption from the locked host still goes through.
+ const {data}=await invite(m);const redeemed=await post(m,'alice',(await redemptionRequest(m,'carol','alice',data.token)).request);assert.equal(redeemed.status,200,JSON.stringify(redeemed.json));
+ // Unit: the bucket key is never the host alone.
+ const unit=createFirstContactBudget({limits:{windowMs:60000,perSource:100,perOwner:100,perIssuerRefusals:1,keys:64}});unit.refused({owner:'victim',issuer:'https://big.example'});
+ assert.throws(()=>unit.charge({source:'s',owner:'victim',issuer:'https://big.example'}),{code:'rate_limited'});
+ assert.doesNotThrow(()=>unit.charge({source:'s',owner:'someone-else',issuer:'https://big.example'}));
+ assert.doesNotThrow(()=>unit.charge({source:'s',owner:'victim'}),'no issuer (an invitation) skips the bucket');
+});
+
 test('list policies: the most permissive list wins, a block overrides every list, request holds, receive-only refuses; changes apply at once',async t=>{
  const m=await mesh(t),bob=who(m.party('bob')),send=async()=>post(m,'alice',(await oneOffRequest(m,'bob','alice')).request);
  const quiet=await m.run('alice','lists.create',{name:'Newsletter',policy:'receive-only'}),vetted=await m.run('alice','lists.create',{name:'Website contacts',policy:'request'});

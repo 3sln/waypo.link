@@ -2,7 +2,7 @@
 
 > **Group:** Bindle core
 >
-> **Status:** draft, 2026-10-27, provisional and unsigned (contacts and links spike CL-2, CR-K1). The text below is moved unchanged in substance from links §3.1 (the JWS profile) and links §7.2 (the signature-domain table); only its scope is generalized. No separate implementation module exists yet: the profile is implemented today inside the links envelope parser (`packages/links/envelope.mjs`), and a shared core module is planned (contacts spike CR-C0). Nothing is production-verified.
+> **Status:** draft, 2026-10-27, provisional and unsigned (contacts and links spike CL-2, CR-K1). The text below is moved unchanged in substance from links §3.1 (the JWS profile) and links §7.2 (the signature-domain table); only its scope is generalized. The shared core module is `packages/core/signed-object.mjs` (contacts spike CR-C0). The Organizations link envelope keeps its own parser and signer in `packages/orgs/link-envelope.mjs`, which replaced the removed `packages/links/envelope.mjs` in contacts phase 4 (CR-C2); its verifier exceptions are stated in its annex §3.1. Nothing is production-verified.
 >
 > **Covers:** the strict JSON rules and compact JWS profile every Bindle signed object uses, and the rule that keeps objects signed by one key separable (signature domains).
 >
@@ -32,7 +32,7 @@ Where a profile needs a canonical form (for example to compute a digest), it use
 
 1. **Serialization.** [JWS](https://www.rfc-editor.org/rfc/rfc7515) compact serialization with three segments in canonical unpadded base64url. Segments with noncanonical trailing bits are rejected.
 2. **Header.** The protected header contains exactly the members the profile gives. `jku`, `jwk`, `x5u`, `x5c`, `crit`, `b64`, `zip` and `cty` are not permitted. `kid` is 1–200 characters without control characters.
-3. **Algorithms.** ES256 signatures are the raw 64-byte `r||s` form ([RFC 7518](https://www.rfc-editor.org/rfc/rfc7518) §3.4); EdDSA follows [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037). Both produce exactly 64 signature bytes; any other length is rejected. `none`, HMAC, and embedded or remotely fetched keys are unavailable. A profile names which of the two algorithms it permits.
+3. **Algorithms.** ES256 signatures are the raw 64-byte `r||s` form ([RFC 7518](https://www.rfc-editor.org/rfc/rfc7518) §3.4); EdDSA follows [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037). Both produce exactly 64 signature bytes; any other length is rejected. `none`, HMAC, and embedded or remotely fetched keys are unavailable. A profile names which of the two algorithms it permits. An ES256 signer MUST emit low-S signatures (`s ≤ n/2`), normalizing after signing where the platform (for example WebCrypto) may return high-S, (2026-10-28, provisional, unsigned). Each profile states whether its verifiers reject high-S; the core module rejects it. The [Organizations link envelope](extensions/organizations-link-envelope.md) §3.1 accepts high-S, and `EdDSA`, only on stored legacy metas, with single use keyed on `jti` and the exact stored bytes.
 4. **Signing input.** The signature input is the ASCII bytes of the **received** `segment1 "." segment2`. Verifiers MUST NOT re-serialize, canonicalize or reorder JSON before verifying, and MUST NOT accept a different encoding of the same JSON.
 5. **Keys.** A verifier never accepts a key from the object itself, from a JWS header, from the party presenting the object, or from an unauthenticated fetch. It resolves `kid` only through a key authority the profile names (for example the issuer's own registered keys, or keys discovered under Organizations §3a with pinned continuity).
 
@@ -51,7 +51,7 @@ One key may sign several kinds of object. In the reference host, for example, on
 | `bindle-relation-participation+jwt` (identity signing key) | JWS input | `typ` | [Organizations](extensions/organizations.md) §9.3 |
 | `bindle-relation-event+jwt` (certification key) | JWS input | `typ` | [Organizations](extensions/organizations.md) §9.9 |
 | DPoP proofs presented with `BindleMember` or `BindleEntity` (the certified key, never an identity key) | JWS input | `typ` `dpop+jwt` ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html)) | [Organizations](extensions/organizations.md) §5.2, §9.5 |
-| Legacy `contact+jwt`, `bindle-contact-endpoint+jwt`, `bindle-inbox+jwt` (implemented; being withdrawn with contact links) | JWS input (`eyJ…`) | `typ`, exact stored claims | Parlay legacy record |
+| Legacy `contact+jwt`, `bindle-contact-endpoint+jwt`, `bindle-inbox+jwt` (removed with contact links in contacts phase 4, 2026-10-28; no longer issued or verified; the `typ` values stay reserved) | JWS input (`eyJ…`) | `typ`, exact stored claims | Parlay legacy record |
 | Conversation v1 payloads (legacy, implemented) | Raw canonical JSON (`{…`), **no domain prefix** | First byte `{` versus `e` | Parlay legacy record |
 | Contact-delivery and conversation-v2 proofs (candidates; being withdrawn) | `bindle-…-v1\n` / `-v2\n` domain prefix plus JCS | Prefix | Parlay legacy record |
 

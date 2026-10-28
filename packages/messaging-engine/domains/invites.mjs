@@ -128,9 +128,11 @@ export class ListsAdd extends MailboxAction {
  async run({contacts,clock}){actorOwner(this.actor);const list=listInput(this.input?.list),principal=principalInput(this.input?.principal),config=await readConfig(contacts.store);if(same(principal,config.principal))invalid('That is you.');
   return contacts.store.transaction(async tx=>({added:await addMember(tx,list,principal,{via:{kind:'manual'},now:clock.now()})}));}
 }
+// Like every other list mutation, a removal materialises the built-in list rows first. The phase 4 reset relies on it
+// (contact-links-reset.mjs, review M1): an empty `list/` prefix means the owner never added or removed anyone.
 export class ListsRemove extends MailboxAction {
- static operation='lists.remove';static deps=['contacts'];static changes='contacts-changed';
- async run({contacts}){actorOwner(this.actor);const list=listInput(this.input?.list),principal=principalInput(this.input?.principal);return contacts.store.transaction(async tx=>({removed:await removeMember(tx,list,principal)}));}
+ static operation='lists.remove';static deps=['contacts','clock'];static changes='contacts-changed';
+ async run({contacts,clock}){actorOwner(this.actor);const list=listInput(this.input?.list),principal=principalInput(this.input?.principal);return contacts.store.transaction(async tx=>{await ensureBuiltins(tx,clock.now());return {removed:await removeMember(tx,list,principal)};});}
 }
 
 // ---------------------------------------------------------------- inviter: links, rules, templates
@@ -498,9 +500,43 @@ export const INVITE_OPERATIONS=[ListsList,ListsMembers,ListsCreate,ListsSetPolic
 // ---------------------------------------------------------------- edge (instance-wide, before any mailbox wakes)
 // First-contact budgets (§7.4): per source and per claimed `recipient.owner`, whether or not the owner is hosted, so a
 // 429 reveals nothing about hosting. In memory and bounded; a deployment with many edge isolates approximates them.
-export const FIRST_CONTACT_BUDGET=Object.freeze({windowMs:60000,perSource:60,perOwner:120,keys:8192});
+//
+// Per-issuer-host refusal bucket (2026-10-28 review L2; coordinator decision, provisional, unsigned): the link-era
+// `receive.deliver` limiter had per-principal, per-issuer and per-site refusal buckets. Only the per-principal one
+// survives in the mailbox (FIRST_CONTACT_REFUSALS). The per-issuer bucket is ported here, at the edge, so an issuer
+// that mints fresh principals to collect refusals gets an early 429 before the per-owner budget is spent for everyone
+// else. The per-site bucket is not ported: its single key per issuer site let one issuer's users (or Sybil accounts
+// there) lock that whole issuer out of a victim. The bucket's rules:
+//  - Key: `i|<claimed recipient.owner>|<claimed author issuer host>`. It is never the host alone, so a claim cannot
+//    reach an owner it does not name, and no one can lock a large issuer's users out of every owner.
+//  - Checked (not charged) before the source and owner budgets, before the hosted lookup and before any mailbox wakes.
+//    It applies to every credential-less first contact the same way, hosted owner or not. Invitation redemptions are
+//    exempt: they carry their own per-invitation limits, and a holder of an invitation is never locked out by this key.
+//  - Charged only by `refused`, which the edge calls when the mailbox answered `not_authorized`. On this path that code
+//    comes only from owner policy after author verification (ReceiveFirstContact step 5), so the claimed issuer host
+//    is the verified one. Forged claims end in `author_unverifiable` and never charge it, so filling the bucket for
+//    host H takes refusals of principals that really verify at H. With the mailbox's 20 refusals per principal per
+//    hour, that takes at least ceil(perIssuerRefusals / 20) real accounts at H.
+//  - Bound: a full bucket stops only H's credential-less first contact to that one owner, for the rest of one window
+//    (`windowMs`, the same window as the per-owner budget). Every refusal that charged it had also charged that owner's
+//    per-owner budget. The per-owner budget already lets anyone, with no accounts at all, stop every sender's first
+//    contact to that owner for one window with `perOwner` requests. So this bucket can never stop more senders, or
+//    for longer, than the per-owner limit already can: the same owner, a subset of senders (one host), the same window.
+//    `perIssuerRefusals` must stay below `perOwner`, or the bucket would never trip before the owner budget.
+export const FIRST_CONTACT_BUDGET=Object.freeze({windowMs:60000,perSource:60,perOwner:120,perIssuerRefusals:30,keys:8192});
+const issuerHost=issuer=>{try{return new URL(issuer).host.slice(0,253);}catch{return 'invalid';}};
 export function createFirstContactBudget({limits=FIRST_CONTACT_BUDGET,now=()=>Date.now()}={}){
- const cache=boundedCache(limits.keys);
- const hit=(key,max)=>{const t=now(),row=cache.get(key,t)??{count:0,until:t+limits.windowMs};if(row.count>=max)protocol('rate_limited',{retryAfter:Math.max(1,Math.ceil((row.until-t)/1000))});cache.set(key,{count:row.count+1,until:row.until},row.until);};
- return Object.freeze({charge({source,owner}){hit(`s|${String(source??'unknown').slice(0,128)}`,limits.perSource);hit(`o|${String(owner).slice(0,64)}`,limits.perOwner);}});
+ const cache=boundedCache(limits.keys),perIssuer=limits.perIssuerRefusals??FIRST_CONTACT_BUDGET.perIssuerRefusals;
+ const retry=row=>Math.max(1,Math.ceil((row.until-now())/1000));
+ const hit=(key,max)=>{const t=now(),row=cache.get(key,t)??{count:0,until:t+limits.windowMs};if(row.count>=max)protocol('rate_limited',{retryAfter:retry(row)});cache.set(key,{count:row.count+1,until:row.until},row.until);};
+ const issuerKey=(owner,issuer)=>`i|${String(owner).slice(0,64)}|${issuerHost(issuer)}`;
+ return Object.freeze({
+  // `issuer` (the claimed author issuer) is passed for credential-less first contact only; the bucket is checked first.
+  charge({source,owner,issuer}){
+   if(issuer!==undefined){const row=cache.get(issuerKey(owner,issuer),now());if(row&&row.count>=perIssuer)protocol('rate_limited',{retryAfter:retry(row)});}
+   hit(`s|${String(source??'unknown').slice(0,128)}`,limits.perSource);hit(`o|${String(owner).slice(0,64)}`,limits.perOwner);
+  },
+  // A verified policy refusal (`not_authorized` from the mailbox) by a principal of `issuer`'s host, to `owner`.
+  refused({owner,issuer}){const t=now(),key=issuerKey(owner,issuer),row=cache.get(key,t)??{count:0,until:t+limits.windowMs};cache.set(key,{count:row.count+1,until:row.until},row.until);},
+ });
 }

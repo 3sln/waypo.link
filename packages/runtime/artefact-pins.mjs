@@ -24,12 +24,15 @@ export const ARTEFACT_STORE='bindle-artefacts-v1';
 // developer contact to it; `open-conversation` as before. `send-message` and `add-contact` are reserved Messaging names
 // whose former data was a contact link (messaging §4.6), so they are no longer registered.
 export const REVIEWED_INTENT_ENVELOPES=Object.freeze([connectIntent,openConversationIntent]);
+/** True when the reviewed intent kinds above are pinned (site-global INTENT_LINKS_ENABLED; never an account, cohort or
+ * client rollout). Every consumer that depends on `/i` resolving them uses this one predicate (review L1). */
+export const reviewedIntentKindsPinned=config=>siteGlobal(config,'INTENT_LINKS_ENABLED');
 let reviewedReferences;
 const reviewedIntentReferences=()=>reviewedReferences??=Promise.all(REVIEWED_INTENT_ENVELOPES.map(envelope=>verifyChain(envelope,{id:envelope.id,kind:'intent',validateBody:body=>validateIntentKind(body).id===envelope.id}))).then(rows=>rows.map(row=>({artefact:row.id,version:row.version,digest:row.digest})));
 /** True when `ref` ({artefact, version, digest}) is exactly one of the provider-reviewed intent kind lines (intents §7: only
  * a provider's own review marks a kind reviewed) and intent links are on. Never throws. */
 export async function reviewedIntentKind(config,ref){
- if(!siteGlobal(config,'INTENT_LINKS_ENABLED')||!ref||typeof ref!=='object')return false;
+ if(!reviewedIntentKindsPinned(config)||!ref||typeof ref!=='object')return false;
  try{return (await reviewedIntentReferences()).some(r=>r.artefact===ref.artefact&&r.version===ref.version&&r.digest===ref.digest);}catch{return false;}
 }
 export function configuredArtefacts({config,store,clock=systemClock}){
@@ -73,7 +76,7 @@ export function configuredArtefactDocuments(config){
  // The reviewed Messaging intent kinds serve only the intent router (INTENT_LINKS_ENABLED), so a default deployment
  // registers none of them (cleanup audit 2026-10-27). Signaling registers no session kinds (signaling §15, Appendix C.2:
  // the four rtc-purpose lines were removed from core); apps publish their own, pinned here like any operator-reviewed kind.
- const builtIns=siteGlobal(config,'INTENT_LINKS_ENABLED')?REVIEWED_INTENT_ENVELOPES:[];
+ const builtIns=reviewedIntentKindsPinned(config)?REVIEWED_INTENT_ENVELOPES:[];
  for(const envelope of builtIns){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
  const schemas=federationSchemas(config),liveSchemas=config.FEDERATION_SCHEMAS&&typeof config.FEDERATION_SCHEMAS==='object'?config.FEDERATION_SCHEMAS:null;
  if(liveSchemas){const builtins=federationSchemas({...config,FEDERATION_SCHEMAS:{}});for(const key of Object.keys(schemas))delete schemas[key];Object.assign(schemas,builtins);}

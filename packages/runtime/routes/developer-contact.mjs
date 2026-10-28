@@ -5,13 +5,16 @@
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {developerContactRoutes} from '../developer-contact.mjs';
 import {json,body,limit,accountHandle,flagEnabled} from './shared.mjs';
+import {reviewedIntentKindsPinned} from '../artefact-pins.mjs';
 
 export function allowedMethods(path){return path==='/api/developer-contact'?['GET','POST']:null;}
 export const admission={exempt:path=>path==='/api/developer-contact'};
 export const stages={
  async owner({request,env,path,owner,object,context}){
   if(path!=='/api/developer-contact')return;
-  const intentRoute=flagEnabled(env,'INTENT_LINKS_ENABLED',{request,subject:{kind:'account',owner:owner.account.id}});
+  // The `/i` route can resolve `connect` only while the reviewed kinds are pinned, which artefact-pins does site-wide
+  // only (review L1). An account or cohort rollout of the flag alone keeps the scheme-URL handoff.
+  const intentRoute=reviewedIntentKindsPinned(env)&&flagEnabled(env,'INTENT_LINKS_ENABLED',{request,subject:{kind:'account',owner:owner.account.id}});
   return developerContactRoutes({path,request,env,owner,object,accountHandle,body,json,limit,remoteIP:context.remoteIP,intentRoute});
  },
 };

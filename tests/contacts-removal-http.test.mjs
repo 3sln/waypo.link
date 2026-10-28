@@ -44,7 +44,9 @@ test('removed contact-link routes answer as unknown paths, with and without a se
   const text=await response.text();assert.equal(/og:|oembed|bindle-contact|contact-preview/i.test(text),false,'no preview metadata: '+path);
  }
  for(const [path,method,value] of [['/api/links','GET'],['/api/links/changes','GET'],['/api/links/'+jti+'/revoke','POST',{}],['/api/links/respond','POST',{link:origin+contact+'?bindle_meta='+meta}],['/api/contacts/'+jti+'/sharing','PUT',{profileFields:['displayName']}]]){
-  const response=await alice.owner(path,value,method);assert.equal(response.status,method==='GET'?404:[404,405].includes(response.status)?response.status:-1,path+' '+response.status);
+  // Review L4: the same method on an unknown owner path is the control. A 405 would mean a route still claims the path.
+  const response=await alice.owner(path,value,method),control=await alice.owner(path.replace(/^\/api\/(links|contacts)/,'/api/not-a-route'),value,method);
+  assert.equal(control.status,404,'control '+path);assert.equal(response.status,control.status,path+' '+response.status);
  }
  const snapshot=await (await alice.owner('/api/account',undefined,'GET')).json();assert.equal(Object.hasOwn(snapshot,'contacts'),false,'no contact parents in the account snapshot');
 });

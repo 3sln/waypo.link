@@ -8,7 +8,7 @@ import {importVerifyKey} from '../../../packages/messaging-protocol/index.mjs';
 export function clientMetadata(clientId='https://messages.example/bindle/client.json',{removal=false,intents=false}={}){
  const client=new URL(clientId);if(client.protocol!=='https:'||client.username||client.password||client.search||client.hash||client.pathname!=='/bindle/client.json')fault('recipient_unavailable','Client metadata unavailable.',503);
  const bindle=structuredClone(integration),endpoint=path=>new URL('/bindle/'+path,client.origin).href;
- if(intents)bindle.intents=[['send-message','sha256-lWZkE2SQRlCcsCRMZ2ven529CrbjGNAsgxHWSyIF4MU'],['add-contact','sha256-Nu6S97f-t26Tk_KCTwaHtaWgxUGSOJ3JUIn4gdBeaZs'],['open-conversation','sha256-BVp7Z5PiP2NNpO9cb-mxI_8uyZWO1PKJ5PsKgPZNU70']].map(([name,digest])=>({kind:`https://spec.bindle.example/intents/${name}/v1`,version:1,digest,route:endpoint('intent')}));
+ if(intents)bindle.intents=[['open-conversation','sha256-BVp7Z5PiP2NNpO9cb-mxI_8uyZWO1PKJ5PsKgPZNU70']].map(([name,digest])=>({kind:`https://spec.bindle.example/intents/${name}/v1`,version:1,digest,route:endpoint('intent')}));
  // Contacts spike phase 3 (provisional): Bindle Messaging's `connect` kind (messaging §4.1; docs/artefacts/intents/connect-v1.json).
  if(intents)bindle.intents.push({kind:'https://spec.bindle.example/messaging/v1/intents/connect',version:1,digest:'sha256-oCyJ6fKE_vJrmdRY5bF5U_R8t_pfE2HZoZy81yG7H-g',route:endpoint('intent')});
  if(removal)bindle.removal={uri:endpoint('remove'),cleanup_seconds:900};

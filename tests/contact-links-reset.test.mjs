@@ -24,7 +24,10 @@ async function seedRetired(db,{per=3}={}){
 // Families the reset must keep (identity keys despite the name, delegations, org and relation invitations, look-alikes).
 const KEPT=Object.freeze({
  'owner':OWNER,'contact-key/k1':{kid:'k1',publicJwk:{}},'signing-key':'k1',[key('key-delegation',OWNER,'jkt')]:{owner:OWNER},
- 'orgs/invitation/11111111-1111-4111-8111-111111111111':{state:'pending'},'relations/invitation/22222222-2222-4222-8222-222222222222':{state:'pending'},
+ // Real key shapes (packages/orgs/roster.mjs ORG_KEYS, packages/orgs/relation-keys.mjs K), review L4.
+ 'org/invitation/11111111-1111-4111-8111-111111111111':{state:'pending'},'org/invitation-open/11111111-1111-4111-8111-111111111111':{open:true},
+ 'rel/inv/22222222-2222-4222-8222-222222222222':{state:'open'},'rel/inv-by/p-key/22222222-2222-4222-8222-222222222222':{x:1},'rel/inv-open/i-key/22222222-2222-4222-8222-222222222222':{x:1},
+ 'rel/inv-due/0000001800000000/22222222-2222-4222-8222-222222222222':{x:1},'rel/inv-done/0000001700000000/33333333-3333-4333-8333-333333333333':{x:1},
  'linked/approval':{x:1},'link':{exact:true},'links':{exact:true},'contact-sharing':{exact:true},'migration/messaging-retired-v1':{version:1},
 });
 async function seedKept(db){for(const [path,value]of Object.entries(KEPT))await db.put(path,value);}

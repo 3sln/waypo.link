@@ -2,7 +2,7 @@
 
 > **Group:** Bindle extension
 >
-> **Status:** draft, 2026-10-28, provisional and unsigned (contacts and links spike CL-2, CR-LK1). The text is moved from links §1–§5, §8 and the generic part of §9, unchanged in substance, with the contact link type, audiences, response signing and the legacy `?sig=` form removed (CL-3). Organization and relation invitations use it locally behind flags, over the parser in `packages/links/envelope.mjs` (to move to `packages/orgs`, contacts spike CR-C2). Nothing is production-verified.
+> **Status:** draft, 2026-10-28, provisional and unsigned (contacts and links spike CL-2, CR-LK1). The text is moved from links §1–§5, §8 and the generic part of §9, unchanged in substance, with the contact link type, audiences, response signing and the legacy `?sig=` form removed (CL-3). Organization and relation invitations use it locally behind flags, over the parser and signer in `packages/orgs/link-envelope.mjs` (moved from the removed `packages/links/envelope.mjs` in contacts phase 4, CR-C2). Nothing is production-verified.
 >
 > **Covers:** the `bindle_meta` / `bindle_data` link query envelope used by the invitation link types of [Organizations](organizations.md) (§5.1, §9.4): parsing, the meta header and common claims, owner-side validity, tooling, processing order and results, and the handoff to the opener's provider.
 >
@@ -37,11 +37,15 @@ Failures in this section are `link_malformed` (§6).
 
 ### 3.1 Signed-object profile
 
-`bindle_meta` is a signed object under the core [compact JWS profile](../keys.md#3-compact-jws-profile) and [strict JSON rules](../keys.md#2-strict-json). Both of its algorithms, `ES256` and `EdDSA`, are permitted.
+`bindle_meta` is a signed object under the core [compact JWS profile](../keys.md#3-compact-jws-profile) and [strict JSON rules](../keys.md#2-strict-json).
+
+**Issuance (2026-10-28, provisional, unsigned; review of contacts phase 4, CR-C2).** An owner host MUST issue new metas with `ES256` only, and each signature MUST be low-S (`s ≤ n/2`), as [keys §3](../keys.md#3-compact-jws-profile) rule 3 requires of every ES256 signer. WebCrypto may return either S, so the issuer normalizes `s` to `n − s` after signing when needed. `EdDSA` issuance is dropped.
+
+**Verification.** A verifier accepts `ES256` and, for metas already stored before this rule, `EdDSA`. It MAY accept a high-S `ES256` signature only for a stored legacy meta: §3.3 already requires the received header and claims to equal the stored ones exactly. A malleated copy `(r, n − s)` is a different string. Every consumer therefore keys single use on the meta's `jti` together with its exact stored bytes, so such a copy is refused and never counted as a second use. This is the profile statement keys §3 rule 3 asks for.
 
 ### 3.2 Header and common claims
 
-The meta protected header is exactly `{"alg","kid","typ"}` with `alg` `ES256` or `EdDSA` and `typ` exactly `"bindle-link-meta+jwt"`. `kid` MUST identify an active key that the owner host registered for the link subject. The owner host never resolves a meta key through a remote document, header or the link itself.
+The meta protected header is exactly `{"alg","kid","typ"}` with `alg` `ES256` (or `EdDSA` on a stored legacy meta, §3.1) and `typ` exactly `"bindle-link-meta+jwt"`. `kid` MUST identify an active key that the owner host registered for the link subject. The owner host never resolves a meta key through a remote document, header or the link itself.
 
 Every meta payload contains these common members, plus the exact type-specific set its `type` defines:
 
