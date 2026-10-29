@@ -2,6 +2,7 @@
 // use so the element bundle stays small. Every function takes the client; the
 // synchronous parts (generations, single-flight refresh) stay in identity.mjs.
 import {createProof} from './dpop.mjs';
+import {rpcRequestInit,readRPCResponse} from './rpc-wire.mjs';
 
 const coded=(message,code)=>Object.assign(new Error(message),{code});
 const nonceValue=/^[\x21-\x7e]{1,512}$/;
@@ -14,7 +15,8 @@ export async function boundedJSON(response){
   let text;if(response.body?.getReader){const reader=response.body.getReader(),chunks=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>1500000){await reader.cancel();throw new Error('Provider response is too large.');}chunks.push(value);}}finally{reader.releaseLock();}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}else text=await response.text();
   if(new TextEncoder().encode(text).length>1500000)throw new Error('Provider response is too large.');return JSON.parse(text);
 }
-export function deepFreeze(value){if(value&&typeof value==='object'){for(const child of Object.values(value))deepFreeze(child);Object.freeze(value);}return value;}
+// Byte strings and typed arrays (CBOR results) cannot be frozen; their containers still are.
+export function deepFreeze(value){if(value&&typeof value==='object'&&!ArrayBuffer.isView(value)){for(const child of Object.values(value))deepFreeze(child);Object.freeze(value);}return value;}
 const signalFor=signal=>signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);
 
 // One token-endpoint request. With a DPoP key it signs a fresh proof per attempt
@@ -100,18 +102,19 @@ export async function revoke(client,session,{signal}={}){
   return response.ok;
 }
 
-// One RPC request. A DPoP-typed access token is sent with a fresh proof bound to
-// it (`ath`); scoped resource tokens are always Bearer.
-export async function sendRPC(client,session,body,{signal,token}){
+// One RPC request: the envelope as Bindle CBOR (`application/vnd.bindle.rpc+cbor`, protocol §5). A DPoP-typed access
+// token is sent with a fresh proof bound to it (`ath`); scoped resource tokens are always Bearer.
+export async function sendRPC(client,session,envelope,{signal,token}){
   const dpop=!token&&session.tokenType==='DPoP',key=dpop?await client.dpopKey(session.dpopJkt):null;
   if(dpop&&!key)throw new Error('Sign in again before accessing this resource.');
+  const init=rpcRequestInit(envelope),body=init.body;
   for(let attempt=0;;attempt++){
-    const headers={'Content-Type':'application/json',Accept:'application/json',Authorization:`${dpop?'DPoP':'Bearer'} ${token??session.access_token}`};
+    const headers={...init.headers,Authorization:`${dpop?'DPoP':'Bearer'} ${token??session.access_token}`};
     if(dpop)headers.DPoP=await createProof(key,{htu:session.rpcEndpoint,nonce:client.dpopNonces.get(session.rpcEndpoint),accessToken:session.access_token,crypto:client.crypto,clock:client.clock});
     const response=await client.fetcher(session.rpcEndpoint,{method:'POST',credentials:'omit',redirect:'error',signal:signalFor(signal),headers,body});
     const nonce=response.headers?.get?.('DPoP-Nonce');
     if(dpop&&nonceValue.test(nonce??'')){client.dpopNonces.set(session.rpcEndpoint,nonce);if(response.status===401&&attempt===0&&/use_dpop_nonce/.test(response.headers.get('WWW-Authenticate')??''))continue;}
-    return {response,result:await boundedJSON(response)};
+    return {response,result:await readRPCResponse(response).catch(error=>{throw new Error(error?.code==='body_too_large'?'Provider response is too large.':error?.code==='transport_failure'?'Provider response is not a Bindle RPC response.':'Provider returned an invalid RPC response.');})};
   }
 }
 

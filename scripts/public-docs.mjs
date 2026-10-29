@@ -23,6 +23,7 @@ export const publicDocumentation=Object.freeze([
  ['Bindle core','docs/spec/extensions.md','Extensions and resource-field attributes (draft, unimplemented)'],
  ['Bindle core','docs/spec/artefacts.md','Public artefacts and integrity references'],
  ['Bindle core','docs/spec/keys.md','Signed objects and signature domains (draft)'],
+ ['Bindle core','docs/spec/cbor.md','CBOR profile for RPC (draft)'],
  ['Bindle core','docs/spec/security.md','Security model'],
  ['Bindle extensions','docs/spec/extensions/device-authorization.md','Device authorization for CLIs and TV apps (proposed)'],
  ['Bindle extensions','docs/spec/extensions/incremental-authorization.md','Incremental authorization (draft)'],

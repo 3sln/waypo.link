@@ -1,5 +1,7 @@
 // Bindle Messaging protocol library: encoding, certificates, envelope schema, author verification, conversations,
 // replay, outcomes and wire parsers. Live-signed fixtures; fixed vectors are in protocol-vectors.test.mjs.
+import {encodeRPC} from '../helpers/rpc.mjs';
+import {encode as cborEncode} from '../../packages/core/cbor.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as B from '../../packages/messaging-protocol/index.mjs';
@@ -304,7 +306,7 @@ test('multicast parsing: whole-request failures versus confined context errors',
 });
 
 test('mailbox RPC: strict envelope and methods; the retired public-intake contract is unsupported',async()=>{
- const resource='https://hub.box.example/mailboxes/m1',req=(contract,method,args,extra={})=>encoder.encode(JSON.stringify({version:'0',tx:uuidOf(1),resource,contract,method,args,...extra}));
+ const resource='https://hub.box.example/mailboxes/m1',req=(contract,method,args,extra={})=>encodeRPC({version:'0',tx:uuidOf(1),resource,contract,method,args,...extra});
  assert.equal(B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{})).method,'describe');
  // Contacts spike phase 4: the mailbox contract is `describe` only; the withdrawn linkRevoked is unsupported.
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'linkRevoked',{jti:'j1'}),{resource}),code('unsupported_method'));
@@ -312,7 +314,10 @@ test('mailbox RPC: strict envelope and methods; the retired public-intake contra
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'deliver',{})),code('unsupported_method'));
  assert.throws(()=>B.parseRPC(req('https://x.example/c','describe',{})),code('unsupported_contract'));
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{},{extra:1})),code('malformed'));
- assert.throws(()=>B.parseRPC(encoder.encode(`{"version":"0","version":"0","tx":"${uuidOf(1)}","resource":"${resource}","contract":"${B.MAILBOX_CONTRACT}","method":"describe","args":{}}`)),code('malformed'));
+ // Brokered RPC is Bindle CBOR: a duplicate key (here `version`, in deterministic key order) and a JSON body are malformed.
+ const item=v=>[...cborEncode(v)],duplicate=Uint8Array.from([0xa7,...item('tx'),...item(uuidOf(1)),...item('args'),0xa0,...item('method'),...item('describe'),...item('version'),...item('0'),...item('version'),...item('0'),...item('contract'),...item(B.MAILBOX_CONTRACT),...item('resource'),...item(resource)]);
+ assert.throws(()=>B.parseRPC(duplicate),code('malformed'));
+ assert.throws(()=>B.parseRPC(encoder.encode(JSON.stringify({version:'0',tx:uuidOf(1),resource,contract:B.MAILBOX_CONTRACT,method:'describe',args:{}}))),code('malformed'));
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{}),{resource:'https://hub.box.example/mailboxes/m2'}),code('malformed'));
  // The public-intake contract, its provenance JWS and helpers went with the email bridge (owner direction 2026-10-28).
  const RETIRED_INTAKE='https://spec.bindle.example/contracts/public-intake/v1';

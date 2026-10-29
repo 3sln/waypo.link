@@ -2,6 +2,7 @@
 // separation, registration that trusts only authenticated lookups, stale generations and reconnects, cross-connection
 // record mixups, revalidation, severance hooks, the C1b `describe` and its failure modes, the account slice with the
 // messaging-mailbox describe call, health reporting and the owner routes.
+import {rpcReply,requestEnvelope,encodeRPC,RPC_MEDIA_TYPE} from './helpers/rpc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createAppEngine,perform,read} from '../packages/app/engine.mjs';
@@ -42,12 +43,14 @@ function snapshot(host,{contracts=[MAILBOX,MODEL],dpop}={}){
 function stubIntegration(host,keys,{items=[{id:`https://${host}/r/mailbox`,label:'Mailbox',contracts:[MAILBOX,MODEL]}],describe=DESCRIBE(host)}={}){
  const s={items,describe,calls:[],tokens:[],answer:null,during:null};
  s.fetch=async(url,init)=>{
-  const request=new Request(url,init),token=request.headers.get('authorization')?.slice(7),body=JSON.parse(init.body),path=new URL(url).pathname;s.calls.push({path,body});
+  const request=new Request(url,init),token=request.headers.get('authorization')?.slice(7),path=new URL(url).pathname,rpc=!path.endsWith('/resources');
+  // Brokered RPC is Bindle CBOR (integrations §5); discovery stays JSON.
+  if(rpc)assert.equal(request.headers.get('Content-Type'),RPC_MEDIA_TYPE);const body=rpc?requestEnvelope(init.body):JSON.parse(init.body);s.calls.push({path,body});
   if(s.during)await s.during(path,body);
   let claims;try{({claims}=await verifyAccessToken(token,{keys:await keys.jwks(),issuer:ISSUER,audience:url,purposes:path.endsWith('/resources')?['discover']:['invoke','describe'],now:Date.now()}));}catch{return Response.json({error:'invalid_token'},{status:401});}
   s.tokens.push(claims);if(s.answer)return s.answer(path,body,claims);
   if(path.endsWith('/resources')){const found=s.items.filter(i=>body.contracts.every(c=>i.contracts.includes(c))&&(!body.ids||body.ids.includes(i.id))&&(!body.text||i.label.toLowerCase().includes(body.text.toLowerCase())));return body.limit===0?Response.json({v:1,items:[],exists:found.length>0}):Response.json({v:1,items:found.map(i=>({container:false,facets_applied:[],...i})),cursor:null});}
-  return Response.json({version:'0',tx:body.tx,result:s.describe});
+  return rpcReply({version:'0',tx:body.tx,result:s.describe});
  };
  return s;
 }
@@ -182,7 +185,7 @@ test('C1b describe: a provider-feature invoke token for exactly the mailbox desc
  assert.deepEqual([claims.aud,claims.client_id,claims.sub,claims.exp-claims.iat,claims.bindle.purpose,claims.bindle.feature,claims.bindle.resource,claims.bindle.generation],['https://box.example/bindle/rpc',ISSUER,SUBJECT,60,'invoke',MAILBOX_FEATURE,'https://box.example/r/mailbox',a.generation]);
  assert.deepEqual(claims.bindle.methods,{[MAILBOX]:['describe']});assert.equal(claims.bindle.grant,`${seat.grant}.${seat.cnx}`,'the feature grant, scoped to the entry incarnation');
  assert.deepEqual([call.version,call.contract,call.method,call.args,call.resource],['0',MAILBOX,'describe',{},'https://box.example/r/mailbox']);
- const answers={status:()=>new Response('{}',{status:500}),error:(p,b)=>Response.json({version:'0',tx:b.tx,error:{code:'temporarily_unavailable',message:'x'}}),tx:()=>Response.json({version:'0',tx:'00000000-0000-4000-8000-000000000000',result:DESCRIBE('box.example')}),extra:(p,b)=>Response.json({version:'0',tx:b.tx,result:DESCRIBE('box.example'),token:'x'}),big:(p,b)=>Response.json({version:'0',tx:b.tx,result:{...DESCRIBE('box.example'),pad:'x'.repeat(17000)}}),html:(p,b)=>new Response(JSON.stringify({version:'0',tx:b.tx,result:DESCRIBE('box.example')}),{headers:{'Content-Type':'text/html'}})};
+ const answers={status:()=>new Response('{}',{status:500}),error:(p,b)=>rpcReply({version:'0',tx:b.tx,error:{code:'temporarily_unavailable',message:'x'}}),tx:()=>rpcReply({version:'0',tx:'00000000-0000-4000-8000-000000000000',result:DESCRIBE('box.example')}),extra:(p,b)=>rpcReply({version:'0',tx:b.tx,result:DESCRIBE('box.example'),token:'x'}),big:(p,b)=>rpcReply({version:'0',tx:b.tx,result:{...DESCRIBE('box.example'),pad:'x'.repeat(17000)}}),html:(p,b)=>new Response(encodeRPC({version:'0',tx:b.tx,result:DESCRIBE('box.example')}),{headers:{'Content-Type':'text/html'}}),json:(p,b)=>Response.json({version:'0',tx:b.tx,result:DESCRIBE('box.example')}),noncanonical:(p,b)=>new Response(Uint8Array.from([...encodeRPC({version:'0',tx:b.tx,result:DESCRIBE('box.example')}),0]),{headers:{'Content-Type':RPC_MEDIA_TYPE}})};
  for(const [name,answer] of Object.entries(answers)){box.answer=answer;await assert.rejects(f.describe(seat),e=>['describe_failed','egress_refused'].includes(e.code),name);}
  box.answer=null;
  await assert.rejects(f.describe({...seat,generation:seat.generation+1}),code('resource_unavailable'),'a seat from another generation');

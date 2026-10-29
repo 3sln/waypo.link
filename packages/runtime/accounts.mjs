@@ -37,6 +37,7 @@ import {IdentityKeyRegistry} from '../identity/keys.mjs';
 import {dropLegacyItem} from './messaging-reset.mjs';
 import {key} from '../../packages/core/records.mjs';
 import {indexDeviceExpiry,sweepDeviceExpiry,IdentityShardStorage} from './identity-shards.mjs';
+import {EmailFlowStorage} from './email-flow-store.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {StorageQuota} from './storage-quota.mjs';
 import {AccountStorageWriteBudget} from './storage-write-budget.mjs';
@@ -73,6 +74,13 @@ export class IdentityRepository {
   async shardHandleGrandfather(...args){return new IdentityShardStorage(this.metadata,this.config).handleGrandfather(...args);}
   async shardNextHandleNumber(...args){return new IdentityShardStorage(this.metadata,this.config).nextHandleNumber(...args);}
   async shardPage(...args){return new IdentityShardStorage(this.metadata,this.config).page(...args);}
+  // Cross-device email flows (sign-in and intents spike §4.2; packages/runtime/email-flow-store.mjs). On the Worker each
+  // IdentityDirectory shard holds the flows and link pointers whose keys route to it.
+  async emailFlowCreate(...args){return new EmailFlowStorage(this.metadata).emailFlowCreate(...args);}
+  async emailFlowGet(...args){return new EmailFlowStorage(this.metadata).emailFlowGet(...args);}
+  async emailFlowCompareAndSwap(...args){return new EmailFlowStorage(this.metadata).emailFlowCompareAndSwap(...args);}
+  async emailFlowPutLink(...args){return new EmailFlowStorage(this.metadata).emailFlowPutLink(...args);}
+  async emailFlowFindByLink(...args){return new EmailFlowStorage(this.metadata).emailFlowFindByLink(...args);}
   constructor({metadata,config={}}){this.metadata=metadata;this.config=config;}
   async get(id) { return this.metadata.get(`account/${id}`); }
   async findByHandle(handle) {
@@ -125,7 +133,10 @@ export class IdentityRepository {
       if(oldOwner){if(!oldClaim){const oldAccount=await tx.get(`account/${oldOwner}`);await tx.put(namespace,{owner:oldOwner,assignmentId:oldAccount?.assignmentId??null,state:'assigned'});}return false;}
       if(await tx.get(`account/${account.id}`))return false;
       if(oldClaim&&(oldClaim.state!=='allocated'||oldClaim.owner!==account.id||oldClaim.assignmentId!==(account.assignmentId??null)))return false;
+      // An account created with a confirmed address (email sign-up, spike §3.4) claims it in the same transaction.
+      const emails=indexedEmails(account);for(const email of emails)if(await tx.get(`email/${email}`))return false;
       await tx.put(namespace,{owner:account.id,assignmentId:account.assignmentId??null,state:'assigned'});
+      for(const email of emails)await tx.put(`email/${email}`,account.id);
       await tx.put(`account/${account.id}`,account);await tx.put(`handle/${account.handle}`,account.id);return true;
     });
   }

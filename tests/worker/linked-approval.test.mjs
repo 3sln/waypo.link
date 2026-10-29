@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {RPC_MEDIA_TYPE,encodeRPC,readBody} from '../helpers/rpc.mjs';
 import assert from 'node:assert/strict';
 import {createHarness} from './harness.mjs';
 import {identityShardName} from '../../packages/runtime/identity-shards.mjs';
@@ -23,7 +24,7 @@ const form=fields=>new URLSearchParams(fields).toString();
 const wait=()=>new Promise(resolve=>setTimeout(resolve,5100));
 async function flows(t,flag='true'){
  const h=await createHarness({bindings:deviceBindings(flag)});t.after(()=>h.close());
- const call=async(path,{fields,json,headers={}}={})=>{const r=await h.mf.dispatchFetch(h.origin+path,{method:'POST',headers:{'Content-Type':fields?'application/x-www-form-urlencoded':'application/json',...headers},body:fields?form(fields):JSON.stringify(json??{})});const text=await r.text();let body;try{body=JSON.parse(text);}catch{body=text;}return {status:r.status,body,headers:r.headers};};
+ const call=async(path,{fields,json,headers={}}={})=>{const rpc=path==='/bindle/rpc'&&!fields;const r=await h.mf.dispatchFetch(h.origin+path,{method:'POST',headers:{'Content-Type':fields?'application/x-www-form-urlencoded':rpc?RPC_MEDIA_TYPE:'application/json',...headers},body:fields?form(fields):rpc?encodeRPC(json??{}):JSON.stringify(json??{})});const body=await readBody(r);return {status:r.status,body,headers:r.headers};};
  const f={h,call,nonce:null,
   async member(handle){const login=await h.passkeyLogin(handle),text=await login.text();let body;try{body=JSON.parse(text);}catch{body=text;}const r={status:login.status,body,headers:login.headers};assert.equal(r.status,200,JSON.stringify(r.body));return {handle,owner:r.body.account.id,sessionContext:r.body.sessionContext,headers:{Origin:h.origin,Cookie:r.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':r.body.csrfToken}};},
   // Token-endpoint calls with a DPoP proof, answering one nonce challenge.

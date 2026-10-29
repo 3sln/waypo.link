@@ -2,6 +2,7 @@
 // its certification key, a real organization account (ORG-1 creation, ORG-2 initial membership) answers the jwt-bearer
 // grant on /oauth/token with a DPoP-bound member-context token, `bindle_member` and no refresh token; holder-key status
 // is public at the identity URI; every failure is the same 400 invalid_grant; and the flags default off.
+import {rpcInit,rpcAware} from './helpers/rpc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -115,11 +116,16 @@ test('runtime: member-token DPoP RPC is mounted under the org/member flags witho
   const minted = await (await s.tokenRequest((await s.certify(s.alice, key)).certificate, key)).json();
   assert.equal(minted.token_type, 'DPoP', JSON.stringify(minted));
   const envelope = () => ({ version: '0', tx: crypto.randomUUID(), resource: '@profile', contract: 'https://3sln.me/artefacts/contracts/profile/v1', method: 'read', args: {} });
-  const rpc = async (token, proofKey = key, extra = {}) => s.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `DPoP ${token}`, DPoP: await dpop(proofKey, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token, ...extra }) }, body: JSON.stringify(envelope()) }));
+  const rpc = async (token, proofKey = key, extra = {}) => s.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, rpcInit(envelope(), { Authorization: `DPoP ${token}`, DPoP: await dpop(proofKey, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token, ...extra }) }))).then(rpcAware);
   // Authenticated by the DPoP path, then refused by the shard's live §6.2 intersection (this grant has no @profile
   // method); without the mount the router answers 401 "Bearer token required." instead.
   const ok = await rpc(minted.access_token), body = await ok.json();
   assert.equal(ok.status, 403, JSON.stringify(body)); assert.equal(body.error, 'forbidden');
+  assert.equal(ok.headers.get('Content-Type'), 'application/vnd.bindle.rpc+cbor', 'the DPoP route answers CBOR, its errors included');
+  // CBOR transport on the DPoP route (protocol §5): JSON is 415 and a non-canonical body 400, both before the token is used.
+  const sendRaw = async (body, type) => rpcAware(await s.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, { method: 'POST', headers: { 'Content-Type': type, Authorization: `DPoP ${minted.access_token}`, DPoP: await dpop(key, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: minted.access_token }) }, body })));
+  const json = await sendRaw(JSON.stringify(envelope()), 'application/json'); assert.equal(json.status, 415); assert.equal((await json.json()).error, 'unsupported_media_type');
+  const trailing = await sendRaw(Uint8Array.from([0xa0, 0x00]), 'application/vnd.bindle.rpc+cbor'); assert.equal(trailing.status, 400); assert.equal((await trailing.json()).error, 'invalid_request');
   // The proof must be by the certified key, and a forged token is refused as on the device path.
   const wrongKey = await rpc(minted.access_token, await holder()); assert.equal(wrongKey.status, 401);
   const forged = await rpc(`${s.org}.${'A'.repeat(43)}`); assert.equal(forged.status, 401);
@@ -127,7 +133,7 @@ test('runtime: member-token DPoP RPC is mounted under the org/member flags witho
 test('runtime: member-token DPoP RPC is not mounted with the member flags off', async t => {
   const { MEMBER_CERTIFICATES_ENABLED, ...flags } = flagsOn; void MEMBER_CERTIFICATES_ENABLED;
   const f = await fixture(t, { flags }), key = await holder(), token = `${crypto.randomUUID()}.${'A'.repeat(43)}`;
-  const response = await f.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `DPoP ${token}`, DPoP: await dpop(key, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token }) }, body: JSON.stringify({ version: '0', tx: crypto.randomUUID(), resource: '@profile', contract: 'x', method: 'read', args: {} }) }));
+  const response = await f.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, rpcInit({ version: '0', tx: crypto.randomUUID(), resource: '@profile', contract: 'x', method: 'read', args: {} }, { Authorization: `DPoP ${token}`, DPoP: await dpop(key, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token }) }))).then(rpcAware);
   const body = await response.json(); assert.equal(response.status, 401); assert.equal(body.message, 'Bearer token required.', 'the DPoP provider path is not reached');
 });
 

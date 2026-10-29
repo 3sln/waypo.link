@@ -1,6 +1,7 @@
 // Seeded fuzzing of the Bindle Messaging parsers (tests/helpers/chaos.mjs). Every input either parses to a value that
 // re-validates or fails with a ProtocolFault carrying a §8.3 code; nothing else may escape. A failure names its seed:
 // rerun with CHAOS_SEED=<seed>. Differential checks compare the strict parser with JSON.parse and JCS round trips.
+import {encodeRPC} from '../helpers/rpc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -100,7 +101,7 @@ test('multicast parser: whole-request faults or per-context codes, never thrown 
 
 test('certificate, credential, receipt and RPC parsers reject garbage with ProtocolFaults only',async()=>{
  const certs=Object.values(V.parties).flatMap(p=>[p.certificate,p.renewedCertificate]),receipts=V.objects.filter(o=>o.type==='receipt').map(o=>o.signed);
- const rpc=encoder.encode(JSON.stringify({version:'0',tx:'00000000-0000-4000-8000-000000000001',resource:'https://hub.box.example/m/1',contract:B.MAILBOX_CONTRACT,method:'describe',args:{}}));
+ const rpc=encodeRPC({version:'0',tx:'00000000-0000-4000-8000-000000000001',resource:'https://hub.box.example/m/1',contract:B.MAILBOX_CONTRACT,method:'describe',args:{}});
  await forEachSeed(ROUNDS*3,async random=>{
   const cert=new TextDecoder().decode(mutateBytes(encoder.encode(random.pick(certs)),random,[[46],[61],[43]]));
   const c=await attempt(()=>B.parseDelegation(cert));if(c.value)assert.equal(c.value.claims.bindle,'key-delegation');

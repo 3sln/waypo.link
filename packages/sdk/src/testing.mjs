@@ -10,6 +10,7 @@
 // this mock. Subjects deliberately do not use 3sln's /entities/<uuid> shape.
 import {handleCallback} from './callback.mjs';
 import {EXT} from './capabilities.mjs';
+import {readRPCRequest,rpcResponse,RPCWireFault} from './rpc-wire.mjs';
 
 const encode64=bytes=>btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const decode64=text=>Uint8Array.from(atob(text.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-text.length%4)%4)),c=>c.charCodeAt(0));
@@ -123,9 +124,11 @@ export function createMockProvider({issuer='https://provider.example',accounts=[
     if(request.method==='POST'&&url.pathname==='/oauth/revoke'&&settings.revocation){const form=new URLSearchParams(await request.text());revoked.add(form.get('token'));refresh.delete(form.get('token'));return new Response(null,{status:200});}
     if(request.method==='POST'&&url.pathname==='/rpc'){
       const [scheme,token]=(request.headers.get('authorization')??'').split(' '),record=accessTokens.get(token);
-      if(!record||scheme!==record.type)return json({message:'Invalid token.'},401);
-      if(record.type==='DPoP'){const checked=await verifyProof(request.headers.get('dpop')??'',manifest.rpc_endpoint,{accessToken:token});if(checked.error||checked.jkt!==record.jkt)return json({message:'Invalid proof.'},401,{...nonceHeader(),'WWW-Authenticate':`DPoP error="${checked.error??'invalid_dpop_proof'}"`});}
-      const body=await request.json();return json({version:'0',tx:body.tx,result:{subject:record.account.subject}},200,record.type==='DPoP'?nonceHeader():{});
+      // Protocol §5: the RPC endpoint speaks Bindle CBOR only (415 for anything else), like a real provider.
+      let body;try{body=await readRPCRequest(request);}catch(error){if(error instanceof RPCWireFault)return rpcResponse({error:error.code,message:error.message},error.status);throw error;}
+      if(!record||scheme!==record.type)return rpcResponse({error:'unauthorized',message:'Invalid token.'},401);
+      if(record.type==='DPoP'){const checked=await verifyProof(request.headers.get('dpop')??'',manifest.rpc_endpoint,{accessToken:token});if(checked.error||checked.jkt!==record.jkt)return rpcResponse({error:'unauthorized',message:'Invalid proof.'},401,{...nonceHeader(),'WWW-Authenticate':`DPoP error="${checked.error??'invalid_dpop_proof'}"`});}
+      return rpcResponse({version:'0',tx:body.tx,result:{subject:record.account.subject}},200,record.type==='DPoP'?nonceHeader():{});
     }
     return new Response('Not found',{status:404});
   }

@@ -308,6 +308,8 @@ After creating a resource, the integration sends a change hint. The provider the
 
 A brokered resource is invoked directly at the integration's `rpc_endpoint`. The provider brokers the introduction and owns the credential that couples consumer and integration, but it is not on the invocation path. Brokering is an explicit exception to the issuer-gateway-only rule of protocol §4, with the bounds stated in §7 (amendment C8).
 
+**Transport (CBOR phase 4, implemented locally 2026-10-29; owner-approved 2026-10-28 that brokered RPC moves to CBOR, details provisional).** Requests to and responses from an integration's `rpc_endpoint` use the issuer RPC encoding of [protocol §5](../protocol.md#5-rpc-transport): one [Bindle CBOR](../cbor.md) map, `Content-Type` and `Accept` `application/vnd.bindle.rpc+cbor`, 415 for any other media type, the 1,500,000 encoded-byte bound and strict decoding before any check of §5.5 reads the envelope. This covers consumer calls and the provider's own brokered calls (the scoping `describe` of §5.6 and provider-feature calls). A provider accepts a brokered answer only with status 200, the RPC media type and a well-formed envelope. Integrations decode with the same profile; the SDK's `packages/sdk/src/rpc-wire.mjs` provides the reader and writer. Discovery (§4) stays JSON, and events (§6) stay SET JWTs until the COSE phase of the CBOR spike.
+
 ### 5.1 Preferences projection
 
 A provider declaring `brokered-resources.v1` projects brokered values only through the preferences contract named in that feature's `preferences_contract` member: a `preferences/v2` contract (amendment C9). Consumers reading through preferences/v1 never receive brokered values. A brokered occupant is omitted for them, and the field is listed in `requiresConsent`.
@@ -417,7 +419,7 @@ An integration's `rpc_endpoint` MUST perform these checks on every request, **in
 7. Check that the envelope's `resource`, `contract` and `method` match `bindle.resource` and `bindle.methods`, and that the resource is bound to (`iss`, connection, `sub`).
 8. Verify the DPoP proof whenever `cnf` is present, and whenever `resources.dpop` is `"required"`.
 
-Failures at steps 1–6 and 8 return HTTP 401. A failure at step 7 returns 403, without revealing hidden resources. The journal key is (`iss`, `sub`, `client_id`, `tx`), with the protocol §5 fingerprint and retention. Error envelopes and limits follow protocol §5.
+Failures at steps 1–6 and 8 return HTTP 401. A failure at step 7 returns 403, without revealing hidden resources. The journal key is (`iss`, `sub`, `client_id`, `tx`), with the protocol §5 fingerprint and retention. Error envelopes, their CBOR encoding and limits follow protocol §5. Step 1 needs only the `Authorization` header; the envelope members used at step 7 come from the strictly decoded body, and a body that fails decoding is 400 before any of these checks run on it.
 
 ### 5.6 Scoping
 

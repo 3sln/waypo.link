@@ -9,13 +9,12 @@ import {organizationProviders} from '../../packages/messaging-engine/domains/vie
 import {base64url} from '../../packages/messaging-protocol/index.mjs';
 import {TAXONOMY} from '../../packages/messaging-engine/domains/categories.mjs';
 import {CLASSIFICATION_SLOW_MS} from '../../packages/messaging-engine/domains/classify.mjs';
-import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 import {forEachSeed,fakeClock} from '../helpers/chaos.mjs';
 
 const MODEL={model:'triage',version:'1',schema:TAXONOMY},enc=new TextEncoder(),dec=new TextDecoder();
 const TEXT='https://classifiers.example/r/text',CAPS={kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:65536}],maxLabels:16};
 // Scores come from words in the text: "social" and "spam" score 0.99, anything else 0.01. `gate` delays each call.
-const port=({gate=async()=>{},fail=null}={})=>({calls:0,async fields(){return {text:TEXT,textDetail:'minimal'};},async capabilities(){return CAPS;},async classify(_,args){this.calls++;await gate(args);if(fail)throw Object.assign(new Error('x'),{code:fail});const text=dec.decode(decodeBase64url(args.item.data));return {scores:Object.fromEntries(args.labels.map(l=>[l.id,text.includes(l.id)?.99:.01])),model:{id:MODEL.model,version:MODEL.version}};}});
+const port=({gate=async()=>{},fail=null}={})=>({calls:0,async fields(){return {text:TEXT,textDetail:'minimal'};},async capabilities(){return CAPS;},async classify(_,args){this.calls++;await gate(args);if(fail)throw Object.assign(new Error('x'),{code:fail});const text=dec.decode(args.item.data);return {scores:Object.fromEntries(args.labels.map(l=>[l.id,text.includes(l.id)?.99:.01])),model:{id:MODEL.model,version:MODEL.version}};}});
 const fresh=(t,classifier,clock)=>{const e=createTestEngine({...clock?{clock}:{},providers:organizationProviders({PARLAY_ENABLED:true,classifier})});t.after(()=>e.dispose());return e;};
 // A native one-off message with a text/plain body (bridged channel items went with the email bridge, 2026-10-28).
 const put=async(e,id,text='hello',extra={})=>{await e.store.put('body/'+id,enc.encode(text));await e.store.put('item/'+id,{id,origin:'native',kind:'one-off',subject:'',content:{mimeType:'text/plain'},receivedAt:10,state:'inbox',tags:[{id:'from-list',source:'intake'}],notification:'push',...extra});};
@@ -82,7 +81,7 @@ test('an unscored or failed classification still completes the item; consent wit
 test('seeded chaos: random latency and completion order with rules changing in between end exactly where one run with the final rules would',async t=>{
  const texts=['hello','social plans','spam spam','social spam','list news'];
  await forEachSeed(12,async random=>{
-  const gates=[],failing=new Set(texts.filter(()=>random.chance(.3)));const c=port({gate:args=>new Promise((resolve,reject)=>gates.push(()=>failing.has(dec.decode(decodeBase64url(args.item.data)).trim())?reject(Object.assign(new Error('x'),{code:random.pick(['indeterminate','unsupported_item','rate_limited'])})):resolve()))}),e=fresh(t,c);
+  const gates=[],failing=new Set(texts.filter(()=>random.chance(.3)));const c=port({gate:args=>new Promise((resolve,reject)=>gates.push(()=>failing.has(dec.decode(args.item.data).trim())?reject(Object.assign(new Error('x'),{code:random.pick(['indeterminate','unsupported_item','rate_limited'])})):resolve()))}),e=fresh(t,c);
   const initial=RULES.map(r=>({...r,enabled:random.chance(.5)})),final=RULES.map(r=>({...r,enabled:random.chance(.5)}));
   await setup(e,initial);const ids=texts.map((_,i)=>'i'+i);for(const [i,id] of ids.entries())await put(e,id,texts[i]);
   for(const id of random.shuffle([...ids]))await e.run('classify.begin',{id});
@@ -92,7 +91,7 @@ test('seeded chaos: random latency and completion order with rules changing in b
   const current=await e.run('rules.list');await e.run('rules.replace',{input:{rules:current.map(r=>{const f=final.find(x=>x.id===r.id);return f?{...r,enabled:f.enabled}:r;})}});
   for(const gate of random.shuffle([...gates]))gate();await Promise.all(running);
   // Reference: a fresh mailbox with the final rules from the start, no interleaving.
-  const ref=fresh(t,{...port(),async classify(_,args){if(failing.has(dec.decode(decodeBase64url(args.item.data)).trim()))throw Object.assign(new Error('x'),{code:'indeterminate'});return port().classify(_,args);}});await setup(ref,final);for(const [i,id] of ids.entries()){await put(ref,id,texts[i]);await ref.run('classify.begin',{id});await ref.run('classify.item',{id});}
+  const ref=fresh(t,{...port(),async classify(_,args){if(failing.has(dec.decode(args.item.data).trim()))throw Object.assign(new Error('x'),{code:'indeterminate'});return port().classify(_,args);}});await setup(ref,final);for(const [i,id] of ids.entries()){await put(ref,id,texts[i]);await ref.run('classify.begin',{id});await ref.run('classify.item',{id});}
   for(const id of ids){const got=await e.store.get('item/'+id),want=await ref.store.get('item/'+id);assert.deepEqual(view(got),view(want),id);assert.equal(got.classificationPending,undefined);assert.equal(got.notification,got.quarantined?null:'push');assert.equal(got.effectsExecuted,id+'#1','effects executed exactly once, after the final run');}
   assert.equal((await e.run('classify.status')).pending.count,0);
  });

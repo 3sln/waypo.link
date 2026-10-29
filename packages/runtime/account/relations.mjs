@@ -43,6 +43,7 @@
 //                            <origin>/entities/<org>/resources/<uuid>; imports are never in the pool (spec §9.7)
 //   documents / catalogue    the RL-14 catalogue (packages/orgs/relation-catalogue.mjs)
 //   transport                sameHostRelationTransport over relationsPeer; foreign counterparts are refused (ORG-11)
+import {rpcEnvelope} from '../../core/rpc-wire.mjs';
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
 import {cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {StorageError} from '../../storage/policy.mjs';
@@ -296,7 +297,8 @@ export const methods={
   if(!await isOrganization(this)||await this.metadata.get('owner')!==owner)throw uniformToken(false);
   const direct=typeof authorization==='string'&&authorization.startsWith('BindleEntity ')?authorization.slice(13).trim():null,bound=typeof authorization==='string'&&authorization.startsWith('DPoP rel1.')?authorization.slice(5).trim():null;
   if(!direct&&!bound)throw uniformToken(false);
-  const env=plain(envelope)?envelope:{};
+  let decoded=envelope;try{decoded=rpcEnvelope(envelope);}catch{decoded=null;}// CBOR bytes across the isolate hop (spike §2.6)
+  const env=plain(decoded)?decoded:{};
   if(direct){const hint=jwsHint(direct);await prime(this,owner,{senders:typeof hint?.iss==='string'&&typeof hint?.sub==='string'?[{iss:hint.iss,sub:hint.sub}]:[]});}
   // relations.authorize answers its ONE failure, which passes through unchanged (production gate 6).
   const {context}=await run(this,new AuthorizeRelationAccess({actor:system(owner),input:{form:direct?'direct':'bound',...direct?{certificate:direct}:{token:bound},proof:dpop,htm:'POST',htu,envelope:{resource:env.resource,contract:env.contract,method:env.method,args:env.args,tx:env.tx}}}));

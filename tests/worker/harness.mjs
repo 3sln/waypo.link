@@ -6,6 +6,7 @@ import { mkdtemp, rm, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { softAuthenticator, signupBody } from '../helpers/soft-passkey.mjs';
+import { rpcAware, rpcHeaders, encodeRPC } from '../helpers/rpc.mjs';
 
 const harness = `
 import worker, { AdminAuthority, IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject, LifecycleScheduler, EventBusWaiter } from './apps/worker/index.mjs';
@@ -62,9 +63,12 @@ const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:awai
   const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);
   accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');
 
+// /bindle/rpc speaks Bindle CBOR (protocol §5): a `value` there is encoded with the real codec and a CBOR response reads
+// back through `.json()` via the strict decoder (tests/helpers/rpc.mjs rpcAware). Every other route stays JSON.
 async function request(route, { method = 'GET', value, headers = {}, raw, form } = {}) {
-  return mf.dispatchFetch(`${origin}${route}`, { method, headers: { ...(value !== undefined || raw !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },
-    ...(form ? { body:form } : value !== undefined || raw !== undefined ? { body: raw ?? JSON.stringify(value) } : {}) });
+  const rpc = route === '/bindle/rpc' && value !== undefined && raw === undefined;
+  return rpcAware(await mf.dispatchFetch(`${origin}${route}`, { method, headers: { ...(rpc ? rpcHeaders() : value !== undefined || raw !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },
+    ...(form ? { body:form } : rpc ? { body: encodeRPC(value) } : value !== undefined || raw !== undefined ? { body: raw ?? JSON.stringify(value) } : {}) }));
 }
 // Test accounts sign up and sign in with a soft passkey (passwords were dropped for user accounts, owner approval 2026-10-28).
 const authenticator = softAuthenticator({ origin });

@@ -1,4 +1,4 @@
-// The published object-storage/v1 predates x-methods. Its frozen body is never rewritten: only this exact
+// The published object-storage/v1 predates x-methods (rewritten in place pre-release, not versioned): only this exact
 // reviewed snapshot gets the adapter's method/result mapping. Every other contract carries its own metadata.
 import {LEGACY_OBJECT_STORAGE} from './legacy-object-storage.mjs';
 import {canonical} from './primitives.mjs';

@@ -1,6 +1,7 @@
 // LA5: production browser assets. The state matrix below (expiry, slow_down, denial, interruption) keeps explicit
 // fixtures so it stays deterministic; the LA3 tests at the end drive the same screen and /approve against the real
 // mounted routes when the Worker runs with DEVICE_AUTHORIZATION_ENABLED (E2E_DEVICE_AUTHORIZATION=1).
+import {rpcInit} from '../helpers/rpc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {launch,baseURL,screenshot,passkeyAccount,softWebAuthn} from './browser.mjs';
@@ -84,6 +85,6 @@ for(const [locale,width] of [['en',390],['es',1440]])test(`LA3 real routes ${loc
  await approveOn(a,flow.user_code,{kind:'app',shot:`la3-app-${locale}-${width}`});
  let nonce,token;for(let attempt=0;attempt<8&&!token;attempt++){await sleep(attempt?5500:1000);const r=await fetch(baseURL+'/oauth/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',DPoP:await key.sign({htu:baseURL+'/oauth/token',...nonce?{nonce}:{}})},body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:flow.device_code,client_id:client})});nonce=r.headers.get('DPoP-Nonce')??nonce;const body=await r.json();if(r.status===200)token=body;else assert.ok(['use_dpop_nonce','slow_down','authorization_pending'].includes(body.error),JSON.stringify(body));}
  assert.equal(token?.token_type,'DPoP');
- const rpc=await fetch(baseURL+'/bindle/rpc',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'DPoP '+token.access_token,DPoP:await key.sign({htu:baseURL+'/bindle/rpc',ath:token.access_token})},body:JSON.stringify({version:'0',tx:crypto.randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}})});
+ const rpc=await fetch(baseURL+'/bindle/rpc',rpcInit({version:'0',tx:crypto.randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}},{Authorization:'DPoP '+token.access_token,DPoP:await key.sign({htu:baseURL+'/bindle/rpc',ath:token.access_token})}));assert.equal(rpc.headers.get('Content-Type'),'application/vnd.bindle.rpc+cbor');
  assert.equal(rpc.status,403,'live token: identity-only grant lacks only the resource');
 });

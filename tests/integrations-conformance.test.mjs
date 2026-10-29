@@ -1,4 +1,5 @@
 // EXT-X9b: local provider/fixture conformance; external services and production remain unverified.
+import {RPC_MEDIA_TYPE,encodeRPC} from './helpers/rpc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createTestEngine} from './helpers/app-engine.mjs';
@@ -11,7 +12,8 @@ function fixture(t,options={}){
  const clock=fakeClock(Date.UTC(2026,9,20)),server=createIntegrationServer({clock,resources:[item()],...options});t.after(()=>server.close());
  const access=(purpose='invoke',extra={})=>server.issueAccessToken({iss:ISSUER,sub:SUBJECT,aud:purpose==='discover'?server.endpoints.discovery:server.endpoints.rpc,client_id:purpose==='discover'?ISSUER:'https://consumer.example/client.json',iat:clock.now()/1000,exp:clock.now()/1000+(purpose==='discover'?60:300),bindle:{v:1,purpose,connection:CONNECTION,generation:1,...purpose==='invoke'?{resource:RESOURCE,grant:'grant-1',methods:{[CONTRACT]:['deliver']},scope:null}:{},...extra}});
  const event=(type,payload={},jti='event-1')=>server.issueEventToken({iss:ISSUER,sub:SUBJECT,aud:server.endpoints.events,iat:clock.now()/1000,jti,events:{[EVENTS[type]??type]:{connection:CONNECTION,generation:1,seq:1,...payload}}});
- const post=(url,token,body)=>server.fetch(url,{method:'POST',headers:{'Content-Type':body===undefined?'application/secevent+jwt':'application/json',...body===undefined?{}:{Authorization:'Bearer '+token}},body:body===undefined?token:JSON.stringify(body)});
+ // Brokered RPC is Bindle CBOR; discovery stays JSON; events stay SET JWT.
+ const post=(url,token,body)=>server.fetch(url,{method:'POST',headers:{'Content-Type':body===undefined?'application/secevent+jwt':url===server.endpoints.rpc?RPC_MEDIA_TYPE:'application/json',...body===undefined?{}:{Authorization:'Bearer '+token}},body:body===undefined?token:url===server.endpoints.rpc?encodeRPC(body):JSON.stringify(body)});
  return {server,clock,access,event,post};
 }
 const envelope={resource:RESOURCE,contract:CONTRACT,method:'deliver',args:{},tx:'fixture-transaction'};
@@ -80,7 +82,8 @@ test('fixture supports loopback HTTP with logical HTTPS audiences and rejects ma
  assert.equal((await server.fetch(server.endpoints.rpc)).status,405);
  assert.equal((await server.fetch('https://foreign.example/bindle/rpc')).status,404);
  assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',body:'x'})).status,415);
- assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json'},body:'{'})).status,400);
+ assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,415,'brokered RPC refuses JSON');
+ assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':RPC_MEDIA_TYPE},body:Uint8Array.from([0xa1,0x61,0x61])})).status,400,'truncated CBOR');
  assert.equal((await post(server.endpoints.discovery,access('discover'),{v:1,contracts:[CONTRACT],cursor:'x'.repeat(1025)})).status,400);
  assert.equal((await server.fetch(server.endpoints.events,{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'x'.repeat(65537)})).status,413);
 });
@@ -159,7 +162,7 @@ test('EXT-X7: discovery rejects private egress and unavailable records require e
 test('EXT-X8: real brokered tokens stop by 360 s with every webhook lost, including worst verifier clock skew',async t=>{
  const f=await providerResource(t),read=await f.read(f.token),m=read.values.model[0],clock=fakeClock(f.clock.now());
  const server=createIntegrationServer({issuer:PROVIDER,subject:OWNER_SUBJECT,integration:'https://models.example',clock,connections:[{iss:PROVIDER,id:f.integration.id,sub:OWNER_SUBJECT,generation:1}],resources:[{iss:PROVIDER,connection:f.integration.id,sub:OWNER_SUBJECT,item:{id:m.broker.resource,label:'Fast',contracts:[MODEL]}}],verifyToken:async(token,{audience})=>(await verifyAccessToken(token,{issuer:PROVIDER,audience,keys:await import('./fixtures/brokered-provider.mjs').then(x=>x.providerKeys.jwks()),now:clock.now()})).claims});t.after(()=>server.close());
- const post=()=>server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+m.token},body:JSON.stringify({resource:m.broker.resource,contract:MODEL,method:'decide',args:{}})});
+ const post=()=>server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':RPC_MEDIA_TYPE,Authorization:'Bearer '+m.token},body:encodeRPC({resource:m.broker.resource,contract:MODEL,method:'decide',args:{}})});
  assert.equal((await post()).status,200);await perform(f.x7,new X7.DetachBrokeredRecord({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{record:f.record.id}}));
  assert.equal((await f.read(f.token)).values.model?.[0]?.token,undefined);clock.advance(360000-30000);assert.equal((await post()).status,401,'360 s real time with verifier 30 s slow and leeway 30 s');
 });
@@ -167,6 +170,6 @@ test('EXT-X8: real brokered tokens stop by 360 s with every webhook lost, includ
 test('EXT-X8/X9b: write methods introspect on every call and fail closed without caching',async t=>{
  const f=await providerResource(t,{write:true}),m=(await f.read(f.token)).values.model[0];let calls=0;const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),pub=await crypto.subtle.exportKey('jwk',pair.publicKey),set=await import('../packages/federation/integrations.mjs').then(x=>x.validateJwks(crypto,{keys:[{...pub,kid:'client',alg:'ES256',use:'sig'}]}));await f.metadata.transaction(async tx=>{const key='resource/'+f.integration.id,c=await tx.get(key);c.integration.snapshot.thumbprints=set.thumbprints;await tx.put(key,c);});
  const server=createIntegrationServer({issuer:PROVIDER,subject:OWNER_SUBJECT,integration:'https://models.example',clock:f.clock,connections:[{iss:PROVIDER,id:f.integration.id,sub:OWNER_SUBJECT,generation:1}],resources:[{iss:PROVIDER,connection:f.integration.id,sub:OWNER_SUBJECT,item:{id:m.broker.resource,label:'Fast',contracts:[MODEL]}}],verifyToken:async(token,{audience})=>(await verifyAccessToken(token,{issuer:PROVIDER,audience,keys:await import('./fixtures/brokered-provider.mjs').then(x=>x.providerKeys.jwks())})).claims,requiresIntrospection:(_,method)=>method==='train',introspect:async token=>{calls++;const b64=v=>Buffer.from(JSON.stringify(v)).toString('base64url'),now=Math.floor(f.clock.now()/1000),client=f.integration.clientId,input=b64({alg:'ES256',kid:'client',typ:'JWT'})+'.'+b64({iss:client,sub:client,aud:PROVIDER+X8.INTROSPECTION_PATH,iat:now,exp:now+60,jti:crypto.randomUUID()}),sig=Buffer.from(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(input))).toString('base64url'),response=await X8.handleBrokeredIntrospection(new Request(PROVIDER+X8.INTROSPECTION_PATH,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token,client_assertion_type:X8.CLIENT_ASSERTION_TYPE,client_assertion:input+'.'+sig})}),{issuer:PROVIDER,enabled:true,clock:f.clock.now,verifyToken:(token,options)=>import('./fixtures/brokered-provider.mjs').then(x=>x.providerKeys.verify(token,options)),clientKeys:async()=>set,account:()=>({brokeredIntegrationAuth:input=>f.q(X8.BrokeredIntegrationAuth,input),brokeredIntrospect:input=>f.q(X8.IntrospectBrokeredToken,input)}),federation:()=>f.s});return response.json();}});t.after(()=>server.close());
- const post=()=>server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+m.token},body:JSON.stringify({resource:m.broker.resource,contract:MODEL,method:'train',args:{}})});
+ const post=()=>server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':RPC_MEDIA_TYPE,Authorization:'Bearer '+m.token},body:encodeRPC({resource:m.broker.resource,contract:MODEL,method:'train',args:{}})});
  assert.equal((await post()).status,200);await f.s.revoke(f.owner,f.token.grants[0]);assert.equal((await post()).status,401);assert.equal(calls,2);assert.equal((await server.snapshot()).invocations.length,1);
 });

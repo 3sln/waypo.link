@@ -66,7 +66,7 @@ export function edgeAllows(part,cp,{resource,contract,method},now){
  *   readOnly        refuses every write-capable method (and a presign for writing);
  *   prefix          the call must name a `key` (or a `prefix`) equal to the scope prefix or inside it ("p" or "p/…");
  *                   a call that names neither is refused, and presign is refused (it would escape the prefix);
- *   maxObjectBytes  a `put` must carry `dataBase64` no larger than the bound; presign is refused.
+ *   maxObjectBytes  a `put` must carry `data` bytes no larger than the bound; presign is refused.
  * Provisional reading (coordinator): unlike an attenuated child reference, a relation grantee addresses the grantor's
  * own resource ID, so keys are not rewritten; they are checked as given. No scope allows everything the methods allow.
  */
@@ -79,7 +79,7 @@ export function relationScopeAllows(scope,{method,args,write}){
  if(scope.prefix!==undefined){const p=String(scope.prefix),target=typeof a.key==='string'?a.key:typeof a.prefix==='string'?a.prefix:undefined;
   if(typeof scope.prefix!=='string'||target===undefined||!(target===p||target.startsWith(p+'/'))||target.split('/').some(s=>s==='..'||s==='.'))return false;
   if(typeof a.key==='string'&&typeof a.prefix==='string'&&!(a.prefix===p||a.prefix.startsWith(p+'/')))return false;}
- if(scope.maxObjectBytes!==undefined&&method==='put'){if(typeof a.dataBase64!=='string')return false;const d=a.dataBase64,n=Math.floor(d.length*3/4)-(d.endsWith('==')?2:d.endsWith('=')?1:0);if(n>scope.maxObjectBytes)return false;}
+ if(scope.maxObjectBytes!==undefined&&method==='put'){if(!(a.data instanceof Uint8Array)||a.data.byteLength>scope.maxObjectBytes)return false;}
  return true;
 }
 

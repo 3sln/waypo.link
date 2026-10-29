@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {FederationController,DEV_JOURNAL_SECRET} from '../packages/federation/runtime.mjs';
 import {federationJournalSecret} from '../packages/runtime/federation.mjs';
-import {canonical,digest} from '../packages/core/records.mjs';
+import {digest} from '../packages/core/records.mjs';
+import {fingerprintInput} from '../packages/core/cbor.mjs';
 
 const ORIGIN='https://3sln.example',SUBJECT=`${ORIGIN}/entities/00000000-0000-4000-8000-000000000001`,CONTRACT='https://spec.bindle.example/contracts/item-classification/v1';
 function memoryMetadata(seed=[]){const rows=new Map(seed);return {rows,transaction:async op=>op({get:async k=>structuredClone(rows.get(k)),set:async(k,v)=>{rows.set(k,structuredClone(v));},delete:async k=>{rows.delete(k);},list:async prefix=>[...rows].filter(([k])=>k.startsWith(prefix)).map(([key,value])=>({key,value}))})};}
@@ -16,8 +17,9 @@ function host({secret,seed}={}){
 }
 const ctx=(over={})=>({contract:CONTRACT,method:'classify',subject:SUBJECT,resource:`${ORIGIN}/r/classifier`,clientId:'https://app.example/client.json',tx:'7f1c0a52-4a3b-4c6e-9d6f-2b9b3f0e5a11',args:{text:'Quarterly invoice'},...over});
 const journal=metadata=>[...metadata.rows].filter(([k])=>k.startsWith('federation/journal/')).map(([,v])=>v);
-const fingerprinted=c=>canonical({resource:c.resource,addressedResource:c.resource,contract:c.contract,method:c.method,args:c.args,scope:{},epoch:null,resourceGeneration:null,connectionGeneration:null});
-async function hmacWith(rawKey,value){const key=await crypto.subtle.importKey('raw',rawKey,{name:'HMAC',hash:'SHA-256'},false,['sign']);return 'hmac:'+Buffer.from(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(value))).toString('base64url');}
+// CBOR phase 2: the fingerprint input is the codec's domain-separated deterministic encoding of these members.
+const fingerprinted=c=>fingerprintInput({resource:c.resource,addressedResource:c.resource,contract:c.contract,method:c.method,args:c.args,scope:{},epoch:null,resourceGeneration:null,connectionGeneration:null});
+async function hmacWith(rawKey,value){const key=await crypto.subtle.importKey('raw',rawKey,{name:'HMAC',hash:'SHA-256'},false,['sign']);return 'hmac:'+Buffer.from(await crypto.subtle.sign('HMAC',key,value)).toString('base64url');}
 
 test('same-tx retry with the same arguments is indeterminate and changed arguments are tx_conflict (dedupe preserved)',async()=>{
  const h=host({secret:'operator-secret-one-0123456789abcdef'}),c=ctx();
@@ -62,11 +64,12 @@ test('secret wiring: FEDERATION_JOURNAL_KEY, else KEY_ENCRYPTION_KEY, else the p
  assert.equal(typeof DEV_JOURNAL_SECRET,'string');
 });
 
-test('the legacy stored key row is deleted on the next non-retained write; a pre-deploy row answers tx_conflict (documented, pre-release)',async()=>{
+test('the legacy stored key row is deleted on the next non-retained write; a pre-CBOR row answers indeterminate until it expires (lazy reset)',async()=>{
  const c=ctx(),legacy=['federation/journal-key/v1',{key:'A'.repeat(43)}];
  const pre=[`federation/journal/${encodeURIComponent(c.subject)}/${encodeURIComponent(c.clientId)}/${c.tx}`,{fingerprint:'sha256-bare',status:'complete',retained:false,expiresAt:1_800_000_000_000+3600000}];
  const h=host({secret:'operator-secret-one-0123456789abcdef',seed:[legacy,pre]});
- await assert.rejects(h.dispatch(c),{code:'tx_conflict'});
+ // CBOR phase 2 reset: a live row without format 'cbor1' never answers its old outcome and never lets the write run again.
+ assert.equal((await h.dispatch(c)).__federationError.code,'indeterminate');
  const fresh=host({secret:'operator-secret-one-0123456789abcdef',seed:[legacy]});await fresh.dispatch(c);
  assert.equal(fresh.metadata.rows.has('federation/journal-key/v1'),false);
 });

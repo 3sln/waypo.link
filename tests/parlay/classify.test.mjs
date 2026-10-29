@@ -4,7 +4,6 @@ import {createTestEngine} from './helpers/engine.mjs';
 import {createTagsProvider} from '../../packages/messaging-engine/domains/tags.mjs';
 import {organizationProviders} from '../../packages/messaging-engine/domains/views.mjs';
 import {TAXONOMY} from '../../packages/messaging-engine/domains/categories.mjs';
-import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 import {classifierDouble,classifierPort} from '../helpers/classifier-double.mjs';
 // Parlay binds pins to {model id, model version, its own taxonomy}; the classifier reports only the model.
 const MODEL={model:'triage',version:'1',schema:TAXONOMY},pin={...MODEL,thresholds:{social:.8,spam:.97,automation:.9,promotional:.8}},encoder=new TextEncoder();
@@ -18,7 +17,7 @@ const TEXT='https://classifiers.example/r/text',FALLBACK='https://classifiers.ex
 const TEXT_CAPS={kinds:[{kind:'text',mediaTypes:['text/*'],inputs:['inline'],maxBytes:65536}],maxLabels:16};
 const answer=(input,labels,evidence=MODEL)=>({scores:Object.fromEntries(input.labels.map(l=>[l.id,labels[l.id]??0])),model:{id:evidence.model,version:evidence.version}});
 const fake=(labels={social:.9},evidence=MODEL,{values={text:TEXT,textDetail:'full'},capabilities=TEXT_CAPS}={})=>({calls:[],resources:[],values,async fields(){return structuredClone(this.values);},async capabilities(){return structuredClone(capabilities);},async classify(resource,input){this.calls.push(input);this.resources.push(resource);return answer(input,labels,evidence);}});
-const sent=call=>new TextDecoder().decode(decodeBase64url(call.item.data));
+const sent=call=>new TextDecoder().decode(call.item.data);
 
 test('classification without a classifier, consent or allowance adds only the failure tag and never finalizes/rejects',async t=>{
  for(const mode of ['absent','consent','allowance','throw','malformed','requiresConsent']){

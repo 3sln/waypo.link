@@ -22,7 +22,7 @@ function hostedController(db,extra={}){
   stall(count=1){const d=deferred();hold=d.promise;holds=count;return ()=>{holds=0;d.resolve();};},...extra};
 }
 const hostedResource={id:'files',owner,provider:'hosted',capabilities:{}};
-const hostedPut=(c,key,{condition,producer,data='data'})=>methods.hostedOperation.call(c,hostedResource,'put',{key,condition,dataBase64:Buffer.from(data).toString('base64')},undefined,'client',false,producer);
+const hostedPut=(c,key,{condition,producer,data='data'})=>methods.hostedOperation.call(c,hostedResource,'put',{key,condition,data:new Uint8Array(Buffer.from(data))},undefined,'client',false,producer);
 function driveHarness(db){
  const files=new Map();let next=0,hold=null,holds=0;
  const fetcher=async(value,options={})=>{const url=new URL(value);if(url.hostname==='oauth2.googleapis.com')return Response.json({access_token:'access',refresh_token:'refresh',token_type:'Bearer',expires_in:3600,scope:'https://www.googleapis.com/auth/drive.file'});if(url.pathname==='/drive/v3/about')return Response.json({user:{permissionId:'principal_1'}});if(url.pathname.endsWith('/generateIds'))return Response.json({ids:['file_'+(++next)]});if(options.method==='POST'&&url.pathname==='/drive/v3/files'){const m=JSON.parse(options.body);files.set(m.id,m);return Response.json({id:m.id});}
@@ -156,7 +156,7 @@ test('L1: MCP storage writes carry the verified connection; federation RPC attri
  assert.deepEqual(calls[0][2],{connection:{id:'app',generation:4}});
  const {db}=await base(t),resourceId='22222222-2222-4222-8222-222222222222',resource={id:resourceId,owner,provider:'hosted',status:'connected',capabilities:{}};await db.put('resource/'+resourceId,resource);await connection(db,'app',4);
  const c=hostedController(db,{config:{APP_ORIGIN:'https://identity.example'},warm:async()=>{},apps:{check:async()=>{}},hostedOperation:methods.hostedOperation});
- const rpc=(clientId,key,trusted)=>methods.federationRPC.call(c,{subject:'https://identity.example/entities/'+owner,clientId,resource:'https://identity.example/entities/'+owner+'/resources/'+resourceId,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method:'put',args:{key,condition:{absent:true},dataBase64:'AA=='},tx:crypto.randomUUID()},undefined,trusted);
+ const rpc=(clientId,key,trusted)=>methods.federationRPC.call(c,{subject:'https://identity.example/entities/'+owner,clientId,resource:'https://identity.example/entities/'+owner+'/resources/'+resourceId,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method:'put',args:{key,condition:{absent:true},data:new Uint8Array([0])},tx:crypto.randomUUID()},undefined,trusted);
  await rpc('mcp:https://app.example/client','notes/mcp',{connection:{id:'app',generation:4}});assert.deepEqual((await db.get('hosted/'+resourceId+'/notes%2Fmcp')).producer,{connection:'app',generation:4,prefix:'notes/'});
  await rpc('automation','notes/auto',{connection:{id:'app',generation:4}});assert.equal((await db.get('hosted/'+resourceId+'/notes%2Fauto')).producer,undefined);
 });

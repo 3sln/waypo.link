@@ -1,6 +1,7 @@
 // Integration gap 3 on workerd: member-token RPC rides the DPoP path, mounted under the organization/member flags
 // independently of the device grant (DEVICE_AUTHORIZATION_ENABLED off), through the front's provider and the owner's
 // FederationObject `memberRpc` step. Without those flags the path is not mounted (the generic Bearer handler answers).
+import {rpcInit,rpcBody} from '../helpers/rpc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHarness} from './harness.mjs';
@@ -9,8 +10,8 @@ import {dpopKey} from '../authorization-entry-helpers.mjs';
 const CLIENTS=JSON.stringify([{id:'https://erp.example/client.json',name:'ERP',origin:'https://erp.example',redirectUris:['https://erp.example/callback']}]);
 const MEMBER_FLAGS={FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:CLIENTS,ORGANIZATIONS_ENABLED:'true',MEMBER_CERTIFICATES_ENABLED:'true',DIRECTORY_ENABLED:'true'};
 async function rpc(h,token){
- const key=await dpopKey(),r=await h.mf.dispatchFetch(h.origin+'/bindle/rpc',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'DPoP '+token,DPoP:await key.sign({htu:h.origin+'/bindle/rpc',ath:token})},body:JSON.stringify({version:'0',tx:crypto.randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}})});
- return {status:r.status,body:await r.json()};
+ const key=await dpopKey(),r=await h.mf.dispatchFetch(h.origin+'/bindle/rpc',rpcInit({version:'0',tx:crypto.randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}},{Authorization:'DPoP '+token,DPoP:await key.sign({htu:h.origin+'/bindle/rpc',ath:token})}));
+ return {status:r.status,body:await rpcBody(r)};
 }
 test('Worker: member-token DPoP RPC is mounted under the org/member flags without the device grant',async t=>{
  const h=await createHarness({bindings:MEMBER_FLAGS});t.after(()=>h.close());

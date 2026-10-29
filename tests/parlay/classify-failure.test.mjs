@@ -14,12 +14,11 @@ import {TAXONOMY} from '../../packages/messaging-engine/domains/categories.mjs';
 import {CLASSIFICATION_DEADLINE_MS,CLASSIFICATION_FAILED_TAG as FAILED,MAX_CLASSIFY_RETRY} from '../../packages/messaging-engine/domains/classify.mjs';
 import {removeIncoming,projectIncoming,classifyPendingKey} from '../../packages/messaging-engine/store/item-index.mjs';
 import {nextWake} from '../../apps/parlay/worker/storage.mjs';
-import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 import {forEachSeed,fakeClock} from '../helpers/chaos.mjs';
 
 const MODEL={model:'triage',version:'1',schema:TAXONOMY},enc=new TextEncoder(),dec=new TextDecoder();
 const TEXT='https://classifiers.example/r/text',CAPS={kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:65536}],maxLabels:16};
-const port=({gate=async()=>{},fail=null}={})=>({calls:0,async fields(){return {text:TEXT,textDetail:'minimal'};},async capabilities(){return CAPS;},async classify(_,args){this.calls++;const verdict=await gate(args);if(fail??verdict)throw Object.assign(new Error('x'),{code:fail??verdict});const text=dec.decode(decodeBase64url(args.item.data));return {scores:Object.fromEntries(args.labels.map(l=>[l.id,text.includes(l.id)?.99:.01])),model:{id:MODEL.model,version:MODEL.version}};}});
+const port=({gate=async()=>{},fail=null}={})=>({calls:0,async fields(){return {text:TEXT,textDetail:'minimal'};},async capabilities(){return CAPS;},async classify(_,args){this.calls++;const verdict=await gate(args);if(fail??verdict)throw Object.assign(new Error('x'),{code:fail??verdict});const text=dec.decode(args.item.data);return {scores:Object.fromEntries(args.labels.map(l=>[l.id,text.includes(l.id)?.99:.01])),model:{id:MODEL.model,version:MODEL.version}};}});
 const fresh=(t,classifier,clock)=>{const e=createTestEngine({...clock?{clock}:{},providers:organizationProviders({PARLAY_ENABLED:true,classifier})});t.after(()=>e.dispose());return e;};
 // A native one-off message with a text/plain body (bridged channel items went with the email bridge, 2026-10-28).
 const put=async(e,id,text='hello')=>{await e.store.put('body/'+id,enc.encode(text));await e.store.put('item/'+id,{id,origin:'native',kind:'one-off',subject:'',content:{mimeType:'text/plain'},receivedAt:10,state:'inbox',tags:[],notification:'push'});};
@@ -145,7 +144,7 @@ test('seeded chaos: begin, classify, answer, settings changes, removal, deadline
  // A second classifier call for one pending entry (R1 broken) never gets an answer here, so it shows up as this timeout.
  await forEachSeed(16,async random=>{
   const clock=fakeClock(Date.UTC(2026,9,28,12)),calls=[];
-  const c=port({gate:args=>new Promise(resolve=>calls.push({text:dec.decode(decodeBase64url(args.item.data)).trim(),resolve}))}),e=fresh(t,c,clock);
+  const c=port({gate:args=>new Promise(resolve=>calls.push({text:dec.decode(args.item.data).trim(),resolve}))}),e=fresh(t,c,clock);
   const ids=['i0','i1','i2','i3','i4','i5'],texts=Object.fromEntries(ids.map((id,i)=>[id,i%2?'social '+id:'plain '+id]));
   for(const id of ids)await put(e,id,texts[id]);await setup(e,{allowance:12});
   // Reference state.

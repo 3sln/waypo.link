@@ -5,8 +5,8 @@
 //    itself is ./item-classification-fetch.mjs);
 //  - application side: the detail ceiling (§8.2), capability and result validation, per-kind selection with the
 //    fallback field and the failover rule (§8.3).
-// Nothing here performs I/O, keeps state or knows any provider. Inline item bytes are accepted as a base64url string
-// (JSON transport) or a Uint8Array (the planned CBOR transport), with one bound.
+// Nothing here performs I/O, keeps state or knows any provider. Inline item bytes are a Uint8Array: the RPC is Bindle
+// CBOR and the contract's `item.data` is a byte string (rewritten in place 2026-10-29); base64url text is refused.
 
 export const ITEM_CLASSIFICATION_CONTRACT='https://spec.bindle.example/contracts/item-classification/v1';
 export const ITEM_CLASSIFICATION_FRAGMENT='https://spec.bindle.example/fragments/item-classification/v1';
@@ -120,11 +120,10 @@ export function validateClassifyArgs(args,{now}){
  const out={detail:args.detail,item:{kind:item.kind,mediaType:item.mediaType,size:item.size},tags:validateTags(args.tags,args.detail),labels:validateLabels(args.labels)};
  if(item.data!==undefined){
   if(!safeInt(item.size,0,LIMITS.inlineBytes))invalid('An inline item is at most 256 KiB.');
-  // `data` is abstract bytes (§3): a base64url string on today's JSON transport, a native byte string (Uint8Array)
-  // under the planned CBOR transport. Both are accepted here, with the same bound, so that switch is mechanical.
-  const bytes=item.data instanceof Uint8Array?item.data.slice():decodeBase64url(item.data);if(!bytes||bytes.length!==item.size)invalid('Inline data must be exactly size bytes (unpadded base64url on the JSON transport).');
+  // `data` is a CBOR byte string (§3): exactly `size` bytes. Text (base64 or otherwise) is not bytes.
+  const bytes=item.data instanceof Uint8Array?item.data.slice():null;if(!bytes||bytes.length!==item.size)invalid('Inline data must be exactly size bytes.');
   if(item.mediaType.startsWith('text/')&&!wellFormedUTF8(bytes))invalid('Text items are UTF-8.');
-  out.item.data=item.data instanceof Uint8Array?bytes.slice():item.data;Object.defineProperty(out,'bytes',{value:bytes,enumerable:false});
+  out.item.data=bytes.slice();Object.defineProperty(out,'bytes',{value:bytes,enumerable:false});
  }else{
   if(!safeInt(item.size,1,LIMITS.urlBytes))invalid('A presigned-URL item declares a size of at most 100 MiB.');
   presignedURL(item.url,{now});out.item.url={href:item.url.href,expiresAt:item.url.expiresAt};
@@ -192,15 +191,14 @@ export async function afterEffect(fn){try{return await fn();}catch(error){if(NO_
 export const detailLevel=value=>DETAIL_LEVELS.includes(value)?value:'minimal';
 /**
  * Builds `classify` arguments under the owner's detail ceiling (§8.2): tags beyond `detail` are dropped, never sent.
- * `item` is {kind, mediaType, bytes} (inline) or {kind, mediaType, size, url: {href, expiresAt}}. `encoding` is how
- * inline bytes travel: 'base64url' for the JSON transport (default) or 'bytes' for a transport with native byte strings.
+ * `item` is {kind, mediaType, bytes} (inline, sent as a byte string) or {kind, mediaType, size, url: {href, expiresAt}}.
  * The result still goes through validateClassifyArgs, so a caller cannot send what a classifier would refuse.
  */
-export function buildClassifyArgs({detail,item,tags={},labels},{now,encoding='base64url'}){
+export function buildClassifyArgs({detail,item,tags={},labels},{now}){
  const level=detailLevel(detail),allowed=DETAIL_TAGS[level],kept={};
  for(const key of allowed)if(tags?.[key]!==undefined&&!(key==='context'&&Array.isArray(tags.context)&&!tags.context.length))kept[key]=key==='context'?[...tags.context]:tags[key];
  const base={kind:item.kind,mediaType:item.mediaType};
- const built={detail:level,item:item.bytes!==undefined?{...base,size:item.bytes.length,data:encoding==='bytes'?item.bytes.slice():encodeBase64url(item.bytes)}:{...base,size:item.size,url:{href:item.url?.href,expiresAt:item.url?.expiresAt}},...Object.keys(kept).length?{tags:kept}:{},labels:labels.map(({id,description})=>({id,description}))};
+ const built={detail:level,item:item.bytes!==undefined?{...base,size:item.bytes.length,data:item.bytes.slice()}:{...base,size:item.size,url:{href:item.url?.href,expiresAt:item.url?.expiresAt}},...Object.keys(kept).length?{tags:kept}:{},labels:labels.map(({id,description})=>({id,description}))};
  validateClassifyArgs(built,{now});return built;
 }
 const resourceOf=value=>{const first=Array.isArray(value)?value[0]:value;const id=plain(first)?first.resource:first;return typeof id==='string'&&id?id:null;};

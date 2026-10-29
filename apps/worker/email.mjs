@@ -39,6 +39,9 @@ const SECURITY_ALERTS = Object.freeze({
   // Sign-in emails (sign-in and intents spike §3.3, §6.4): sent to every address and push channel of the account.
   'email-sign-in-enabled': ['{brand} sign-in email turned on', 'An email address on your account can now be used to sign in. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
   'email-sign-in-removed': ['{brand} sign-in email turned off', 'An email address on your account can no longer be used to sign in. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
+  // Cross-device email flow (sign-in and intents spike §4.3, §5.2; P3): every email sign-in, and a cancelled request.
+  'email-sign-in': ['New {brand} sign-in with your email', 'Someone signed in to your account with a link sent to one of your sign-in emails. Not you? Sign in from a device you already use, end the sessions you do not recognise and secure your account, or recover it with your recovery file.'],
+  'email-sign-in-cancelled': ['{brand} sign-in request cancelled', 'A request to sign in to your account by email was cancelled from the email link. Nothing changed. If you did not ask to sign in, someone may know your address; no action is needed.'],
   // Choosing another notice address (review 2026-10-29 M3): sent to every address, including the previous and the new one.
   'notice-email-changed': ['{brand} notice email changed', 'Your account now sends its ordinary notices to a different email address. Security notices still go to every verified address. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
   // DX-6: sent to the removed address. No other account detail is included.
@@ -218,6 +221,21 @@ export function mailTransport(env = {}) {
       const {t} = createLocalization({locale});
       return send({ from: senders.link, to: email, subject: t('Confirm your {brand} account email', {brand}),
         text: [t('Only continue if you requested a new {brand} account.', {brand}), t('Your verification code: {code}', {code}), t('Enter this code in the browser where you started account setup. It expires in ten minutes. This code verifies your email; it does not sign you in or replace your passkey or recovery file.'), t('If you did not request this code, ignore this message.')].join('\n\n') });
+    },
+    // Cross-device email flow (sign-in and intents spike §4.3 step 2, §3.6): the link opens the helper page with the token
+    // only in the fragment. The mail names no requesting device (it would be attacker-chosen text in mail from us), and
+    // says that nobody will ever ask for a code from it. The link-free notices go to an address that cannot receive a
+    // link (a verified address that is not a sign-in email) or when account creation is closed.
+    async sendEmailFlow({ email, token, purpose, issuer, locale = 'en' }) {
+      if (issuer !== origin || !['sign-in', 'sign-up', 'notice-verified', 'notice-closed'].includes(purpose)) throw new Error('Invalid email sign-in request.');
+      const {t} = createLocalization({locale}), link = purpose === 'sign-in' || purpose === 'sign-up';
+      if (link && (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token))) throw new Error('Invalid mail link.');
+      if (!link && token !== undefined) throw new Error('A notice carries no link.');
+      const url = `${origin}/email/link${locale === 'es' ? '?lang=es' : ''}#t=${token}`;
+      if (purpose === 'sign-in') return send({ from: senders.login, to: email, subject: t('Sign in to {brand}', {brand}), text: [t('Open this link to continue signing in to {brand}. The page it opens asks you to confirm first.', {brand}), url, t('The link expires in 10 minutes and works once. Opening it does not sign anyone in by itself.'), t('If you did not just ask to sign in, ignore this email. Nobody from {brand} will ever ask you for a code from it.', {brand})].join('\n\n') });
+      if (purpose === 'sign-up') return send({ from: senders.login, to: email, subject: t('Create your {brand} account', {brand}), text: [t('Open this link to confirm this address and continue creating your {brand} account. The page it opens asks you to confirm first.', {brand}), url, t('The link expires in 10 minutes and works once. Opening it does not sign anyone in by itself.'), t('If you did not just ask to create an account, ignore this email. Nobody from {brand} will ever ask you for a code from it.', {brand})].join('\n\n') });
+      if (purpose === 'notice-verified') return send({ from: senders.account, to: email, subject: t('Sign-in request for your {brand} email', {brand}), text: [t('Someone asked to sign in to {brand} with this address. This address is on a {brand} account but cannot receive sign-in links, so no link was sent.', {brand}), t('To sign in, use your passkey. To sign in by email in the future, turn on sign-in for this address in Account & security.'), t('If this was not you, you can ignore this email.')].join('\n\n') });
+      return send({ from: senders.account, to: email, subject: t('{brand} account creation is not open', {brand}), text: [t('Someone asked to create a {brand} account with this address, but account creation is not open right now, so no account was created.', {brand}), t('You can ask to join the waitlist: {url}', {url: `${origin}/console?waitlist`}), t('If this was not you, you can ignore this email.')].join('\n\n') });
     },
     async sendVerification({ email, token, purpose, issuer }) {
       if (!['link', 'login'].includes(purpose) || issuer !== origin) throw new Error('Invalid mail verification request.');

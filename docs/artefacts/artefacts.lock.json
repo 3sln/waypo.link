@@ -3,7 +3,7 @@
     "id": "https://3sln.me/artefacts/contracts/object-storage/v1",
     "kind": "rpc-contract",
     "versions": [
-      "sha256-LMuzkMNAEQ4kdHzZ8ZrbEpN1He-GS3Ip3pKakUZN86o"
+      "sha256-tWdtVhpCSt5He1nFMzFaqp4dDnvS3LZ97FnE92Qbvgg"
     ]
   },
   {
@@ -24,7 +24,7 @@
     "id": "https://3sln.me/artefacts/contracts/app-messages/v1",
     "kind": "rpc-contract",
     "versions": [
-      "sha256-8MskUR6_zORJmKzhMhV5qFstcyJETejRyPyflw8um8U"
+      "sha256-RIidkA_5fW9PspUZe0ESwAjNLlXNzyprsbDf4zKrhPs"
     ]
   },
   {
@@ -45,7 +45,7 @@
     "id": "https://3sln.me/artefacts/contracts/preferences/v2",
     "kind": "rpc-contract",
     "versions": [
-      "sha256-tnovv_AUZVEPaPLSYRwGT3JoHl1iOZgwT-maBLVJ6Eg"
+      "sha256-CFvoN7ukEKyI92Nj02GkyJ0AUYYDZUsq-CqqPif7i08"
     ]
   },
   {

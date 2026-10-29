@@ -22,7 +22,7 @@ import {ACCOUNT_SLICES,accountRPC} from '../packages/runtime/account/index.mjs';
 import {stages as incrementalRoutes} from '../packages/runtime/routes/incremental.mjs';
 import {FederationController} from '../packages/federation/runtime.mjs';
 import {canonical,digest} from '../packages/core/records.mjs';
-import {encodeBase64url,validateCapabilities,ITEM_CLASSIFICATION_FRAGMENT} from '../packages/sdk/src/item-classification.mjs';
+import {validateCapabilities,ITEM_CLASSIFICATION_FRAGMENT} from '../packages/sdk/src/item-classification.mjs';
 import {classifierPort} from './helpers/classifier-double.mjs';
 import {forEachSeed} from './helpers/chaos.mjs';
 import {AI_PLAN_ALLOWANCE} from '../packages/runtime/ai-allowance.mjs';
@@ -30,7 +30,7 @@ import {AI_PLAN_ALLOWANCE} from '../packages/runtime/ai-allowance.mjs';
 const ORIGIN='https://3sln.example',VERSION='clef-flash-evaluation-2026-10-20',owner={kind:'owner',owner:OWNER},system={kind:'system',owner:OWNER,clientId:'https://a.example/client.json'};
 const LABELS=[{id:'invoice',description:'A bill or invoice asking for payment.'},{id:'travel',description:'Travel bookings and itineraries.'}];
 const enc=new TextEncoder();
-const wire=(text='Hello',over={})=>{const bytes=enc.encode(text);return {detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:bytes.length,data:encodeBase64url(bytes)},labels:LABELS,...over};};
+const wire=(text='Hello',over={})=>{const bytes=enc.encode(text);return {detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:bytes.length,data:(bytes)},labels:LABELS,...over};};
 const responseFor=request=>({model:'clef-flash',answers:Object.fromEntries(Object.keys(request.questions).map(id=>[id,id==='travel'||id==='social'?.91:.01]))});
 async function fixture(t,options={}){
  const modelCalls=[],leases=[],work=[],config={APP_ORIGIN:ORIGIN,INTEGRATIONS_ENABLED:true,EXTENSIONS_ENABLED:true,...options.config};let plan=options.plan??'paid';
@@ -77,7 +77,7 @@ test('classify: one score per caller label; only fixed text and ids are instruct
 test('validation and capability checks run before any effect: invalid_args and unsupported_item charge nothing',async t=>{
  const f=await fixture(t);
  for(const bad of [{},wire('x',{detail:'everything'}),wire('x',{tags:{language:'en'}}),{...wire(),item:{...wire().item,size:99}},wire('x',{labels:[]}),wire('x',{labels:[{id:'A',description:'x'}]})])await assert.rejects(f.classify(bad),{code:'invalid_args'},JSON.stringify(bad).slice(0,80));
- const png={...wire(),item:{kind:'image',mediaType:'image/png',size:3,data:encodeBase64url(new Uint8Array([1,2,3]))}};
+ const png={...wire(),item:{kind:'image',mediaType:'image/png',size:3,data:(new Uint8Array([1,2,3]))}};
  const url={...wire(),item:{kind:'text',mediaType:'text/plain',size:10,url:{href:'https://objects.example/x',expiresAt:f.clock.now()+60000}}};
  const html={...wire(),item:{...wire().item,mediaType:'text/html'}};
  for(const unsupported of [png,url,html,wire('x'.repeat(2001)),wire('x',{labels:Array.from({length:7},(_,i)=>({id:'l'+i,description:'d'}))})])await assert.rejects(f.classify(unsupported),{code:'unsupported_item'});
@@ -144,7 +144,7 @@ test('review M1: a refused work admission or ledger lease leaves the AI allowanc
 
 test('cost: every argument set within the capabilities stays under the per-call ceiling (worst case and seeded)',async()=>{
  const caps={configured:true,mediaTypes:['text/plain']},now=Date.UTC(2026,9,28);
- const worst=(text,description)=>X.classificationArgs({detail:'full',item:{kind:'text',mediaType:'text/plain',size:enc.encode(text).length,data:encodeBase64url(enc.encode(text))},tags:{language:'en-GB-oxendict',source:'s'.repeat(32),origin:'a'.repeat(60)+'.'+'b'.repeat(60)+'.'+'c'.repeat(60)+'.example',context:Array.from({length:16},(_,i)=>String(i).padEnd(64,'z'))},labels:Array.from({length:6},(_,i)=>({id:String(i).padEnd(64,'x'),description}))},{now,ai:caps});
+ const worst=(text,description)=>X.classificationArgs({detail:'full',item:{kind:'text',mediaType:'text/plain',size:enc.encode(text).length,data:(enc.encode(text))},tags:{language:'en-GB-oxendict',source:'s'.repeat(32),origin:'a'.repeat(60)+'.'+'b'.repeat(60)+'.'+'c'.repeat(60)+'.example',context:Array.from({length:16},(_,i)=>String(i).padEnd(64,'z'))},labels:Array.from({length:6},(_,i)=>({id:String(i).padEnd(64,'x'),description}))},{now,ai:caps});
  for(const text of ['"'.repeat(2000),'\\'.repeat(2000),'\n'.repeat(2000),'\u0001'.repeat(2000),'😀'.repeat(500),'a'.repeat(2000)])for(const description of ['😀'.repeat(200),'"'.repeat(200),'\\'.repeat(200)]){const cost=X.classifierCostMicroUSD(clefRequest(worst(text,description)));assert.ok(cost<=X.CLASSIFIER_LIMITS.microUSD,`${JSON.stringify(text[0])}/${description[0]}: ${cost}`);}
  const pool=['"','\\','\n','\t','a','é','😀','\u0001','\u2028'];
  await forEachSeed(16,async random=>{for(let i=0;i<8;i++){let text='';while(enc.encode(text).length<1990)text+=random.pick(pool);const description=Array.from({length:1+random.int(200)},()=>random.pick(pool.filter(c=>!['\n','\t','\u0001','\u2028'].includes(c)))).join('');const cost=X.classifierCostMicroUSD(clefRequest(worst(text,description)));assert.ok(cost<=X.CLASSIFIER_LIMITS.microUSD);}});
@@ -186,7 +186,7 @@ test('dispatcher: no result or content in the journal, a keyed fingerprint, same
  const bare=await digest(globalThis.crypto,canonical({resource:ctx.resource,addressedResource:ctx.resource,contract:ctx.contract,method:ctx.method,args:ctx.args,scope:{},epoch:ctx.epoch,resourceGeneration:'v1',connectionGeneration:1}));
  assert.match(row.fingerprint,/^hmac:[A-Za-z0-9_-]{43}$/);assert.notEqual(row.fingerprint,bare);
  assert.equal((await d.dispatch({...ctx})).__federationError.code,'indeterminate');assert.equal(d.runs(),1);await assert.rejects(d.dispatch({...ctx,args:wire('other')}),{code:'tx_conflict'});
- const image=d.context({args:{...wire(),item:{kind:'image',mediaType:'image/png',size:1,data:encodeBase64url(new Uint8Array([1]))}}});
+ const image=d.context({args:{...wire(),item:{kind:'image',mediaType:'image/png',size:1,data:(new Uint8Array([1]))}}});
  assert.equal((await d.dispatch(image)).__federationError.code,'unsupported_item');assert.equal((await d.dispatch({...image})).__federationError.code,'unsupported_item','journaled as final');
  const rows=journal().length;assert.equal((await d.dispatch(d.context({method:'capabilities',args:{}}))).maxLabels,6);assert.equal(journal().length,rows,'capabilities is a read');
 });

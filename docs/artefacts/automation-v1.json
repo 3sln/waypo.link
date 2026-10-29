@@ -163,7 +163,8 @@
             },
             "txRetentionSeconds": {
               "type": "integer",
-              "minimum": 86400
+              "minimum": 86400,
+              "maximum": 9007199254740991
             },
             "maxInvocationsPerMinute": {
               "type": "integer",

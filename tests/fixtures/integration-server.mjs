@@ -1,4 +1,5 @@
 import {verifyProof} from '../../packages/federation/dpop.mjs';
+import {RPC_MEDIA_TYPE,decodeRPC,rpcResponse} from '../../packages/core/rpc-wire.mjs';
 import {verifyAccessToken} from '../../packages/federation/signing.mjs';
 import {verifySecurityEventToken} from '../../packages/runtime/integration-events.mjs';
 // EXT-X9a test double, not a reference verifier or a production integration.
@@ -125,16 +126,18 @@ export function createIntegrationServer({issuer=ISSUER,subject=SUBJECT,integrati
   const operation=url.pathname===new URL(endpoints.events).pathname?ReceiveIntegrationEvent:url.pathname===new URL(endpoints.discovery).pathname?IntegrationDiscovery:url.pathname===new URL(endpoints.rpc).pathname?InvokeIntegrationResource:null;
   if(!operation)return json({error:'not_found'},404);
   if(request.method!=='POST')return new Response(null,{status:405,headers:{Allow:'POST'}});
-  const event=operation===ReceiveIntegrationEvent,type=request.headers.get('content-type')?.split(';')[0].trim();
-  if(type!==(event?'application/secevent+jwt':'application/json'))return json({error:'unsupported_media_type'},415);
+  // Brokered RPC is Bindle CBOR (integrations §5; owner-approved 2026-10-28): the RPC endpoint reads and writes
+  // application/vnd.bindle.rpc+cbor only, every body it generates included. Discovery stays JSON; events stay SET JWT.
+  const event=operation===ReceiveIntegrationEvent,rpc=operation===InvokeIntegrationResource,type=request.headers.get('content-type')?.split(';')[0].trim(),reply=rpc?(value,status=200)=>rpcResponse(value,status):json;
+  if(type!==(event?'application/secevent+jwt':rpc?RPC_MEDIA_TYPE:'application/json'))return reply({error:'unsupported_media_type'},415);
   try{
-   const body=await request.text();if(Buffer.byteLength(body)>65536)reject('request_too_large',413);
-   let document;if(!event)try{document=JSON.parse(body);}catch{reject('invalid_json');}
+   const bytes=new Uint8Array(await request.arrayBuffer());if(bytes.byteLength>65536)reject('request_too_large',413);const body=event?new TextDecoder().decode(bytes):null;
+   let document;if(rpc)try{document=decodeRPC(bytes);}catch{reject('invalid_request');}else if(!event)try{document=JSON.parse(new TextDecoder().decode(bytes));}catch{reject('invalid_json');}
    const token=event?body:request.headers.get('authorization')?.match(/^(?:Bearer|DPoP) (\S+)$/)?.[1];
    const params={input:{token,...event?{}:operation===IntegrationDiscovery?{query:document}:{envelope:document,proof:request.headers.get('DPoP'),scheme:request.headers.get('Authorization')?.split(' ')[0]}}};
    const result=operation===IntegrationDiscovery?await read(engine,new operation(params)):await perform(engine,new operation(params));
-   return event?new Response(null,{status:202}):json(result);
-  }catch(error){return json({error:error.code??'fixture_error'},error.status??500);}
+   return event?new Response(null,{status:202}):reply(result);
+  }catch(error){return reply({error:error.code??'fixture_error'},error.status??500);}
  };
  return {
   engine,provider,clock,audit,endpoints:{...endpoints,invalidation:endpoints.events},fetch:handle,

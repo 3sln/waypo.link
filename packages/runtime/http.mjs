@@ -18,6 +18,7 @@ import {StorageError} from '../storage/policy.mjs';
 import {developerContactHandle} from './developer-contact.mjs';
 import {flagReadable,sessionFeatures,json,status,body,cookie,sessionToken,setupCookie,deviceCookie,identity,limit,turnstile,accountHandle} from './routes/shared.mjs';
 import {stage,routeMethods,admission} from './routes/index.mjs';
+import {rpcResponse} from '../core/rpc-wire.mjs';
 export {subnet,signupEnabled} from './routes/shared.mjs';
 
 // The router's own paths; every other path's methods come from its route module.
@@ -93,7 +94,10 @@ export default {
    }
    response=await stage('pages',route);if(response)return response.passthrough??response;
    return json({error:'not_found'},404);
-  }catch(error){const pathname=new URL(request.url).pathname;const cap=pathname==='/bindle/rpc'&&request.headers.get('Authorization')?.startsWith('Bearer ');const headers=cap?{'Access-Control-Allow-Origin':'*','Access-Control-Expose-Headers':'Retry-After','X-Robots-Tag':'noindex, nofollow, nosnippet'}:{};if(Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0)headers['Retry-After']=String(error.retryAfter);if(error instanceof IdentityFault||error instanceof MessagingFault||error instanceof StorageError||error.status)return json({error:error.code||'invalid_request',message:error.message,...error.code==='signup_capacity_reached'?{capacity:error.capacity}:{}},status(error),headers);if(env.LOCAL_DEVELOPMENT==='true')console.error('Local runtime exception:',error.name,error.message);return json({error:'internal_error',message:'We could not complete this request. Please try again.'},500,headers);}
+  }catch(error){const pathname=new URL(request.url).pathname;const rpc=pathname==='/bindle/rpc',cap=rpc&&request.headers.get('Authorization')?.startsWith('Bearer ');const headers=cap?{'Access-Control-Allow-Origin':'*','Access-Control-Expose-Headers':'Retry-After','X-Robots-Tag':'noindex, nofollow, nosnippet'}:{};if(Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0)headers['Retry-After']=String(error.retryAfter);
+   // CBOR spike §4.2/§4.4: the outer error path on /bindle/rpc answers CBOR too (CORS for bearer requests unchanged).
+   const reply=rpc?(value,code,extra)=>rpcResponse(value,code,extra):json;
+   if(error instanceof IdentityFault||error instanceof MessagingFault||error instanceof StorageError||error.status)return reply({error:error.code||'invalid_request',message:error.message,...error.code==='signup_capacity_reached'?{capacity:error.capacity}:{}},status(error),headers);if(env.LOCAL_DEVELOPMENT==='true')console.error('Local runtime exception:',error.name,error.message);return reply({error:'internal_error',message:'We could not complete this request. Please try again.'},500,headers);}
   finally{engine?.dispose();}
  },
  async scheduled(controller,env,ctx){

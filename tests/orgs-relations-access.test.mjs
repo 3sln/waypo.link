@@ -48,7 +48,7 @@ test('certify → authorize: member ∩ application ∩ edge; the certificate bi
  assert.equal(JSON.stringify(c).includes(w.B.member),false,'the member identity never leaves under pairwise disclosure');
  assert.equal(out.broker.endpoint,RPC);assert.equal(out.broker.resource,w.rA);
  const ok=await w.call(out.certificate);assert.equal(ok.allowed,true);assert.deepEqual(ok.context.grantee,w.B.principal);assert.equal(ok.context.journal.client_id,CLIENT);
- assert.equal((await w.call(out.certificate,{method:'put',args:{key:'a/b',dataBase64:'AA=='}})).allowed,true,'a fresh certificate may write');
+ assert.equal((await w.call(out.certificate,{method:'put',args:{key:'a/b',data:new Uint8Array([0])}})).allowed,true,'a fresh certificate may write');
  // The token form: the same checks, `invalid_grant` on failure.
  assert.equal((await w.call(out.certificate,{form:'token'})).allowed,true);
  const tf=await fault(w.call('garbage',{form:'token'}));assert.deepEqual([tf.code,tf.status],['invalid_grant',400]);
@@ -72,7 +72,7 @@ test('expiry, the 300 s cap, the write age rule, the holder proof and replay',as
  const {certificate}=await w.certify();
  w.h.clock.advance(61000);
  assert.equal((await w.call(certificate)).allowed,true,'reads within the lifetime');
- await refusedDirect(w.call(certificate,{method:'put',args:{key:'a/b',dataBase64:'AA=='}}));// write: now − iat > 60 s
+ await refusedDirect(w.call(certificate,{method:'put',args:{key:'a/b',data:new Uint8Array([0])}}));// write: now − iat > 60 s
  w.h.clock.advance(300000);await refusedDirect(w.call(certificate));// past exp + 60 s skew
  // A certificate claiming a longer lifetime is capped at iat + 300 s by the verifier.
  const now=Math.floor(w.h.clock.now()/1000),p=parseEntityCertificate((await w.certify()).certificate).payload;
@@ -151,7 +151,7 @@ test('resource scope on a relation grant: enforced by the grantor, carried in th
  await refusedDirect(w.call(out.certificate,{args:{key:'ledgers/2026x'}}));
  await refusedDirect(w.call(out.certificate,{args:{key:'ledgers/2026/../2025'}}));
  await refusedDirect(w.call(out.certificate,{args:{}}));// no key: refused under a prefix
- await refusedDirect(w.call(out.certificate,{method:'put',args:{key:'ledgers/2026/x',dataBase64:'AA=='}}));// read-only
+ await refusedDirect(w.call(out.certificate,{method:'put',args:{key:'ledgers/2026/x',data:new Uint8Array([0])}}));// read-only
  assert.equal((await w.A.check(w.instance,w.B,w.rA,STORE,'put')),false,'read-only refuses write-capable methods at the edge too');
  // Grant time: a scope the resource does not offer, or a malformed one, is refused.
  const plain=await w.A.resource(`${ISS}/r/1/plain`,ALL),inst=(await w.A.run('relations.create',null,{relation:w.h.pins.share[0],slots:['owner']})).instance;

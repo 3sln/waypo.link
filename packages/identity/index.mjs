@@ -5,7 +5,9 @@ export { createArgon2Hasher } from './crypto.mjs';
 export { createWebAuthnAdapter } from './webauthn.mjs';
 export { planAccountLifecycle } from './lifecycle.mjs';
 
-const mutations = new Set(['emailRemove','emailNotices','stepUp','stepUpBegin','issueOnboarding','inspectOnboarding','claimOnboarding','bootstrapSystem','setupBillingCheckout','setupBillingStatus','setupStatus','setupEmailStart','setupEmailConfirm','setupPushStart','setupPushConfirm','claimHandle','handleCertificate','signup', 'beginPasskeyRegistration', 'registerPasskey', 'reissueRecoveryBegin','reissueRecoveryConfirm','reissueRecoveryCancel','reissueRecoveryCancelEmail','reissueRecoveryCancelFile','downloadRecovery', 'confirmRecovery', 'beginPasskeyLogin', 'finishPasskeyLogin', 'recover', 'logout', 'logoutSaved', 'emailStart', 'emailConfirm', 'emailLoginStart', 'emailLoginConfirm', 'configureEmailLogin', 'credentialBegin', 'credentialFinish', 'renamePasskey', 'removePasskey', 'renameSession', 'revokeSession', 'revokeOtherSessions', 'createDeviceLogin', 'approveDeviceLogin', 'denyDeviceLogin', 'pollDeviceLogin', 'cancelDeviceLogin']);
+const mutations = new Set(['emailRemove','emailNotices','stepUp','stepUpBegin','issueOnboarding','inspectOnboarding','claimOnboarding','bootstrapSystem','setupBillingCheckout','setupBillingStatus','setupStatus','setupEmailStart','setupEmailConfirm','setupPushStart','setupPushConfirm','claimHandle','handleCertificate','signup', 'beginPasskeyRegistration', 'registerPasskey', 'reissueRecoveryBegin','reissueRecoveryConfirm','reissueRecoveryCancel','reissueRecoveryCancelEmail','reissueRecoveryCancelFile','downloadRecovery', 'confirmRecovery', 'beginPasskeyLogin', 'finishPasskeyLogin', 'recover', 'logout', 'logoutSaved', 'emailStart', 'emailConfirm', 'emailLoginStart', 'emailLoginConfirm', 'configureEmailLogin', 'credentialBegin', 'credentialFinish', 'renamePasskey', 'removePasskey', 'renameSession', 'revokeSession', 'revokeOtherSessions', 'createDeviceLogin', 'approveDeviceLogin', 'denyDeviceLogin', 'pollDeviceLogin', 'cancelDeviceLogin',
+  // Cross-device email flow and email sign-up (sign-in and intents spike §4, P3; EMAIL_FLOW_V2 / EMAIL_SIGNUP_ENABLED).
+  'emailFlowStart','emailFlowStatus','emailFlowRedeem','emailFlowCancel','emailFlowResend','emailLinkInspect','emailLinkApprove','emailLinkReveal','emailLinkCancel','emailLinkStatus','emailLinkCompleteHere','emailSignupConfirm','dismissHostItem']);
 export class IdentityAction extends Action {
   static deps = ['identity'];
   constructor(method, input, context) { super(); if (!mutations.has(method)) throw new TypeError('Unknown identity action'); this.method = method; this.input = input; this.context = context; }
@@ -65,6 +67,7 @@ export class LinkedOutboxQuery extends Query {
   constructor(input) { super(); this.input = input; }
   async fetch({ identity }) { return identity.linkedOutbox(this.input); }
 }
+export { EmailFlow, MemoryEmailFlows, EMAIL_FLOW, EMAIL_FLOW_LIMITS, requesterSummary, maskAddress, globalRedeemBudget } from './email-flow.mjs';
 export { LinkedApproval, MemoryLinkedLimits, linkedLifetime, linkedDurations, linkedNetwork, globalResolveBudget, revokeAllLineage, LINKED, DEVICE_KINDS } from './linked-approval.mjs';
 export function createIdentityEngine(resources) {
   const identity = new IdentityService(resources);

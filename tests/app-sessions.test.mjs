@@ -1,11 +1,12 @@
 import test from 'node:test';
+import {rpcInit} from './helpers/rpc.mjs';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {APP_SESSION,NO_EXPIRY,appSessionPolicy} from '../packages/federation/app-sessions.mjs';
 import {provider,createEntry,providerPage,exchange,refresh,form,dpopKey,tokenNonce,codeOf,issuer,appOrigin,clientId,fragment} from './authorization-entry-helpers.mjs';
 const tokenURL=`${issuer}/oauth/token`;
 // 401 means the bearer is dead; a live bearer without a granted resource gets 403.
-const rpc=async(p,token)=>(await p.fetch(`${issuer}/bindle/rpc`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({version:'0',tx:randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}})})).status===401?401:200;
+const rpc=async(p,token)=>(await p.fetch(`${issuer}/bindle/rpc`,rpcInit({version:'0',tx:randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}},{Authorization:`Bearer ${token}`}))).status===401?401:200;
 async function bound(p,key){
  const {entryId,verifier}=await createEntry(p,{dpopJkt:key.jkt}),page=await providerPage(p,entryId,p.signIn());const code=codeOf(page.result.redirectUri);
  const response=await exchange(p,code,verifier,{dpop:await key.sign({htu:tokenURL,nonce:await tokenNonce(p),iat:Math.floor(p.clock()/1000)})});return {response,token:await response.json(),code,verifier};

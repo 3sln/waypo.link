@@ -23,7 +23,8 @@ const te=new TextEncoder(),td=new TextDecoder('utf-8',{fatal:true}),MAGIC=te.enc
 const NAME=/^parlay\/v1\/(segments|blobs)\/[A-Za-z0-9_-]{16,128}$/;
 export const objectName=(kind,random=globalThis.crypto)=>`${ARCHIVE_PREFIX}${kind==='blob'?'blobs':'segments'}/${P.base64url(random.getRandomValues(new Uint8Array(24)))}`;
 
-// Standard base64 for the object-storage dataBase64 member; canonical form only.
+// Standard base64 (canonical form only). object-storage/v1 `data` is a CBOR byte string since 2026-10-29; these remain for
+// archive exports and other JSON boundaries.
 export const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);};
 export const unb64=s=>{let raw;try{raw=atob(s);}catch{fault('archive_corrupt','The archive is damaged.',422);}const out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);if(b64(out)!==s)fault('archive_corrupt','The archive is damaged.',422);return out;};
 export const digest=async bytes=>P.sha256(globalThis.crypto,bytes);
@@ -232,8 +233,8 @@ export function storageClient(port){
  if(!port||typeof port.call!=='function')STORAGE_DOWN();
  const call=async(method,args)=>{try{return await port.call(method,args);}catch(error){if(['not_found','conflict','unsupported_method','forbidden','quota_exceeded','body_too_large'].includes(error?.code))throw new MailboxFault(error.code,error.code,error.status);STORAGE_DOWN();}};
  return Object.freeze({
-  async get(key){let r;try{r=await call('get',{key});}catch(error){if(error.code==='not_found')return null;if(error.code==='forbidden')STORAGE_DOWN();throw error;}if(!isPlain(r)||typeof r.dataBase64!=='string'||!isPlain(r.object)||typeof r.object.version!=='string')corrupt();return {bytes:unb64(r.dataBase64),version:r.object.version};},
-  async put(key,bytes,condition){if(bytes.length>ARCHIVE_LIMITS.objectBytes)fault('archive_too_large','An archive object exceeds the storage limit.',500);let r;try{r=await call('put',{key,dataBase64:b64(bytes),condition,contentType:'application/octet-stream'});}catch(error){if(['quota_exceeded','body_too_large'].includes(error.code))fault('archive_storage_full','Your storage is full.',507);if(error.code==='forbidden')STORAGE_DOWN();throw error;}if(!isPlain(r?.object)||typeof r.object.version!=='string')STORAGE_DOWN();return r.object.version;},
+  async get(key){let r;try{r=await call('get',{key});}catch(error){if(error.code==='not_found')return null;if(error.code==='forbidden')STORAGE_DOWN();throw error;}if(!isPlain(r)||!(r.data instanceof Uint8Array)||!isPlain(r.object)||typeof r.object.version!=='string')corrupt();return {bytes:new Uint8Array(r.data),version:r.object.version};},
+  async put(key,bytes,condition){if(bytes.length>ARCHIVE_LIMITS.objectBytes)fault('archive_too_large','An archive object exceeds the storage limit.',500);let r;try{r=await call('put',{key,data:bytes,condition,contentType:'application/octet-stream'});}catch(error){if(['quota_exceeded','body_too_large'].includes(error.code))fault('archive_storage_full','Your storage is full.',507);if(error.code==='forbidden')STORAGE_DOWN();throw error;}if(!isPlain(r?.object)||typeof r.object.version!=='string')STORAGE_DOWN();return r.object.version;},
   // Deletion: true when removed or already gone; 'unsupported' where the backend has no conditional delete.
   async delete(key,version){try{const r=await call('delete',{key,version});return r?.physicalRetention?'retained':true;}catch(error){if(error.code==='not_found')return true;if(['unsupported_method','forbidden'].includes(error.code))return 'unsupported';throw error;}},
  });

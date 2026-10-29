@@ -11,6 +11,7 @@
 //
 // Pure module: no storage, no routes. The brokered-record domain (./brokered.mjs) owns connection state, fencing and
 // records; the runtime injects `mint` (brokered token minting over the brokering key set) and `egress`.
+import {rpcRequestInit} from '../core/rpc-wire.mjs';
 import {presentationText,TEXT_BAD} from './integrations.mjs';
 import {publicAddress} from '../apps/form-fetch-policy.mjs';
 import {AppFault} from '../app/faults.mjs';
@@ -103,7 +104,7 @@ export function createIntegrationEgress({fetcher=globalThis.fetch,resolve,public
  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>10000||!Number.isSafeInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>64)throw new TypeError('Invalid integration egress limits.');
  const refuse=()=>fault('egress_refused','The integration could not be reached safely.',502);let active=0;
  return {async send({url,headers={},body,maxBytes,requestBytes=65536,signal}={}){
-  let u;try{u=new URL(url);}catch{refuse();}if(u.protocol!=='https:'||u.port||u.username||u.password||u.hash||!HOST(u.hostname)||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>DISCOVERY_LIMITS.responseBytes||!Number.isSafeInteger(requestBytes)||requestBytes<1||requestBytes>1500000||typeof body!=='string'||new TextEncoder().encode(body).length>requestBytes)refuse();
+  let u;try{u=new URL(url);}catch{refuse();}if(u.protocol!=='https:'||u.port||u.username||u.password||u.hash||!HOST(u.hostname)||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>DISCOVERY_LIMITS.responseBytes||!Number.isSafeInteger(requestBytes)||requestBytes<1||requestBytes>1500000||!(typeof body==='string'||body instanceof Uint8Array)||(typeof body==='string'?new TextEncoder().encode(body).length:body.byteLength)>requestBytes)refuse();
   if(active>=maxConcurrent)fault('egress_busy','The provider is busy. Try again shortly.',503,{retryAfter:1});// Local pressure: neutral for budgets and health.
   active++;const controller=new AbortController(),stop=()=>controller.abort();signal?.addEventListener('abort',stop,{once:true});let reader,timer;
   // One deadline for screen, connection and body, enforced even against a transport that ignores the abort signal.
@@ -190,13 +191,16 @@ export class DiscoveryClient{
  /** The endpoint a connection's call goes to, or discovery_unavailable. `kind`: discovery_endpoint | rpc_endpoint. */
  endpoint(connection,kind='discovery_endpoint'){const u=integrationEndpoint(connection?.manifest?.resources?.[kind],{issuer:this.issuer,reserved:this.reserved});if(!u)unavailable();return u;}
  /** One authenticated provider call to an integration endpoint: admitted under the budgets, minted fresh and posted
-  * through egress. Returns the egress answer; the caller validates it. Exposed for the brokered `describe`. */
- async call({connection,url,claims,body,maxBytes,requestBytes=65536,pool='owner'}){
+  * through egress. Returns the egress answer; the caller validates it. Exposed for the brokered `describe`.
+  * `encoding: 'cbor'` posts a Bindle RPC envelope as `application/vnd.bindle.rpc+cbor` (brokered RPC, integrations §5;
+  * owner-approved 2026-10-28); discovery keeps JSON (phase 1). */
+ async call({connection,url,claims,body,maxBytes,requestBytes=65536,pool='owner',encoding='json'}){
   if(!this.available)unavailable('Brokered calls are not configured on this provider.');
   const release=await this.budget.admit(connection.id,url.origin,pool,claims.subject);let outcome='fail';
   try{
    let token;try{({token}=await this.mint({...claims,audience:url.href,clientId:this.issuer}));}catch{outcome='neutral';fault('brokering_unavailable','Brokering keys are unavailable.',503);}
-   const answer=await this.egress.send({url:url.href,headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify(body),maxBytes,requestBytes});
+   const wire=encoding==='cbor'?rpcRequestInit(body):{headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)};
+   const answer=await this.egress.send({url:url.href,headers:{...wire.headers,Authorization:`Bearer ${token}`},body:wire.body,maxBytes,requestBytes});
    // Only unavailability counts against the integration's cool-down: a refused filter is the owner's input, and a
    // 401/403/404 is about this connection (its health, not the integration's availability for others).
    outcome=answer?.status===200?'ok':answer?.status>=500||answer?.status===429?'fail':'neutral';return answer;

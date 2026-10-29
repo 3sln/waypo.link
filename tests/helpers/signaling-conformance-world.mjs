@@ -40,6 +40,7 @@
 // Divergences found are reported through `t.todo(...)` (so `npm test` stays green); SIGNALING_CONFORMANCE_STRICT=1
 // turns the ones not marked "plausibly intentional" into failures. Items that this deployment cannot exercise over its
 // public surfaces (provider-feature and service-class endpoints) are skipped with the reason, never passed.
+import {rpcHeaders, encodeRPC, rpcBody} from './rpc.mjs';
 import {softAuthenticator, registerPending} from './soft-passkey.mjs';
 import nodeTest, {before, after} from 'node:test';
 import assert from 'node:assert/strict';
@@ -146,7 +147,8 @@ export async function boot({config = {}, contracts = {}} = {}) {
   peers.peer = await createPeer({origin: PEER, providerFetch: wire});
   peers.plain = await createPeer({origin: PEER_NO_SIGNALING, providerFetch: wire, signaling: false});
   peers.floor = await createPeer({origin: PEER_FLOOR, providerFetch: wire, dpop: false});
-  const request = (path, {method = 'GET', data, cookie, csrf, bearer, appOrigin, ip} = {}) => wire(path, {method, headers: {Origin: appOrigin ?? PROVIDER, ...ip ? {'X-Conformance-Client-IP': ip} : {}, ...data !== undefined ? {'Content-Type': 'application/json'} : {}, ...cookie ? {Cookie: cookie} : {}, ...csrf ? {'X-CSRF-Token': csrf} : {}, ...bearer ? {Authorization: `Bearer ${bearer}`} : {}}, ...data !== undefined ? {body: JSON.stringify(data)} : {}});
+  // Protocol §5: /bindle/rpc speaks Bindle CBOR (application/vnd.bindle.rpc+cbor); every other route stays JSON.
+  const request = (path, {method = 'GET', data, cookie, csrf, bearer, appOrigin, ip} = {}) => { const rpc = path === '/bindle/rpc'; return wire(path, {method, headers: {Origin: appOrigin ?? PROVIDER, ...ip ? {'X-Conformance-Client-IP': ip} : {}, ...data !== undefined ? rpc ? rpcHeaders() : {'Content-Type': 'application/json'} : {}, ...cookie ? {Cookie: cookie} : {}, ...csrf ? {'X-CSRF-Token': csrf} : {}, ...bearer ? {Authorization: `Bearer ${bearer}`} : {}}, ...data !== undefined ? {body: rpc ? Buffer.from(encodeRPC(data)) : JSON.stringify(data)} : {}}); };
   const post = (p, d, o = {}) => request(p, {...o, method: 'POST', data: d});
   const peer = peers.peer;
   /** A provider account (signup through the HTTP routes) and its identity URI from the provider's own directory. */
@@ -207,13 +209,13 @@ export async function boot({config = {}, contracts = {}} = {}) {
     const code = new URL(decision.redirectUri).searchParams.get('code');
     const token = await (await post('/oauth/token', {clientId: client.id, redirectUri: client.redirectUris[0], code, verifier}, {appOrigin: client.origin, ip: acct.ip})).json();
     const rpc = (bearer, resource, contract, method, args = {}) => post('/bindle/rpc', {version: '0', tx: randomUUID(), resource, contract, method, args}, {bearer, appOrigin: client.origin, ip: acct.ip});
-    const prefsRead = await (await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v1', 'read', {fragment: FRAGMENT})).json();
+    const prefsRead = await rpcBody(await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v1', 'read', {fragment: FRAGMENT}));
     assert.ok(prefsRead.result?.values?.signaling, 'preferences read: ' + JSON.stringify(prefsRead) + ' token: ' + JSON.stringify(token));
     const ref = prefsRead.result.values.signaling;
     for (const approved of await widen(acct, approve.map(line => ({action: 'session-approve', input: {clientId: client.id, kind: REF[line]}})))) assert.equal(approved.status, 200, 'session handler approval: ' + await approved.clone().text());
-    const call = async (method, args = {}) => { const res = await rpc(ref.token, ref.id, CONTRACT, method, args); return {status: res.status, ...await res.json()}; };
+    const call = async (method, args = {}) => { const res = await rpc(ref.token, ref.id, CONTRACT, method, args); return {status: res.status, ...await rpcBody(res)}; };
     /** One RPC with a chosen `tx` (protocol §5), for the §10.2 retention rule. */
-    const callTx = async (tx, method, args = {}) => { const res = await post('/bindle/rpc', {version: '0', tx, resource: ref.id, contract: CONTRACT, method, args}, {bearer: ref.token, appOrigin: client.origin, ip: acct.ip}); return {status: res.status, ...await res.json()}; };
+    const callTx = async (tx, method, args = {}) => { const res = await post('/bindle/rpc', {version: '0', tx, resource: ref.id, contract: CONTRACT, method, args}, {bearer: ref.token, appOrigin: client.origin, ip: acct.ip}); return {status: res.status, ...await rpcBody(res)}; };
     return {token, ref, call, callTx, grants: token.grants, client};
   }
   return {app, peers, peer, net, port, wire, request, post, account, connect, widen, close: async () => { app.server.closeAllConnections?.(); await app.close(); await rm(directory, {recursive: true, force: true}); }};

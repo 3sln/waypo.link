@@ -9,7 +9,7 @@ import {appSessionInventory} from './session-inventory.mjs';
 import {incrementalPort} from './incremental-ports.mjs';
 import {FederationService} from './service.mjs';
 import {fail} from './schema.mjs';
-import {canonical,digest} from '../core/records.mjs';
+import {encode,decode,fingerprintInput} from '../core/cbor.mjs';
 import {AppQuery} from '../app/engine.mjs';
 import {withExtensionEntries} from '../core/extensions.mjs';
 import {httpsIdentifier} from '../core/fragments.mjs';
@@ -104,7 +104,15 @@ async function journalKey(crypto,secret,subject){
  const encoder=new TextEncoder(),ikm=await crypto.subtle.importKey('raw',encoder.encode(secret),'HKDF',false,['deriveKey']);
  return crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:encoder.encode('bindle/federation-journal/v1'),info:encoder.encode(String(subject))},ikm,{name:'HMAC',hash:'SHA-256',length:256},false,['sign']);
 }
-async function keyedFingerprint(crypto,secret,subject,value){return 'hmac:'+base64urlBytes(new Uint8Array(await crypto.subtle.sign('HMAC',await journalKey(crypto,secret,subject),new TextEncoder().encode(value))));}
+async function keyedFingerprint(crypto,secret,subject,input){return 'hmac:'+base64urlBytes(new Uint8Array(await crypto.subtle.sign('HMAC',await journalKey(crypto,secret,subject),input)));}
+// CBOR phase 2 (spike §2.4, §6 item 4): the fingerprint input is the codec's domain-separated deterministic encoding
+// ("bindle-rpc-fingerprint-v1" ‖ 0x00 ‖ CBOR), hashed (retained results) or keyed (above). Rows carry JOURNAL_FORMAT and
+// retain their result as its encoded CBOR bytes, replayed byte-identically. A live row without the marker predates the
+// break (JSON canonical fingerprint, structured result): its tx answers `indeterminate` (never its old result, never a
+// second execution of a write that may already have happened) until the row expires within 24 h and is pruned by the
+// existing bounded sweep (lazy, idempotent reset; spike §7.2).
+const JOURNAL_FORMAT='cbor1';
+const hex=bytes=>[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
@@ -192,17 +200,23 @@ export class FederationController {
     // fetch fresh data without creating fleet-wide per-transaction records.
     if(!writing){try{return await execute();}catch(error){if(NO_EFFECT_CODES.has(error.code))return faultResult(error.code,'The requested operation could not be completed.',error,this.issuer);throw error;}}
     const journalKey=`federation/journal/${encodeURIComponent(ctx.subject)}/${encodeURIComponent(ctx.clientId)}/${ctx.tx}`;
-    const fingerprinted=canonical({resource:ctx.resource,addressedResource:ctx.addressedResource??ctx.resource,contract:ctx.contract,method:ctx.method,args:ctx.args,scope:ctx.scope??{},epoch:ctx.epoch??null,resourceGeneration:ctx.resourceGeneration??null,connectionGeneration:ctx.connection?.generation??null});
+    let fingerprinted;try{fingerprinted=fingerprintInput({resource:ctx.resource,addressedResource:ctx.addressedResource??ctx.resource,contract:ctx.contract,method:ctx.method,args:ctx.args,scope:ctx.scope??{},epoch:ctx.epoch??null,resourceGeneration:ctx.resourceGeneration??null,connectionGeneration:ctx.connection?.generation??null},{omitUndefined:true});}catch{fail('invalid_args','The arguments cannot be represented in Bindle CBOR.');}
     // Before the reservation and before the adapter runs: a refusal here wrote nothing and did nothing.
     const journalSecret=this.journalSecret===undefined?DEV_JOURNAL_SECRET:this.journalSecret;
     if(!retain&&(typeof journalSecret!=='string'||!journalSecret))fail('temporarily_unavailable','This operation is unavailable until the journal secret is configured.');
-    const fingerprint=retain?await digest(crypto,fingerprinted):await keyedFingerprint(crypto,journalSecret,ctx.subject,fingerprinted);
-    const prior=await transact(async tx=>{if(!retain&&await tx.get(LEGACY_JOURNAL_KEY)!=null)await tx.delete(LEGACY_JOURNAL_KEY);const previous=await tx.get(journalKey);if(previous&&previous.expiresAt>this.clock()){if(previous.fingerprint!==fingerprint)fail('tx_conflict','Transaction identifier was reused with different arguments.');return previous;}const rows=await tx.list('federation/journal/');let live=0;for(const row of rows){if(row.value.expiresAt<=this.clock())await tx.delete(row.key);else live++;}if(live>=256)fail('rate_limited','This account has reached its outstanding transaction limit.');await tx.set(journalKey,{fingerprint,status:'reserved',expiresAt:this.clock()+86400000});return null;});
-    if(prior){if(prior.status==='complete'){await ctx.reauthorize?.();if(prior.retained===false)return faultResult('indeterminate','The previous operation completed; its result is not retained. Reconcile through a fresh read.');return prior.result;}return faultResult('indeterminate','The previous operation outcome is unknown. Reconcile through a fresh read.');}
-    const save=record=>transact(tx=>tx.set(journalKey,record));
+    const fingerprint=retain?hex(new Uint8Array(await crypto.subtle.digest('SHA-256',fingerprinted))):await keyedFingerprint(crypto,journalSecret,ctx.subject,fingerprinted);
+    const prior=await transact(async tx=>{if(!retain&&await tx.get(LEGACY_JOURNAL_KEY)!=null)await tx.delete(LEGACY_JOURNAL_KEY);const previous=await tx.get(journalKey);if(previous&&previous.format!==JOURNAL_FORMAT&&previous.expiresAt>this.clock())return {legacy:true};if(previous&&previous.format===JOURNAL_FORMAT&&previous.expiresAt>this.clock()){if(previous.fingerprint!==fingerprint)fail('tx_conflict','Transaction identifier was reused with different arguments.');return previous;}const rows=await tx.list('federation/journal/');let live=0;for(const row of rows){if(row.value.expiresAt<=this.clock())await tx.delete(row.key);else live++;}if(live>=256)fail('rate_limited','This account has reached its outstanding transaction limit.');await tx.set(journalKey,{format:JOURNAL_FORMAT,fingerprint,status:'reserved',expiresAt:this.clock()+86400000});return null;});
+    if(prior?.legacy)return faultResult('indeterminate','The previous operation outcome is unknown. Reconcile through a fresh read.');
+    if(prior){if(prior.status==='complete'){await ctx.reauthorize?.();if(prior.retained===false)return faultResult('indeterminate','The previous operation completed; its result is not retained. Reconcile through a fresh read.');return decode(prior.result,{top:'any',objects:'plain'});}return faultResult('indeterminate','The previous operation outcome is unknown. Reconcile through a fresh read.');}
+    const save=record=>transact(tx=>tx.set(journalKey,{format:JOURNAL_FORMAT,...record}));
+    // The retained result is its encoded CBOR (an opaque blob on both adapters; spike §6 item 4). A result the profile
+    // cannot encode is an adapter fault after the effect: recorded and answered as indeterminate.
+    const retained=value=>{try{return encode(value,{omitUndefined:true});}catch{return null;}};
     let result;try{result=await execute();}
-    catch(error){if(NO_EFFECT_CODES.has(error.code)){result=faultResult(error.code,'The requested operation could not be completed.',error,this.issuer);await save({fingerprint,status:'complete',result,expiresAt:this.clock()+86400000});return result;}if(lifecycleUnknown(error))throw error;if(writing){result=faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return result;}throw error;}
-    await save(retain?{fingerprint,status:'complete',result,expiresAt:this.clock()+86400000}:{fingerprint,status:'complete',retained:false,expiresAt:this.clock()+86400000});return result;
+    catch(error){if(NO_EFFECT_CODES.has(error.code)){result=faultResult(error.code,'The requested operation could not be completed.',error,this.issuer);await save({fingerprint,status:'complete',result:retained(result),expiresAt:this.clock()+86400000});return result;}if(lifecycleUnknown(error))throw error;if(writing){result=faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return result;}throw error;}
+    if(retain){const bytes=retained(result);if(!bytes){await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');}await save({fingerprint,status:'complete',result:bytes,expiresAt:this.clock()+86400000});}
+    else await save({fingerprint,status:'complete',retained:false,expiresAt:this.clock()+86400000});
+    return result;
   }
 }
 

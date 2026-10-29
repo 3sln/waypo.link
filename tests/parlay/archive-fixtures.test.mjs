@@ -21,10 +21,10 @@ export function objectStorage({maxObjectBytes=1048576,conditionalDelete=true}={}
  const apply=(method,args)=>{
   const current=objects.get(args.key);
   if(method==='capabilities')return {read:true,write:true,delete:conditionalDelete,range:false,presigned:{read:false,write:false},conditionalWrites:true,maxObjectBytes};
-  if(method==='get'){if(!current)throw failure('not_found',404);if(args.ifVersion!==undefined&&args.ifVersion!==current.version)throw failure('conflict',409);return {dataBase64:toB64(current.bytes),object:{key:args.key,version:current.version,size:current.bytes.length}};}
+  if(method==='get'){if(!current)throw failure('not_found',404);if(args.ifVersion!==undefined&&args.ifVersion!==current.version)throw failure('conflict',409);return {data:current.bytes.slice(),object:{key:args.key,version:current.version,size:current.bytes.length}};}
   if(method==='put'){
    if(args.condition?.absent===true?Boolean(current):args.condition?.version!==current?.version||!current)throw failure('conflict',409);
-   const bytes=fromB64(args.dataBase64);if(bytes.length>maxObjectBytes)throw failure('quota_exceeded',429);
+   if(!(args.data instanceof Uint8Array))throw failure('invalid_args',400);const bytes=args.data.slice();if(bytes.length>maxObjectBytes)throw failure('quota_exceeded',429);
    const version=`v${++serial}`;objects.set(args.key,{bytes,version});return {object:{key:args.key,version,size:bytes.length}};
   }
   if(method==='delete'){if(!conditionalDelete)throw failure('unsupported_method',400);if(!current)throw failure('not_found',404);if(current.version!==args.version)throw failure('conflict',409);objects.delete(args.key);return {deleted:true};}

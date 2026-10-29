@@ -8,6 +8,7 @@ import {recoveryAuthorityPublic} from '../identity-backup.mjs';
 import {IdentityAction,OwnerQuery,LinkedApprovalAction,LinkedResolveQuery,IdentityFault} from '../../identity/index.mjs';
 import QRCode from 'qrcode';
 import {flagReadable,flagGlobal,flagEnabled,json,lifecycleUnknown,body,cookie,signupEnabled,accountHandle,status,identity} from './shared.mjs';
+import {emailFlowRoutes} from './email-flow.mjs';
 
 const authMethods={
  '/api/auth/step-up/begin':'stepUpBegin','/api/auth/step-up':'stepUp',
@@ -23,6 +24,8 @@ const authMethods={
  ,'/api/auth/email/login/settings':'configureEmailLogin','/api/auth/email/notices':'emailNotices'
  // DX-6 email removal (account-deletion-export.md §3): CSRF here, step-up and EMAIL_REMOVAL_ENABLED in IdentityService.
  ,'/api/auth/email/remove':'emailRemove'
+ // 3sln.me system items in the queue (the post-email-sign-up passkey suggestion, sign-in spike §3.4): owner CSRF.
+ ,'/api/auth/host-items/dismiss':'dismissHostItem'
 };
 
 // Linked approval (LA3 mount of the LA1 contract, docs/architecture/linked-approval.md §10.1), all behind
@@ -123,13 +126,15 @@ export const stages={
       const legacy=qr.pathname==='/device'&&/^#request=[a-f0-9-]{36}$/.test(qr.hash),linked=flagGlobal(env,'DEVICE_AUTHORIZATION_ENABLED')&&qr.pathname==='/approve'&&/^#r=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(qr.hash);
       if(qr.origin!==env.APP_ORIGIN||qr.search||!(legacy||linked)||qr.username||qr.password)return json({error:'invalid_request'},400);return json({svg:await QRCode.toString(qr.href,{type:'svg',width:320,margin:2})});
     }
+    // Cross-device email flow and email sign-up (spike §4, P3), behind EMAIL_FLOW_V2 (routes/email-flow.mjs).
+    {const response=await emailFlowRoutes({request,env,path,local,engine,context,vault});if(response)return response;}
     if(authMethods[path]){
       if(request.method!=='POST')return json({error:'method_not_allowed'},405);
       if(path==='/api/auth/signup'&&!signupEnabled(env,{request}))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
       const input=await body(request);
       // Sign-out also forgets this device's push subscription for that account (best effort).
       if(path==='/api/auth/logout'&&Object.hasOwn(input,'pushSubscription')){const id=input.pushSubscription;delete input.pushSubscription;if(typeof id==='string'&&/^[A-Za-z0-9_-]{43}$/.test(id))try{const signedIn=await engine.query(new OwnerQuery(context)).peek();await accountHandle(env,signedIn.account.id).removeSubscription(signedIn.account.id,id);}catch{}}
-      if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin','emailNotices','emailRemove'].includes(authMethods[path])){
+      if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin','emailNotices','emailRemove','dismissHostItem'].includes(authMethods[path])){
         const authenticated=await engine.query(new OwnerQuery(context)).peek();
         if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
         await accountHandle(env,authenticated.account.id).touch(authenticated.account.id);

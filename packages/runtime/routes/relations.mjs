@@ -26,6 +26,7 @@ import {localAudience} from '../account/member-certificates.mjs';
 import {jwsHint} from '../account/relations.mjs';
 import {inviterOf} from '../../orgs/relation-invitations.mjs';
 import {JWT_BEARER} from '../../orgs/certificates.mjs';
+import {readRPCRequestBytes,rpcResponse,RPCWireFault} from '../../core/rpc-wire.mjs';
 
 const ENTITY_TYP='bindle-entity-certificate+jwt',noStore={'Cache-Control':'no-store',Pragma:'no-cache'};
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -39,23 +40,25 @@ async function boundedText(request,max){const reader=request.body?.getReader();i
 /** Per-network budget for the public relation endpoints (fails closed off loopback without an abuse store). RTC-e
  * review F5: the shared helper, refined by `CF-Worker` under a network ceiling. */
 async function admit(env,request,local,name,limit){return (await admitSourceNetwork(env,request,local,`relations/${name}`,limit)).ok;}
-const invalidToken=()=>json({error:'invalid_token'},401,{...noStore,'WWW-Authenticate':'DPoP algs="ES256", BindleEntity'});
+const invalidToken=(rpc=false)=>(rpc?rpcResponse:json)({error:'invalid_token'},401,{...noStore,'WWW-Authenticate':'DPoP algs="ES256", BindleEntity'});
 const RPC_STATUS={unauthorized:401,invalid_token:401,forbidden:403,not_found:404,rate_limited:429,tx_conflict:409,conflict:409,temporarily_unavailable:503,indeterminate:503};
 
 async function rpc({request,env,local}){
  const authorization=request.headers.get('Authorization')??'';let org=null;
- if(authorization.startsWith('BindleEntity ')){const token=authorization.slice(13).trim();if(header(token)?.typ!==ENTITY_TYP)return invalidToken();org=localAudience(env,jwsHint(token)?.aud);}
+ if(authorization.startsWith('BindleEntity ')){const token=authorization.slice(13).trim();if(header(token)?.typ!==ENTITY_TYP)return invalidToken(true);org=localAudience(env,jwsHint(token)?.aud);}
  else{const m=BOUND.exec(authorization);if(!m)return;org=m[2];}
- if(!org||!orgsOn(env,org)||!await organization(env,org))return invalidToken();
- if(!await admit(env,request,local,'rpc',600))return json({error:'rate_limited'},429,{...noStore,'Retry-After':'60'});
- if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json')return json({error:'json_required'},415,noStore);
- const text=await boundedText(request,1500000);let envelope=null;try{envelope=text===null?null:JSON.parse(text);}catch{envelope=null;}
- const proofs=request.headers.get('DPoP');if(!proofs||proofs.includes(','))return invalidToken();
- try{return json(await accountHandle(env,org).relationsRPC(org,{authorization,dpop:proofs,envelope,htu:`${env.APP_ORIGIN}/bindle/rpc`}),200,noStore);}
+ if(!org||!orgsOn(env,org)||!await organization(env,org))return invalidToken(true);
+ if(!await admit(env,request,local,'rpc',600))return rpcResponse({error:'rate_limited'},429,{...noStore,'Retry-After':'60'});
+ // CBOR spike §4 (clean break): 415 for any other media type, 413 on encoded size, 400 for a strict-decoding refusal.
+ let envelope;try{envelope=(await readRPCRequestBytes(request)).bytes;}catch(error){if(error instanceof RPCWireFault)return rpcResponse({error:error.code,message:error.message},error.status,noStore);throw error;}
+ const proofs=request.headers.get('DPoP');if(!proofs||proofs.includes(','))return invalidToken(true);
+ try{return rpcResponse(await accountHandle(env,org).relationsRPC(org,{authorization,dpop:proofs,envelope,htu:`${env.APP_ORIGIN}/bindle/rpc`}),200,noStore);}
  catch(error){
-  if(error?.code==='invalid_token')return invalidToken();
+  if(error?.code==='invalid_token')return invalidToken(true);
+  // Open divergence (CBOR spike §4.2, not widened here): thrown tx_conflict/conflict answer 409 and indeterminate 503,
+  // where protocol §5 returns them in a 200 error envelope.
   const status=RPC_STATUS[error?.code]??(Number.isInteger(error?.status)&&error.status>=400&&error.status<500?error.status:400);
-  return json({error:error?.code??'invalid_request',message:error?.code?error.message:'The request could not be completed.'},status,{...noStore,...Number.isSafeInteger(error?.retryAfter)?{'Retry-After':String(error.retryAfter)}:{}});
+  return rpcResponse({error:error?.code??'invalid_request',message:error?.code?error.message:'The request could not be completed.'},status,{...noStore,...Number.isSafeInteger(error?.retryAfter)?{'Retry-After':String(error.retryAfter)}:{}});
  }
 }
 async function token({request,env,local}){

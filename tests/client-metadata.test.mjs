@@ -1,6 +1,7 @@
 // client-id-metadata.v1: URL client IDs resolved from OAuth client ID metadata documents through a fake SSRF-safe
 // egress port, plus the provider runtime (manifest, entries, redirect flow, tokens, CORS, blocks) and admin blocking.
 // Fixtures use reserved .example hosts only.
+import {rpcInit} from './helpers/rpc.mjs';
 import {EXT,extensionOptions} from '../packages/core/extensions.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -143,8 +144,8 @@ test('entry sign-in with an unregistered URL client: verified origin labels the 
  p.restart(owner);
  const refreshed=await form(p,`${issuer}/oauth/token`,{grant_type:'refresh_token',refresh_token:tokens.refresh_token,client_id:clientId},{Origin:appOrigin});assert.equal(refreshed.status,200,await refreshed.clone().text());
  const rpcPreflight=await p.fetch(`${issuer}/bindle/rpc`,{method:'OPTIONS',headers:{Origin:appOrigin}});assert.equal(rpcPreflight.status,204);
- const fromApp=await p.fetch(`${issuer}/bindle/rpc`,{method:'POST',headers:{Origin:appOrigin,Authorization:`Bearer ${(await refreshed.json()).access_token}`,'Content-Type':'application/json'},body:'{}'});assert.notEqual(fromApp.status,403);
- const fromOther=await p.fetch(`${issuer}/bindle/rpc`,{method:'POST',headers:{Origin:'https://evil.example',Authorization:`Bearer ${tokens.access_token}`,'Content-Type':'application/json'},body:'{}'});assert.equal(fromOther.status,403);
+ const fromApp=await p.fetch(`${issuer}/bindle/rpc`,rpcInit({},{Origin:appOrigin,Authorization:`Bearer ${(await refreshed.json()).access_token}`}));assert.notEqual(fromApp.status,403);assert.equal(fromApp.status,400,'an empty map is an invalid envelope, past the origin check');
+ const fromOther=await p.fetch(`${issuer}/bindle/rpc`,rpcInit({},{Origin:'https://evil.example',Authorization:`Bearer ${tokens.access_token}`}));assert.equal(fromOther.status,403);
  assert.equal(p.egress.calls.length,1,'no refetch for tokens');
 });
 
@@ -169,7 +170,7 @@ test('blocking a host stops code exchange, refresh and cross-origin calls for is
  const second=await signInThroughEntry(p),tokens=await(await form(p,`${issuer}/oauth/token`,{grant_type:'authorization_code',code:second.code,code_verifier:second.verifier,client_id:clientId,redirect_uri:redirectUri})).json();assert.ok(tokens.refresh_token);
  p.blocked.add('app.example');p.directory.invalidate('app.example');
  assert.equal((await form(p,`${issuer}/oauth/token`,{grant_type:'refresh_token',refresh_token:tokens.refresh_token,client_id:clientId})).status,400);
- assert.equal((await p.fetch(`${issuer}/bindle/rpc`,{method:'POST',headers:{Origin:appOrigin,Authorization:`Bearer ${tokens.access_token}`,'Content-Type':'application/json'},body:'{}'})).status,403);
+ assert.equal((await p.fetch(`${issuer}/bindle/rpc`,rpcInit({},{Origin:appOrigin,Authorization:`Bearer ${tokens.access_token}`}))).status,403);
  // Revocation stays available from a server (no Origin).
  assert.equal((await form(p,`${issuer}/oauth/revoke`,{token:tokens.refresh_token,client_id:clientId})).status,200);
 });

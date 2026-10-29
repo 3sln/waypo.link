@@ -13,6 +13,7 @@
 // own intents memory, read by the engine inside its own gate. The cases stay as no-hang regressions for contract
 // writes, concurrent writes and app removal with RPCs in flight (RTC-i review M1). Local behaviour only: loopback
 // HTTP, no peer provider.
+import {bodyInit,rpcAware} from './helpers/rpc.mjs';
 import test from 'node:test';
 import {reviewedHTTP} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
@@ -42,9 +43,9 @@ async function boot(t,extra={}){
  const port=app.server.address().port;
  // node:http (fetch cannot set Host): real loopback HTTP with the provider's configured host.
  const request=(path,{method='GET',data,cookie,csrf,bearer,origin=ORIGIN}={})=>new Promise((resolve,reject)=>{
-  const body=data===undefined?undefined:Buffer.from(JSON.stringify(data));
-  const req=http.request({host:'127.0.0.1',port,path,method,headers:{Host:new URL(ORIGIN).host,Origin:origin,...body?{'Content-Type':'application/json','Content-Length':body.length}:{},...cookie?{Cookie:cookie}:{},...csrf?{'X-CSRF-Token':csrf}:{},...bearer?{Authorization:`Bearer ${bearer}`}:{}}},res=>{
-   const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(new Response([204,304].includes(res.statusCode)?null:Buffer.concat(chunks),{status:res.statusCode,headers:Object.entries(res.headers).flatMap(([k,v])=>Array.isArray(v)?v.map(x=>[k,x]):[[k,String(v)]])})));});
+  const wire=bodyInit(path,data),body=data===undefined?undefined:Buffer.from(wire.body);
+  const req=http.request({host:'127.0.0.1',port,path,method,headers:{Host:new URL(ORIGIN).host,Origin:origin,...body?{...wire.headers,'Content-Length':body.length}:{},...cookie?{Cookie:cookie}:{},...csrf?{'X-CSRF-Token':csrf}:{},...bearer?{Authorization:`Bearer ${bearer}`}:{}}},res=>{
+   const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(rpcAware(new Response([204,304].includes(res.statusCode)?null:Buffer.concat(chunks),{status:res.statusCode,headers:Object.entries(res.headers).flatMap(([k,v])=>Array.isArray(v)?v.map(x=>[k,x]):[[k,String(v)]])}))));});
   req.on('error',reject);if(body)req.write(body);req.end();});
  const post=(path,data,options={})=>request(path,{...options,method:'POST',data});
  return {app,request,post};

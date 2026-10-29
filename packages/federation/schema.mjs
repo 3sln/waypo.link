@@ -5,7 +5,9 @@ import {fragmentOutcome,fieldOutcome,FIELD_NAME} from '../core/fragments.mjs';
 import {validateBusManifest} from './event-buses.mjs';
 export class FederationFault extends Error { constructor(code,message=code){super(message);this.name='FederationFault';this.code=code;} }
 export const fail=(code,message)=>{throw new FederationFault(code,message);};
-export const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+// CBOR phase 2 (spike §6 item 3): a plain-object test. A Uint8Array, typed array, decimal or other class instance is not
+// an object member map, so bytes can never pass an object check (or the reverse).
+export const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value));
 export function exact(value,keys){if(!object(value)||Object.keys(value).some(key=>!keys.includes(key)))fail('invalid_args','Unexpected fields.');}
 export function https(value){try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.hash||url.href!==value&&url.origin!==value)fail('invalid_args','Canonical HTTPS URL required.');return url;}catch{fail('invalid_args','Canonical HTTPS URL required.');}}
 export function strings(value,max=64){if(!Array.isArray(value)||value.length>max||new Set(value).size!==value.length||value.some(x=>!boundedString(x,2048)))fail('invalid_args','Bounded distinct strings required.');return value;}

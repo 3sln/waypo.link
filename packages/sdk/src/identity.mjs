@@ -389,7 +389,7 @@ export class BindleClient {
   async rpc({resource,contract,method,args={},tx=this.crypto.randomUUID()},{signal,token}={}) {
     const generation=this.generation,session=await this.ensureSession({signal});
     if(generation!==this.generation)throw new Error('Resource access was canceled.');
-    const {response,result}=await (await tokens()).sendRPC(this,session,JSON.stringify({version:'0',tx,resource,contract,method,args}),{signal,token});
+    const {response,result}=await (await tokens()).sendRPC(this,session,{version:'0',tx,resource,contract,method,args},{signal,token});
     if(generation!==this.generation||this.session?.subject!==session.subject||this.session?.issuer!==session.issuer)throw new Error('Resource access was canceled.');if(!response.ok)throw new Error(result.message??'The resource request was denied.');if(result.version!=='0'||result.tx!==tx)throw new Error('Provider returned a mismatched RPC response.');if(result.error){const error=new Error(typeof result.error.message==='string'?result.error.message:'The resource request failed.');if(typeof result.error.code==='string'&&/^[a-zA-Z0-9_.-]{1,64}$/.test(result.error.code))error.code=result.error.code;if(Number.isInteger(result.error.retryAfter)&&result.error.retryAfter>=0&&result.error.retryAfter<=86400)error.retryAfter=result.error.retryAfter;throw error;}return result;
   }
   async callResource(reference,call,options={}) {

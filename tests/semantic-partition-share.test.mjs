@@ -9,9 +9,8 @@ import * as X from '../packages/runtime/account/classifier.mjs';
 import {clefRequest} from '../packages/runtime/account/classifier-models.mjs';
 // Caller-supplied taxonomy (item-classification/v1): these tests bring their own labels.
 const LABELS=['spam','social','promotional','recruitment','conversation','outreach'].map(id=>({id,description:'Category '+id+'.'}));
-import {encodeBase64url} from '../packages/sdk/src/item-classification.mjs';
 import {deterministicClassifierModel} from '../packages/runtime/account/classifier-models.mjs';
-const NOW=Date.UTC(2026,9,23,12),wire=text=>{const bytes=new TextEncoder().encode(text);return {detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:bytes.length,data:encodeBase64url(bytes)},labels:LABELS};};
+const NOW=Date.UTC(2026,9,23,12),wire=text=>{const bytes=new TextEncoder().encode(text);return {detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:bytes.length,data:bytes},labels:LABELS};};
 const STUB={configured:true,mediaTypes:['text/plain']};
 const args=text=>X.classificationArgs(wire(text),{now:NOW,ai:STUB});
 import {GlobalSemanticBudget} from '../packages/runtime/semantic-budget.mjs';

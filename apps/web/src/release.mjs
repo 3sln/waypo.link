@@ -39,6 +39,8 @@ import {createLocalization,catalogueForContributions} from './shared/i18n.mjs';
 import localizeTree from './ui/localize.mjs';
 import BrowserStateProvider from './providers/browser-state.mjs';
 import * as actions from './bl/release.mjs';
+import EmailFlowProvider from './providers/email-flow.mjs';
+import {EMAIL_FLOW_INTENTS,EmailFlowSchedule,PollEmailFlow,RestoreEmailFlow,CancelEmailFlow,EMAIL_FLOW_POLL,EMAIL_FLOW_RESTORE,EMAIL_FLOW_ABANDON} from './bl/email-flow.mjs';
 import {ReactivateAccount} from './bl/lifecycle.mjs';
 import createApp from './ui/release-app.mjs';
 import * as signalingActions from './bl/signaling-controls.mjs';
@@ -50,7 +52,7 @@ const root=document.getElementById('app');
 // Read before any browser resource is obtained: the browser provider removes link capabilities from the address bar.
 const landedEntry=organizationEntry(location),orgRouteAtLoad=organizationRoute(location);
 const consolePort=createConnectionsPort({owner:(input,{api})=>api.request('/api/connections/owner',input),setup:(input,{api})=>api.request('/api/connections/setup',input),saveSetup:(input,{api})=>api.request('/api/connections/setup',{...input,action:'save'}),external:(input,{api})=>api.request('/api/connections/client-metadata',input),offerings:[{id:'classifier',name:'3sln.me classifier',manifest:{v:1}},{id:'google-drive',name:'Google Drive',manifest:{v:1}}]});
-const engine=new Engine({providers:{organizationsConsole:OrganizationsProvider,accountDataFlags:AccountDataFlags,connectionsConsole:Provider.fromSingleton(consolePort),accessCatalog:Provider.fromSingleton(createAccessCatalog({registrableDomain:host=>getDomain(host,{allowPrivateDomains:true}),transition:({operation,connection,expectedGeneration,api,owner})=>consolePort.owner({operation:'connections.'+operation,input:{connection,expectedGeneration}},{api,owner})})),messageActions:MessageActionsProvider,automation:AutomationProvider,api:APIProvider,browser:BrowserProvider,state:BrowserStateProvider,portalContributions:portalContributionsProvider(builtInModules),portalAccess:PortalAccessProvider,recoveryFile:RecoveryFileProvider}});
+const engine=new Engine({providers:{emailFlow:EmailFlowProvider,organizationsConsole:OrganizationsProvider,accountDataFlags:AccountDataFlags,connectionsConsole:Provider.fromSingleton(consolePort),accessCatalog:Provider.fromSingleton(createAccessCatalog({registrableDomain:host=>getDomain(host,{allowPrivateDomains:true}),transition:({operation,connection,expectedGeneration,api,owner})=>consolePort.owner({operation:'connections.'+operation,input:{connection,expectedGeneration}},{api,owner})})),messageActions:MessageActionsProvider,automation:AutomationProvider,api:APIProvider,browser:BrowserProvider,state:BrowserStateProvider,portalContributions:portalContributionsProvider(builtInModules),portalAccess:PortalAccessProvider,recoveryFile:RecoveryFileProvider}});
 const registry=await engine.container.use(['portalContributions'],({portalContributions})=>portalContributions);
 // Registry data is immutable; this read composes UI factories once per locale.
 const surfaces=Object.fromEntries(['en','es'].map(locale=>{const localization=createLocalization({locale,catalogue:catalogueForContributions(registry.list('translations'),locale)}),localize=tree=>localizeTree(tree,localization),views={...composePortalViews(registry,{t:localization.t,number:localization.number,date:localization.date,localize}),organizations:organizationsView};return [locale,withOrganizationsSurface(withAccountDataSurface(createApp({views,localize}),localize))];}));
@@ -89,7 +91,7 @@ function guardOrganizations(pending){engine.dispatch(new OrganizationsIntent({ac
 await engine.container.use(['api'],({api})=>bindAccountDataAPI(api));
 const messageFrameResource=await engine.container.use(['messageActions'],({messageActions})=>messageActions);
 const constructors={
- 'accept-terms':AcceptTerms,
+ 'accept-terms':AcceptTerms,...EMAIL_FLOW_INTENTS,
  'confirm-owner':ConfirmOwner,'cancel-owner-confirmation':CancelOwnerConfirmation,
  'open-accounts':accountActions.OpenAccounts,'close-accounts':accountActions.CloseAccounts,'add-account':accountActions.AddAccount,'switch-account':accountActions.SwitchAccount,'logout-account':accountActions.LogoutAccounts,'logout-all-accounts':accountActions.LogoutAccounts,'retry-account-cleanup':accountActions.RetryAccountCleanup,
  'message-submission-unknown':messageActions.MessageSubmissionUnknown,'review-message-action':messageActions.ReviewMessageAction,'submit-message-action':messageActions.SubmitMessageAction,'load-message-revision':messageActions.LoadMessageRevision,
@@ -145,6 +147,9 @@ engine.feed.addEventListener('shortcut-chord-expired',event=>engine.dispatch(new
 function keydown(event){if(closureSession(readModel())||accountDataCurrent(readModel())?.interstitial||termsPending(readModel()))return;if(event.repeat)return;const model=readModel(),stroke=normalizeKeyStroke(event,navigator.platform);if(!stroke)return;const context=portalContext(model,{textInputFocus:isTextInputTarget(event.target)});const result=resolveKeybinding(compileKeybindings(defaultKeybindings(registry),model.keybindingOverrides??[],registry.list('commands')),context,model.keyChord,stroke);if(result.consumed){event.preventDefault();event.stopPropagation();}if(!result.consumed&&context.textInputFocus){if(model.keyChord?.strokes?.length)engine.dispatch(new actions.ClearShortcutChord({startedAt:model.keyChord.startedAt}));return;}engine.dispatch(new actions.PressShortcut({stroke}));}
 window.addEventListener('keydown',keydown);
 engine.feed.addEventListener('device-poll-due',()=>engine.dispatch(new actions.PollDeviceLogin()));
+// Continue with email (sign-in spike P3): polls of the original tab's flow, and a flow kept across a reload.
+engine.feed.addEventListener(EMAIL_FLOW_POLL,()=>engine.dispatch(new PollEmailFlow()));engine.feed.addEventListener(EMAIL_FLOW_RESTORE,()=>engine.dispatch(new RestoreEmailFlow()));engine.feed.addEventListener(EMAIL_FLOW_ABANDON,()=>engine.dispatch(new CancelEmailFlow({quiet:true})));
+const emailFlowSchedule=engine.query(new EmailFlowSchedule()).subscribe({next:()=>{}});
 engine.feed.addEventListener('session-check-due',()=>engine.dispatch(new actions.RecheckSession()));
 engine.feed.addEventListener('accounts-refresh-due',()=>engine.dispatch(new accountActions.OpenAccounts()));
 engine.feed.addEventListener('network-changed',event=>engine.dispatch(new actions.NetworkChanged({online:event.detail})));
@@ -189,6 +194,6 @@ const syncShellURL=()=>{clearTimeout(shellTimer);shellTimer=setTimeout(()=>{cons
 engine.feed.addEventListener('browser-state-updated',syncShellURL);
 addEventListener('popstate',restoreShellRoute);
 engine.dispatch(new actions.InitializeSpace());
-window.addEventListener('pagehide',()=>{signalingGate.dispose();accountDataSubscription.unsubscribe();termsFocus.disconnect();cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});
+window.addEventListener('pagehide',()=>{emailFlowSchedule.unsubscribe();signalingGate.dispose();accountDataSubscription.unsubscribe();termsFocus.disconnect();cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});
 // Back/forward cache restores a torn-down page: reload instead of showing a blank console.
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});

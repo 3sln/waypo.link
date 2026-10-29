@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {rpcReply,requestEnvelope,RPC_MEDIA_TYPE} from '../../../tests/helpers/rpc.mjs';
 import assert from 'node:assert/strict';
 import {createDeviceClient,deviceDeclaration,deviceGrant,DEVICE_OPERATIONS,StartDeviceAuthorization,PollDeviceAuthorization,CancelDeviceAuthorization,DeviceAuthorizationDisplay,RefreshDeviceSession,DeviceResourceRequest,RevokeDeviceSession} from '../src/device.mjs';
 import {thumbprint} from '../src/dpop.mjs';
@@ -16,7 +17,7 @@ async function dispatch(engine,action){const feed=engine.dispatch(action);let re
 function harness({polls=[],device=authorization,confirm=async()=>true,onToken,onRefresh,onResource,onDevice,wait,keys}={}){
  const calls=[],proofs=[],sleeps=[],confirmations=[];let now=1000,binding,poll=0,refresh=0;
  const fetcher=async(url,options)=>{
-  const headers=new Headers(options.headers),body=url===manifest.rpc_endpoint?JSON.parse(options.body):new URLSearchParams(options.body),call={url,options,headers,body,at:now};calls.push(call);
+  const headers=new Headers(options.headers),body=url===manifest.rpc_endpoint?requestEnvelope(options.body):new URLSearchParams(options.body),call={url,options,headers,body,at:now};calls.push(call);
   assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');assert.equal(headers.has('Origin'),false);assert.equal([...headers.keys()].some(key=>key.startsWith('sec-fetch-')),false);
   if(url===manifest.device_authorization_endpoint){assert.equal(headers.get('Content-Type'),'application/x-www-form-urlencoded');assert.equal(body.has('scope'),false);binding=body.get('dpop_jkt');return onDevice?onDevice(call):reply(device);}
   if(url===manifest.revocation_endpoint)return new Response(null,{status:200});
@@ -24,7 +25,7 @@ function harness({polls=[],device=authorization,confirm=async()=>true,onToken,on
   assert.equal(header.alg,'ES256');assert.equal(header.typ,'dpop+jwt');assert.equal(header.jwk.d,undefined);assert.equal(await thumbprint(header.jwk),binding);
   const key=await crypto.subtle.importKey('jwk',header.jwk,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);assert.equal(await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,Buffer.from(s,'base64url'),new TextEncoder().encode(h+'.'+p)),true);
   assert.equal(payload.htm,'POST');assert.equal(payload.htu,url);assert.equal(payload.iat,Math.floor(now/1000));assert.ok(!proofs.some(prior=>prior.jti===payload.jti));proofs.push(payload);
-  if(url===manifest.rpc_endpoint){assert.equal(headers.get('Authorization'),'DPoP access-secret');assert.equal(payload.ath,Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('access-secret'))).toString('base64url'));return onResource?onResource(call):reply({result:{ok:true}});}
+  if(url===manifest.rpc_endpoint){assert.equal(headers.get('Authorization'),'DPoP access-secret');assert.equal(payload.ath,Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('access-secret'))).toString('base64url'));assert.equal(headers.get('Content-Type'),RPC_MEDIA_TYPE);return onResource?onResource(call):rpcReply({result:{ok:true}});}
   assert.equal(url,manifest.token_endpoint);assert.equal(headers.get('Content-Type'),'application/x-www-form-urlencoded');assert.equal(payload.ath,undefined);assert.equal(body.get('client_id'),clientId);
   if(body.get('grant_type')==='refresh_token'){refresh++;return onRefresh?onRefresh(call):reply(token({access_token:'access-refreshed',refresh_token:'refresh-rotated',refresh_expires_in:3600,refresh_idle_expires_in:1800}));}
   assert.equal(body.get('grant_type'),deviceGrant);assert.equal(body.get('device_code'),authorization.device_code);return onToken?onToken(call):poll<polls.length?polls[poll++](call):reply(token());
@@ -93,7 +94,7 @@ test('Bearer, missing refresh bounds and invalid token metadata are refused and 
  for(const patch of [{token_type:'Bearer'},{refresh_token:undefined},{refresh_idle_expires_in:undefined},{expires_in:3601},{issuer:'https://other.example'},{audience:'https://other.example/rpc'},{subject:'https://other.example/entities/alice'},{client_id:'wrong'},{grants:undefined}]){const h=harness({onToken:async()=>reply(token(patch))});await start(h);await assert.rejects(h.client.poll(),{code:'invalid_token_response'});assert.equal(h.confirmations.length,0);assert.equal(h.calls.at(-1).url,manifest.revocation_endpoint);}
 });
 test('resource requests bind the access token with ath and never replay a write',async()=>{
- const h=harness({onResource:()=>reply({error:'use_dpop_nonce'},401,{'DPoP-Nonce':'rpc-nonce','WWW-Authenticate':'DPoP error="use_dpop_nonce"'})});await signIn(h);const result=await dispatch(h.engine,new DeviceResourceRequest({body:{method:'write'}}));assert.equal(result.response.status,401);assert.equal(h.calls.filter(call=>call.url===manifest.rpc_endpoint).length,1);await h.client.request({method:'read'});assert.equal(h.proofs.at(-1).nonce,'rpc-nonce');h.advance(300001);await assert.rejects(h.client.request({}),{code:'sign_in_required'});
+ const h=harness({onResource:()=>rpcReply({error:'use_dpop_nonce'},401,{'DPoP-Nonce':'rpc-nonce','WWW-Authenticate':'DPoP error="use_dpop_nonce"'})});await signIn(h);const result=await dispatch(h.engine,new DeviceResourceRequest({body:{method:'write'}}));assert.equal(result.response.status,401);assert.equal(h.calls.filter(call=>call.url===manifest.rpc_endpoint).length,1);await h.client.request({method:'read'});assert.equal(h.proofs.at(-1).nonce,'rpc-nonce');h.advance(300001);await assert.rejects(h.client.request({}),{code:'sign_in_required'});
 });
 test('refresh uses the same key, handles a nonce, rotates once and renews the idle deadline',async()=>{
  let count=0;const h=harness({onRefresh:()=>++count===1?reply({error:'use_dpop_nonce'},400,{'DPoP-Nonce':'refresh-nonce'}):reply(token({refresh_token:'rotated',refresh_expires_in:3600}))});const initial=await signIn(h);h.advance(10000);const renewed=await dispatch(h.engine,new RefreshDeviceSession());assert.equal(renewed.refresh_token,'rotated');assert.equal(renewed.refreshExpiresAt,initial.refreshExpiresAt+10000);assert.equal(h.proofs.at(-1).nonce,'refresh-nonce');assert.equal(h.refreshes,2);assert.equal(await dispatch(h.engine,new RevokeDeviceSession()),true);assert.equal(h.calls.at(-1).body.get('token'),'rotated');await assert.rejects(h.client.refresh(),{code:'sign_in_required'});

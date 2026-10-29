@@ -3,6 +3,7 @@
 import {Engine,Provider,Action,Query} from '../../../vendor/ngin/index.js';
 import {createKey,createProof,thumbprint} from './dpop.mjs';
 import {boundedJSON,validateAccessResponse} from './tokens.mjs';
+import {rpcRequestInit,readRPCResponse} from './rpc-wire.mjs';
 import {parseIdentity} from './handle.mjs';
 import {EXT,BINDLE_REGISTRY,readExtensions} from '../../core/extensions.mjs';
 
@@ -155,12 +156,12 @@ export class DeviceResourceRequest extends DeviceAction {
  static operation='sdk.device.request';
  async run({deviceState:state,deviceIO:io},{signal:dispatchSignal}){
   const session=state.session;if(!session||io.clock()>=session.token.expiresAt||io.clock()>=session.token.refreshExpiresAt)throw coded('sign_in_required');
-  const {body,signal}=this.input,url=io.declaration.rpc_endpoint,token=session.token;
+  const {body,signal}=this.input,url=io.declaration.rpc_endpoint,token=session.token,init=rpcRequestInit(body);// protocol §5: Bindle CBOR
   // Resource writes are never retried automatically, including nonce challenges.
   const proof=await io.keys.proof(session.key,{htu:url,accessToken:token.access_token,nonce:session.nonces.get(url),crypto:io.crypto,clock:io.clock});
   if(state.session!==session||session.token!==token)throw coded('canceled');abortCheck(signal);abortCheck(dispatchSignal);
-  const response=await io.fetcher(url,{method:'POST',credentials:'omit',redirect:'error',signal:combined(signal,dispatchSignal,AbortSignal.timeout(15000)),headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:`DPoP ${token.access_token}`,DPoP:proof},body:JSON.stringify(body)}),nonce=response.headers.get('DPoP-Nonce');
-  if(noncePattern.test(nonce??''))session.nonces.set(url,nonce);return {response,result:await boundedJSON(response)};
+  const response=await io.fetcher(url,{method:'POST',credentials:'omit',redirect:'error',signal:combined(signal,dispatchSignal,AbortSignal.timeout(15000)),headers:{...init.headers,Authorization:`DPoP ${token.access_token}`,DPoP:proof},body:init.body}),nonce=response.headers.get('DPoP-Nonce');
+  if(noncePattern.test(nonce??''))session.nonces.set(url,nonce);return {response,result:await readRPCResponse(response).catch(()=>{throw coded('invalid_response');})};
  }
 }
 export class RevokeDeviceSession extends DeviceAction {

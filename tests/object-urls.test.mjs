@@ -20,7 +20,7 @@ test('proxy rejects an upload before reading bytes when permission or required c
  const conditional=await handleObjectURL(request,{enabled:true,controller:{inspectObjectURL:async()=>({size:1,contentType:'text/plain',condition:{absent:true}}),objectURL:async()=>{effects++;}}});assert.equal(conditional.status,428);assert.equal(reads,0);assert.equal(effects,0);
 });
 test('proxy enforces exact upload size and type and serves active HTML as an inert attachment',async()=>{
- let effects=0;const controller={inspectObjectURL:async(_,operation)=>operation==='write'?{size:3,contentType:'text/plain',condition:{absent:true}}:{},objectURL:async(_,operation,args)=>{effects++;return operation==='write'?{object:{size:3}}:{dataBase64:btoa('<script>alert(1)</script>'),object:{version:'v1',contentType:'text/html'}};}};
+ let effects=0;const controller={inspectObjectURL:async(_,operation)=>operation==='write'?{size:3,contentType:'text/plain',condition:{absent:true}}:{},objectURL:async(_,operation,args)=>{effects++;return operation==='write'?{object:{size:3}}:{data:new TextEncoder().encode('<script>alert(1)</script>'),object:{version:'v1',contentType:'text/html'}};}};
  const put=bytes=>new Request(issuer+'/bindle/objects/x',{method:'PUT',headers:{'Content-Type':'text/plain','If-None-Match':'*'},body:bytes});
  assert.equal((await handleObjectURL(put('ab'),{controller,enabled:true})).status,400);assert.equal((await handleObjectURL(put('abcd'),{controller,enabled:true})).status,413);assert.equal(effects,0);
  assert.equal((await handleObjectURL(put('abc'),{controller,enabled:true})).status,200);assert.equal(effects,1);

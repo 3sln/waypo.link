@@ -20,7 +20,8 @@ export class MemoryAccounts {
   async get(id) { return structuredClone(this.records.get(id)); }
   async findByHandle(handle) { return structuredClone([...this.records.values()].find(a => a.handle === handle)); }
   async findByEmail(email) { return structuredClone([...this.records.values()].find(a => indexedEmails(a).includes(email))); }
-  async create(account) { if (this.records.has(account.id) || [...this.records.values()].some(a => a.handle === account.handle)) return false; this.records.set(account.id, structuredClone(account)); return true; }
+  // A record created with a confirmed address (email sign-up) claims it in the same step, like the real repositories.
+  async create(account) { if (this.records.has(account.id) || [...this.records.values()].some(a => a.handle === account.handle || indexedEmails(account).some(email => indexedEmails(a).includes(email)))) return false; this.records.set(account.id, structuredClone(account)); return true; }
   async compareAndSwap(id, revision, account) {
     if (this.records.get(id)?.revision !== revision || indexedEmails(account).some(email => [...this.records.values()].some(a => a.id !== id && indexedEmails(a).includes(email)))) return false;
     this.records.set(id, structuredClone(account)); return true;

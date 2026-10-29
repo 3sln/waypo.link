@@ -9,14 +9,13 @@ import * as intake from '../../packages/messaging-engine/domains/intake.mjs';
 import * as budget from '../../packages/messaging-engine/domains/receive-budget.mjs';
 import {KEYS} from '../../packages/messaging-engine/store/mailbox.mjs';
 import {TAXONOMY,CATEGORY_DESCRIPTIONS} from '../../packages/messaging-engine/domains/categories.mjs';
-import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 
 // Pins bind to {model id, model version, Parlay's taxonomy}; the classifier reports only the model.
 const MODEL={model:'spamnet',version:'3',schema:TAXONOMY};
 // Host view of the item-classification fragment with one text classifier: the score is read from a `p=` marker in the
 // (already minimized) text the call carries inline.
 const TEXT='https://classifiers.example/r/text',CAPS={kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:65536}],maxLabels:16};
-const textOf=input=>new TextDecoder().decode(decodeBase64url(input.item.data));
+const textOf=input=>new TextDecoder().decode(input.item.data);
 const classifier=(evidence=MODEL,values={text:TEXT})=>{const inputs=[];return {inputs,evidence,values,async fields(){return structuredClone(this.values);},async capabilities(){return CAPS;},async classify(resource,input){inputs.push(structuredClone(input));const text=textOf(input),p=Number(/p=(0\.\d+)/.exec(text)?.[1]??0);if(/explode/.test(text))throw new Error('occupant failure');return {scores:{spam:p},model:{id:this.evidence.model,version:this.evidence.version}};}};};
 const fresh=async(t,options)=>{const w=await createWorld(options);t.after(()=>w.dispose());return w;};
 const code=(r,status,error)=>{assert.equal(r.status,status,JSON.stringify(r.json));assert.equal(r.json.error,error);};

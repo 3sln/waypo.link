@@ -237,7 +237,11 @@ function writeItem(w, v, depth, limits, state) {
   const entries = [];
   for (const k of Reflect.ownKeys(v)) {
     const d = Object.getOwnPropertyDescriptor(v, k);
+    // JSON-compatible member omission (RPC boundary): symbol-keyed and non-enumerable members are skipped, as
+    // JSON.stringify skips them (workerd JSRPC results carry a symbol-keyed disposer).
+    if (state.omitUndefined && (typeof k !== 'string' || !d.enumerable)) continue;
     if (typeof k !== 'string' || !d.enumerable || !Object.hasOwn(d, 'value')) fail('unsupported', 'Objects must hold only enumerable data properties with text keys.');
+    if (d.value === undefined && state.omitUndefined) continue; // JSON-compatible member omission (RPC boundary option)
     entries.push([textKey(k), d.value]);
   }
   encodeKeyed(w, entries, depth, limits, state);
@@ -253,10 +257,13 @@ const resolveLimits = options => {
  * exact float (an integral float within ±(2^53-1) cannot arise from a number); bigint → integer (bignum beyond 64 bits);
  * Uint8Array → byte string; typed arrays (and Float16Bytes) → little-endian RFC 8746 tags; BindleDecimal → tag 4;
  * NDArray → tag 40; dense Array; plain or null-prototype object with text keys sorted bytewise by encoded form.
- * Options: `cose` (a top-level Map may have integer and text keys, spike §2.6), maxDepth/maxEntries/maxItems/maxBytes. */
+ * Options: `cose` (a top-level Map may have integer and text keys, spike §2.6), `omitUndefined` (JSON-compatible member
+ * omission: an object member whose value is undefined, and any symbol-keyed or non-enumerable member, is left out, as
+ * JSON.stringify does; RPC adapters use it for handler results, never for decoded data, which holds none of these;
+ * accessor properties are still refused), maxDepth/maxEntries/maxItems/maxBytes. */
 export function encode(value, options = {}) {
   const limits = resolveLimits(options), w = new Writer();
-  writeItem(w, value, 0, limits, { items: 0, cose: options.cose === true });
+  writeItem(w, value, 0, limits, { items: 0, cose: options.cose === true, omitUndefined: options.omitUndefined === true });
   if (options.maxBytes !== undefined && w.pos > limits.maxBytes) fail('too_large', 'The encoding exceeds the size bound.');
   return w.result();
 }
@@ -265,7 +272,7 @@ export function encode(value, options = {}) {
 // Decoder
 
 class Reader {
-  constructor(bytes, limits, cose) { this.b = bytes; this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); this.pos = 0; this.items = 0; this.limits = limits; this.cose = cose; }
+  constructor(bytes, limits, cose, plainObjects = false) { this.plainObjects = plainObjects; this.b = bytes; this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); this.pos = 0; this.items = 0; this.limits = limits; this.cose = cose; }
   need(n) { if (n > this.b.length - this.pos) fail('truncated', 'The data ends early or declares more content than remains.'); }
   /** Reads a head; returns [major, ai, argument] where argument is a number (≤ MAX_SAFE) or bigint. Enforces shortest form. */
   head() {
@@ -311,7 +318,7 @@ class Reader {
   }
   map(n, depth) {
     this.enter(depth); this.length(n, 2); if (n > this.limits.maxEntries) fail('too_many_entries', 'A map exceeds the entry bound.');
-    const cose = this.cose && depth === 0, out = cose ? new Map() : Object.create(null);
+    const cose = this.cose && depth === 0, out = cose ? new Map() : this.plainObjects ? {} : Object.create(null);
     let prevStart = -1, prevEnd = -1;
     for (let i = 0; i < n; i++) {
       const start = this.pos; this.need(1); const keyMajor = this.b[start] >> 5;
@@ -380,14 +387,18 @@ class Reader {
  * returning anything. Maps decode to null-prototype objects with own data properties (`__proto__` is data); integers
  * to number within ±(2^53-1), else bigint; byte strings to fresh Uint8Array copies; typed arrays to fresh aligned native
  * typed arrays (Float16Bytes where Float16Array is missing). Options: `top` ('map', the default, or 'any'), `cose`
- * (top-level map may use integer labels and decodes to a Map), maxBytes/maxDepth/maxEntries/maxItems. */
+ * (top-level map may use integer labels and decodes to a Map), `objects` ('null', the default: null-prototype maps; or
+ * 'plain': Object.prototype maps whose members are still defined, never assigned, so `__proto__` stays data exactly as
+ * with JSON.parse; RPC adapters use it so handlers see the same object shape the JSON transport gave them),
+ * maxBytes/maxDepth/maxEntries/maxItems. */
 export function decode(bytes, options = {}) {
   if (!(bytes instanceof Uint8Array)) throw new TypeError('decode expects a Uint8Array.');
   const limits = resolveLimits(options);
   if (bytes.byteLength > limits.maxBytes) fail('too_large', 'The data exceeds the size bound.');
   const top = options.top ?? 'map'; if (top !== 'map' && top !== 'any') throw new TypeError("top must be 'map' or 'any'.");
   if (top === 'map' && (bytes.length === 0 || bytes[0] >> 5 !== 5)) fail('not_map', 'The top-level item must be a map.');
-  const reader = new Reader(bytes, limits, options.cose === true), value = reader.item(0);
+  const objects = options.objects ?? 'null'; if (objects !== 'null' && objects !== 'plain') throw new TypeError("objects must be 'null' or 'plain'.");
+  const reader = new Reader(bytes, limits, options.cose === true, objects === 'plain'), value = reader.item(0);
   if (reader.pos !== bytes.length) fail('trailing', 'Bytes follow the top-level item.');
   return value;
 }
@@ -402,14 +413,14 @@ export function sameValue(a, b, options) {
 // fingerprints) use fingerprintInput directly.
 
 const DOMAIN = /^[\x21-\x7e]{1,128}$/;
-export function fingerprintInput(value, { domain = RPC_FINGERPRINT_DOMAIN } = {}) {
+export function fingerprintInput(value, { domain = RPC_FINGERPRINT_DOMAIN, omitUndefined = false } = {}) {
   if (typeof domain !== 'string' || !DOMAIN.test(domain)) throw new TypeError('A fingerprint domain must be 1-128 printable ASCII characters.');
-  const prefix = utf8.encode(domain), body = encode(value), out = new Uint8Array(prefix.length + 1 + body.length);
+  const prefix = utf8.encode(domain), body = encode(value, { omitUndefined }), out = new Uint8Array(prefix.length + 1 + body.length);
   out.set(prefix); out.set(body, prefix.length + 1); return out;
 }
 /** Lowercase hex SHA-256 over fingerprintInput(value), via WebCrypto (Workers, browsers, Node ≥ 19). */
-export async function fingerprint(value, { domain = RPC_FINGERPRINT_DOMAIN, subtle = globalThis.crypto?.subtle } = {}) {
+export async function fingerprint(value, { domain = RPC_FINGERPRINT_DOMAIN, omitUndefined = false, subtle = globalThis.crypto?.subtle } = {}) {
   if (!subtle) throw new TypeError('WebCrypto is unavailable.');
-  const digest = new Uint8Array(await subtle.digest('SHA-256', fingerprintInput(value, { domain })));
+  const digest = new Uint8Array(await subtle.digest('SHA-256', fingerprintInput(value, { domain, omitUndefined })));
   let hex = ''; for (const b of digest) hex += b.toString(16).padStart(2, '0'); return hex;
 }

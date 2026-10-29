@@ -3,6 +3,7 @@ import {webShell} from '../web/shell.mjs';
 import {ingressError} from '../../../packages/messaging-engine/domains/receive.mjs';
 import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,fromBase64url} from '../../../packages/messaging-protocol/index.mjs';
 import {fault,MailboxFault} from '../../../packages/messaging-engine/faults.mjs';
+import {RPC_MEDIA_TYPE,isRPCMediaType,rpcResponse} from '../../../packages/sdk/src/rpc-wire.mjs';
 import {enabled} from './mailbox.mjs';
 import {handleConversationIngress} from '../../../packages/messaging-engine/domains/conversations.mjs';
 import {createFirstContactBudget} from '../../../packages/messaging-engine/domains/invites.mjs';
@@ -56,17 +57,25 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
      if(event?.unknown===true)return new Response(null,{status:202,headers});
      if(!event?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(event.owner);await box.run(event.owner,'shell.integration-event',{input:{event}});return new Response(null,{status:202,headers});
     }
-    if(contentType!=='application/json')fault('invalid_input','Use application/json.',415);
-    const bytes=await bodyBytes(request),purpose=path==='/bindle/resources'?'discover':'invoke';let rpc;
-    try{if(purpose==='invoke')rpc=parseRPC(bytes);}catch(error){if(error.rpc)return Response.json({version:'0',error:{code:error.code}},{headers});throw error;}
-    if(typeof services?.verifyIntegration!=='function')fault('recipient_unavailable','Broker verifier unavailable.',503);
-    const verified=await services.verifyIntegration({url:request.url,authorization:request.headers.get('Authorization'),purpose,...rpc?{resource:rpc.resource,contract:rpc.contract,method:rpc.method}:{}});
-    if(!verified?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(verified.owner);
-    if(purpose==='discover')return Response.json(await box.run(verified.owner,'shell.discover',{input:{verified,query:strictJSON(bytes,{maxBytes:65536,maxDepth:12})}}),{headers});
-    const name=rpc.contract===MAILBOX_CONTRACT?'shell.describe':null;
-    if(!name)fault('unsupported_contract','Unsupported contract.',400);
-    const result=await box.run(verified.owner,name,{input:{verified,resource:rpc.resource,tx:rpc.tx,contract:rpc.contract,args:rpc.args}});
-    return Response.json({version:'0',tx:rpc.tx,result},{headers});
+    const purpose=path==='/bindle/resources'?'discover':'invoke';
+    // Brokered RPC is Bindle CBOR (integrations §5; owner-approved 2026-10-28); discovery stays JSON (phase 1).
+    if(purpose==='invoke'){if(!isRPCMediaType(contentType))return rpcResponse({error:'unsupported_media_type',message:`Use ${RPC_MEDIA_TYPE}.`},415,headers);}
+    else if(contentType!=='application/json')fault('invalid_input','Use application/json.',415);
+    let bytes,rpc;
+    try{bytes=await bodyBytes(request);if(purpose==='invoke')rpc=parseRPC(bytes);}catch(error){if(purpose!=='invoke')throw error;if(error.rpc)return rpcResponse({version:'0',error:{code:error.code}},200,headers);const known=error instanceof MailboxFault||error instanceof ProtocolFault;return rpcResponse({error:known?error.code:'internal_error'},known&&Number.isSafeInteger(error.status)?error.status:500,headers);}
+    const answer=async()=>{
+     if(typeof services?.verifyIntegration!=='function')fault('recipient_unavailable','Broker verifier unavailable.',503);
+     const verified=await services.verifyIntegration({url:request.url,authorization:request.headers.get('Authorization'),purpose,...rpc?{resource:rpc.resource,contract:rpc.contract,method:rpc.method}:{}});
+     if(!verified?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(verified.owner);
+     if(purpose==='discover')return Response.json(await box.run(verified.owner,'shell.discover',{input:{verified,query:strictJSON(bytes,{maxBytes:65536,maxDepth:12})}}),{headers});
+     const name=rpc.contract===MAILBOX_CONTRACT?'shell.describe':null;
+     if(!name)fault('unsupported_contract','Unsupported contract.',400);
+     const result=await box.run(verified.owner,name,{input:{verified,resource:rpc.resource,tx:rpc.tx,contract:rpc.contract,args:rpc.args}});
+     return rpcResponse({version:'0',tx:rpc.tx,result},200,headers);
+    };
+    if(purpose!=='invoke')return await answer();
+    // Every body the brokered RPC route generates is CBOR, its route-level errors included (spike §4.2).
+    try{return await answer();}catch(error){const known=error instanceof MailboxFault||error instanceof ProtocolFault,status=known&&Number.isSafeInteger(error.status)?error.status:500;return rpcResponse({error:known?error.code:'internal_error'},status,{...headers,...status===503?{'Retry-After':'60'}:{}});}
    }
    const sendId=/^\/api\/send\/([a-f0-9-]{36})(\/retry|\/cancel)?$/.exec(path);
    let op,id,input,needsBody=false;

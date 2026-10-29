@@ -6,6 +6,7 @@ import {fail,malformed,textEncoder,strictJSON,utf8,exact,plain,text,time,uuid,is
 import {validateEnvelope,validateContent,validatePrincipal,clampLimits,payloadDigest,eventId,recordShape} from './envelope.mjs';
 import {credentialScheme,parseCredential} from './conversation.mjs';
 import {parseCompact,verifyES256} from './certificate.mjs';
+import {decodeRPC} from '../sdk/src/rpc-wire.mjs';
 
 const indexOf=(bytes,needle,from)=>{const first=needle[0];outer:for(let i=bytes.indexOf(first,from);i>=0&&i<=bytes.length-needle.length;i=bytes.indexOf(first,i+1)){for(let j=1;j<needle.length;j++)if(bytes[i+j]!==needle[j])continue outer;return i;}return -1;};
 const startsAt=(bytes,needle,at)=>at+needle.length<=bytes.length&&needle.every((b,i)=>bytes[at+i]===b);
@@ -116,12 +117,13 @@ export function encodeMulticast({batchId,contexts},body,{boundary}={}){
  return encodeParts([['batch','application/json',json],['message',content.mimeType,body]],boundary??`bindle-messaging-${base64url(globalThis.crypto.getRandomValues(new Uint8Array(18)))}`);
 }
 
-// Resource RPC (protocol §5) for the mailbox contract (§2.2), parsed from raw bytes so duplicate
-// members are refused before canonicalization. Envelope errors are malformed (HTTP 400); contract/method/argument
-// errors carry `rpc: true` and belong in the 200 error envelope.
+// Resource RPC (protocol §5) for the mailbox contract (§2.2), parsed from the raw request bytes with the strict Bindle
+// CBOR decoder (brokered RPC moved to CBOR: owner-approved 2026-10-28; docs/spec/cbor.md), so every non-canonical form,
+// duplicate key or out-of-profile value is refused before any field is read. Envelope errors are malformed (HTTP 400);
+// contract/method/argument errors carry `rpc: true` and belong in the 200 error envelope.
 const rpcFault=code=>fail(code,{status:200,rpc:true});
 export function parseRPC(bytes,{resource,allowLoopback=false}={}){
- const r=strictJSON(bytes,{maxBytes:LIMITS.maxRequestBytes,maxDepth:12});
+ let r;try{r=decodeRPC(bytes,{maxBytes:LIMITS.maxRequestBytes});}catch(error){if(error?.code==='body_too_large')fail('too_large');malformed();}
  exact(r,['version','tx','resource','contract','method','args']);if(r.version!=='0'||!isUUID(r.tx)||typeof r.contract!=='string'||typeof r.method!=='string'||!plain(r.args))malformed();
  urlValue(r.resource,allowLoopback);if(resource!==undefined&&r.resource!==resource)malformed();
  if(r.contract===MAILBOX_CONTRACT){

@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { canonical } from './primitives.mjs';
+import { fingerprintInput } from './cbor.mjs';
 
 export const STORAGE = 'https://bindle.example/contracts/object-storage/v1';
 export const SYNC = 'https://bindle.example/fragments/app-sync/v1';
@@ -63,7 +63,8 @@ export class BindleEngine {
     const target = this.resources.get(resource);
     if (!target || target.owner !== grant.owner || contract !== grant.contract || !target.contracts.includes(contract) || !grant.methods.includes(method) || !grant.resources.includes(resource) || !(this.preferences.get(grant.owner) || []).includes(resource)) fail('forbidden', 'Resource or method is outside the current grant.');
     if (!args || typeof args !== 'object' || Array.isArray(args)) fail('invalid_request', 'Arguments must be an object.');
-    const fingerprint = createHash('sha256').update(canonical({ resource, contract, method, args })).digest('hex');
+    let input; try { input = fingerprintInput({ resource, contract, method, args }, { omitUndefined: true }); } catch { fail('invalid_request', 'Arguments must be Bindle CBOR values.'); }
+    const fingerprint = createHash('sha256').update(input).digest('hex');
     const txKey = `${grant.id}:${tx}`;
     const prior = this.transactions.get(txKey);
     if (prior) {

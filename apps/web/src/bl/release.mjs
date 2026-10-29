@@ -428,3 +428,8 @@ export class RecheckSignupPayment extends Flow {async perform(r,ctx){const statu
 async function loadSignupAvailability(r,ctx){const generation=current(r).beamGeneration??0;try{const status=await r.api.get('/api/signup/status');if(generation!==(current(r).beamGeneration??0)||current(r).auth!=='signup'||current(r).pending)return;if(status.reason!=='unavailable'&&typeof status.freeSignupOpen==='boolean'&&typeof status.paidSignupOpen==='boolean')update(r,ctx,{signupAvailability:{freeSignupOpen:status.freeSignupOpen,paidSignupOpen:status.paidSignupOpen,waitlistEnabled:status.waitlistEnabled===true,reason:status.reason}});}catch{/* Native signup remains usable; server admission is authoritative. */}}
 
 function agePolicyError(error,state){if(state.locale!=='es')return error.message;return ({terms_required:'Revisa los términos actuales de la cuenta.',terms_acceptance_required:'Acepta los términos actuales antes de crear contenido o conceder acceso.',age_confirmation_required:'Confirma la edad mínima requerida para continuar.',age_confirmation_insufficient:'No cumples la edad mínima requerida para registrarte.',signup_region_blocked:'El registro no está disponible en tu región'})[error.code]??error.message;}
+
+// Shared with the email flow (bl/email-flow.mjs; sign-in and intents spike P3): the one console Flow, its state helpers,
+// and the setup hand-off that an email sign-up uses (the recovery file is its only setup step).
+export {Flow,update as publishState,current as readState};
+export async function startSetupRecovery(r,ctx,result){pending(r,ctx,result.pendingToken,'recovery');update(r,ctx,{pendingHandle:result.account?.handle??null,session:null,notice:'',setupContact:null,emailFlow:null});await recovery(r,ctx);}

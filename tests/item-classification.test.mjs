@@ -26,7 +26,7 @@ import {forEachSeed} from './helpers/chaos.mjs';
 
 const NOW=Date.UTC(2026,9,28,12),ORIGIN='https://3sln.example',OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const LABELS=[{id:'invoice',description:'A bill or invoice asking for payment.'},{id:'travel',description:'Travel bookings and itineraries.'}];
-const enc=new TextEncoder(),b64=s=>C.encodeBase64url(enc.encode(s));
+const enc=new TextEncoder(),b64=s=>(enc.encode(s));
 const inline=(text='Your travel invoice',over={})=>({detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:enc.encode(text).length,data:b64(text)},labels:LABELS,...over});
 const HREF='https://objects.example/bucket/item-1?X-Sig=abc';
 const byURL=(over={},item={})=>({detail:'minimal',item:{kind:'text',mediaType:'text/plain',size:19,url:{href:HREF,expiresAt:NOW+300000},...item},labels:LABELS,...over});
@@ -73,20 +73,20 @@ test('capabilities: side-effect-free, exact arguments, open result read conserva
  assert.equal(C.checkCapabilities(v(byURL({},{kind:'image',mediaType:'image/png'})),caps),null);
 });
 
-test('inline items: exact base64url of exactly size bytes, bounded, UTF-8 for text; scores per supplied label',async()=>{
+test('inline items: a byte string of exactly size bytes (base64 text refused), bounded, UTF-8 for text; scores per supplied label',async()=>{
  const d=classifierDouble({log:true});
  assert.deepEqual(await d.classify(inline()),{scores:{invoice:.95,travel:.95},model:{id:'test/double',version:'1'}});assert.deepEqual(await d.classify(inline('hello')),{scores:{invoice:.02,travel:.02},model:{id:'test/double',version:'1'}});
  const v=a=>C.validateClassifyArgs(a,{now:NOW});
- invalid(()=>v({...inline(),item:{...inline().item,size:3}}));invalid(()=>v({...inline(),item:{...inline().item,data:inline().item.data+'='}}));invalid(()=>v({...inline(),item:{...inline().item,data:'a'}}));
- const big=new Uint8Array(C.LIMITS.inlineBytes+1);invalid(()=>v({...inline(),item:{kind:'image',mediaType:'image/png',size:big.length,data:C.encodeBase64url(big)}}));
- assert.equal(v({...inline(),item:{kind:'image',mediaType:'image/png',size:C.LIMITS.inlineBytes,data:C.encodeBase64url(big.subarray(1))}}).item.size,C.LIMITS.inlineBytes);
- invalid(()=>v({...inline(),item:{kind:'text',mediaType:'text/plain',size:2,data:C.encodeBase64url(new Uint8Array([0xc3,0x28]))}}));
- assert.equal(v({...inline(),item:{kind:'other',mediaType:'application/octet-stream',size:2,data:C.encodeBase64url(new Uint8Array([0xc3,0x28]))}}).item.kind,'other');
+ invalid(()=>v({...inline(),item:{...inline().item,size:3}}));invalid(()=>v({...inline(),item:{...inline().item,data:inline().item.data+'='}}));invalid(()=>v({...inline(),item:{...inline().item,data:'a'}}));invalid(()=>v({...inline(),item:{kind:'text',mediaType:'text/plain',size:2,data:'aGk'}}),'base64url text is not bytes');
+ const big=new Uint8Array(C.LIMITS.inlineBytes+1);invalid(()=>v({...inline(),item:{kind:'image',mediaType:'image/png',size:big.length,data:(big)}}));
+ assert.equal(v({...inline(),item:{kind:'image',mediaType:'image/png',size:C.LIMITS.inlineBytes,data:(big.subarray(1))}}).item.size,C.LIMITS.inlineBytes);
+ invalid(()=>v({...inline(),item:{kind:'text',mediaType:'text/plain',size:2,data:(new Uint8Array([0xc3,0x28]))}}));
+ assert.equal(v({...inline(),item:{kind:'other',mediaType:'application/octet-stream',size:2,data:(new Uint8Array([0xc3,0x28]))}}).item.kind,'other');
  for(const item of [{...inline().item,kind:'hologram'},{...inline().item,mediaType:'text/plain; charset=utf-8'},{...inline().item,mediaType:'TEXT/PLAIN'},{...inline().item,extra:1},{kind:'text',mediaType:'text/plain',size:1}])invalid(()=>v({...inline(),item}));
  for(const args of [{},{...inline(),detail:undefined},{...inline(),labels:undefined},{...inline(),more:true}])invalid(()=>v(args));
  // A non-text item scores 0.5 per label in the double; the result always has exactly the supplied labels.
- assert.equal((await classifierDouble({capabilities:{kinds:[{kind:'image',mediaTypes:['image/*'],inputs:['inline'],maxBytes:10}],maxLabels:16}}).classify({...inline(),item:{kind:'image',mediaType:'image/png',size:3,data:C.encodeBase64url(new Uint8Array([1,2,3]))}})).scores.invoice,.5);
- await assert.rejects(d.classify({...inline(),item:{kind:'image',mediaType:'image/png',size:3,data:C.encodeBase64url(new Uint8Array([1,2,3]))}}),{code:'unsupported_item'},'a kind outside the capabilities');
+ assert.equal((await classifierDouble({capabilities:{kinds:[{kind:'image',mediaTypes:['image/*'],inputs:['inline'],maxBytes:10}],maxLabels:16}}).classify({...inline(),item:{kind:'image',mediaType:'image/png',size:3,data:(new Uint8Array([1,2,3]))}})).scores.invoice,.5);
+ await assert.rejects(d.classify({...inline(),item:{kind:'image',mediaType:'image/png',size:3,data:(new Uint8Array([1,2,3]))}}),{code:'unsupported_item'},'a kind outside the capabilities');
 });
 
 test('labels: 1-16 distinct tokens with one-line descriptions of at most 200 code points; the classifier may advertise fewer',async()=>{
@@ -224,7 +224,7 @@ test('app side: the owner detail ceiling is enforced when building calls; absenc
  const build=detail=>C.buildClassifyArgs({detail,item,tags,labels:LABELS},{now:NOW});
  assert.equal(build(undefined).detail,'minimal');assert.equal(build(undefined).tags,undefined);assert.equal(build('everything').detail,'minimal');assert.equal(build({level:'full'}).tags,undefined);
  assert.deepEqual(build('standard').tags,{language:'en'});assert.deepEqual(build('full').tags,tags);assert.equal(build('minimal').tags,undefined);
- assert.deepEqual(build('minimal').item,{kind:'text',mediaType:'text/plain',size:2,data:'aGk'});
+ assert.deepEqual(build('minimal').item,{kind:'text',mediaType:'text/plain',size:2,data:new Uint8Array([104,105])});
  assert.deepEqual(C.buildClassifyArgs({detail:'full',item:{kind:'image',mediaType:'image/png',size:10,url:{href:HREF,expiresAt:NOW+1000}},labels:LABELS},{now:NOW}).item.url,{href:HREF,expiresAt:NOW+1000});
  assert.throws(()=>C.buildClassifyArgs({detail:'full',item,tags:{context:['BAD']},labels:LABELS},{now:NOW}),{code:'invalid_args'},'an app cannot send what a classifier would refuse');
 });
@@ -297,7 +297,7 @@ test('dispatcher: unsupported_item is a final no-effect refusal; classify result
  assert.deepEqual((await dispatch(first)).scores,{invoice:.95,travel:.95});
  const rows=()=>[...metadata.rows].filter(([k])=>k.startsWith('federation/journal/'));const [[,row]]=rows();assert.equal(row.retained,false);assert.equal(Object.hasOwn(row,'result'),false);
  assert.equal(JSON.stringify([...metadata.rows]).includes('0.95'),false);assert.equal((await dispatch({...first})).__federationError.code,'indeterminate');assert.equal(double.counts.classify,1,'no second classification');
- const refused=ctx(inline('x',{item:{kind:'image',mediaType:'image/png',size:1,data:C.encodeBase64url(new Uint8Array([1]))}}));
+ const refused=ctx(inline('x',{item:{kind:'image',mediaType:'image/png',size:1,data:(new Uint8Array([1]))}}));
  assert.equal((await dispatch(refused)).__federationError.code,'unsupported_item');assert.equal((await dispatch({...refused})).__federationError.code,'unsupported_item','journaled as final');assert.equal(double.counts.classify,2,'the retry is answered from the journal');
  // capabilities is a read: never journaled.
  const before=rows().length;assert.equal((await dispatch(ctx({},'capabilities'))).maxLabels,16);assert.equal(rows().length,before);

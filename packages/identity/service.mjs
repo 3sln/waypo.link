@@ -11,6 +11,7 @@ import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './aut
 import {createRecoveryPayload,RECOVERY_FILE_ID} from '../recovery/index.mjs';
 import {recoveryReminder} from './recovery-reminder.mjs';
 import {passwordDerived} from './password-authority.mjs';
+import {EmailFlow,MemoryEmailFlows} from './email-flow.mjs';
 import {accountEmails,confirmedEmails,signInEmails,noticeEntry,noticeEmail,emailEntry,emailProjection,migrateEmails,MAX_CONFIRMED_EMAILS,MAX_UNVERIFIED_EMAILS,UNVERIFIED_EMAIL_TTL_MS,ESTABLISHED_METHOD_AGE_MS} from './emails.mjs';
 
 /**
@@ -137,6 +138,8 @@ export const SECURITY_LOOKBACK_MS = 30 * 86400000;
 const SECURITY_RETENTION_MS = SECURITY_LOOKBACK_MS + 3600000;
 /** One account security notice per account and type per 10 minutes; later ones are coalesced into the next. */
 export const SECURITY_NOTICE_COALESCE_MS = 600000;
+/** N2 (spike §8.4): a passkey added from an `email-cross-device` session is provisional this long. */
+export const PROVISIONAL_PASSKEY_MS = 86400000;
 /** The live cooling-off record `account.recoveryPrevious` = {hash, issuedAt, fileId, version, marker, reissuedAt,
  * preparedAt, until, newFileId, cancelHash, credential}, or null when no reissue is pending at `now`. Pure. */
 export function pendingReissue(account, now){const p=account?.recoveryPrevious;return p&&typeof p==='object'&&Number.isSafeInteger(p.until)&&p.until>now&&Number.isSafeInteger(p.reissuedAt)&&Number.isSafeInteger(p.preparedAt)&&typeof p.newFileId==='string'?p:null;}
@@ -150,7 +153,7 @@ const LOGIN_TOKEN=/^pl1\.([A-Za-z0-9_-]{1,800})\.([A-Za-z0-9_-]{43})$/;
 export function reissueMarker(account){const marker=account?.recoveryReissue;return marker&&typeof marker==='object'&&RECOVERY_REISSUE_REASONS.includes(marker.reason)&&Number.isSafeInteger(marker.at)&&marker.at>=0?marker:null;}
 const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.fileId==='string'&&RECOVERY_FILE_ID.test(value.fileId)&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
 /** Account security notices sent to every channel (review 2026-10-23 R1(ii)). */
-export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','email-sign-in-enabled','email-sign-in-removed','notice-email-changed','sessions-revoked','sessions-evicted']);
+export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','email-sign-in-enabled','email-sign-in-removed','notice-email-changed','sessions-revoked','sessions-evicted','email-sign-in','email-sign-in-cancelled']);
 export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','email-login-disabled','passkey-registered','passkey-added','passkey-removed','recovery-file-issued','recovery-file-reissued','recovery-reissue-cancelled','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
@@ -180,7 +183,16 @@ export function identitySecurityPort(repository) {
 }
 const publicAccount = (a,badges=[],now) => ({ id: a.id, handle: a.handle, status: a.status, createdAt: a.createdAt,
   badges,termsVersion: a.termsVersion, passkeyCount: a.credentials.length,
-  recoveryConfigured: Boolean(a.recoveryHash), paidHandle:a.paidHandle||null, aliases:[a.handle,...onboardingAlias(a)?[onboardingAlias(a)]:[],...a.paidHandle?[a.paidHandle]:[],...systemBadge(a)?[a.systemIdentity.handle]:[]],...systemBadge(a)?{systemBadge:systemBadge(a)}:{}, emails: emailProjection(a,now), noticeEmail: noticeEmail(a), signInEmail: signInEmails(a).length>0, lastActiveAt: a.lastActiveAt });
+  recoveryConfigured: Boolean(a.recoveryHash), paidHandle:a.paidHandle||null, aliases:[a.handle,...onboardingAlias(a)?[onboardingAlias(a)]:[],...a.paidHandle?[a.paidHandle]:[],...systemBadge(a)?[a.systemIdentity.handle]:[]],...systemBadge(a)?{systemBadge:systemBadge(a)}:{}, emails: emailProjection(a,now), noticeEmail: noticeEmail(a), signInEmail: signInEmails(a).length>0, lastActiveAt: a.lastActiveAt, ...(items=>items.length?{hostItems:items}:{})(hostItems(a,now)) });
+/** Spike §3.4 step 6 (owner decision 2026-10-28): after an email sign-up the account's queue holds one 3sln.me system item
+ * suggesting a passkey. It is informational, expires once a passkey exists, and repeats at most once, 30 days after it
+ * was first admitted, if there is still no passkey. `account.passkeySuggestion` = {admittedAt, dismissedAt?}. Pure. */
+export const PASSKEY_SUGGESTION_REPEAT_MS = 30 * 86400000;
+export function hostItems(account,now){
+  const suggestion=account?.passkeySuggestion;if(!suggestion||!nonNegative(suggestion.admittedAt)||account.credentials?.length||!nonNegative(now))return [];
+  const repeat=suggestion.admittedAt+PASSKEY_SUGGESTION_REPEAT_MS,at=now>=repeat?repeat:suggestion.admittedAt,dismissed=nonNegative(suggestion.dismissedAt)&&suggestion.dismissedAt>=at;
+  return dismissed?[]:[{id:'passkey-suggestion',kind:'system',source:'host',admittedAt:at,repeat:at===repeat,action:'add-passkey'}];
+}
 function emailAddress(value) {
   if (typeof value !== 'string' || value.length > 254 || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(value)) fail('invalid_email', 'Enter an ordinary email address.');
   const [local, domain] = value.split('@');
@@ -198,12 +210,12 @@ function safeLabel(value, fallback = 'Browser session') {
   if (typeof value !== 'string' || !value.trim() || value.length > 80 || /[\u0000-\u001f\u007f]/.test(value)) fail('invalid_label', 'Use a device or passkey name of 1–80 characters.');
   return value.trim();
 }
-const publicCredentials = account => account.credentials.map(({ id, label, deviceType, backedUp, createdAt }) => ({ id, label: label || 'Passkey', deviceType, backedUp, createdAt }));
+const publicCredentials = (account, now) => account.credentials.map(({ id, label, deviceType, backedUp, createdAt, provisionalUntil }) => ({ id, label: label || 'Passkey', deviceType, backedUp, createdAt, ...Number.isSafeInteger(provisionalUntil) && Number.isSafeInteger(now) && provisionalUntil > now ? { provisionalUntil } : {} }));
 
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, organizationSignals, config }) {
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, organizationSignals, emailFlows, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
@@ -213,7 +225,7 @@ export class IdentityService {
     // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
     // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
     this.deviceRequests = this.linkedApprovals = linkedApprovals; this.linkedLimits = linkedLimits ?? new MemoryLinkedLimits(clock); this.linkedPollLimits = linkedPollLimits ?? new MemoryLinkedLimits(clock); this.approvalNotices = approvalNotices;
-    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;this.closure=closure;this.severConnections=severConnections;this.organizationSignals=organizationSignals;
+    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.emailFlows=emailFlows??new MemoryEmailFlows(clock);this.accountChannels=accountChannels;this.closure=closure;this.severConnections=severConnections;this.organizationSignals=organizationSignals;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
   }
@@ -307,7 +319,7 @@ export class IdentityService {
       // DX-7 closure-export: the credential was verified just now, so the session starts stepped up.
       ...scope==='closure-export'?{scope,stepUpAt:this.clock()}:{},
       // The sign-in email an email session proved (RM-3 needs it: an established sign-in email may undo what an email session added).
-      ...source==='email'&&typeof emailAddress==='string'?{emailAddress}:{},
+      ...(source==='email'||source==='email-cross-device')&&typeof emailAddress==='string'?{emailAddress}:{},
       hash: await this.crypto.hash('session', sessionToken), csrfToken, expiresAt, createdAt: this.clock(), lastUsedAt: this.clock() }];
     account.lastActiveAt = this.clock(); this.audit(account, 'session-created');
     return { account: await this.projectAccount(account), sessionToken, csrfToken, expiresAt, sessionContext:account.sessions.at(-1).id };
@@ -338,6 +350,8 @@ export class IdentityService {
   /** The restricted owner view for closure-export routes (export and deletion status only). */
   async closureOwner(context){const {account,session}=await this.authorized(context,false,{closure:true});if(session.scope!=='closure-export')fail('unauthorized','Sign in to continue.');const window=await this.closureWindow(account);return {account:{...await this.projectAccount(account),scope:'closure-export'},scope:'closure-export',closure:window,...window?.moved?{moved:{error:'identity_moved'}}:{},csrfToken:session.csrfToken,expiresAt:session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,sessionContext:await this.sessionID(session),credentials:[],devices:[],audit:[]};}
   requireCurrentTerms(account){if(account.termsVersion!==this.config.termsVersion)throw Object.assign(new IdentityFault('terms_acceptance_required','Accept the current terms before creating content or granting access.'),{status:403});}
+  /** LA-7 freshness (linked approval): like `authAt`, except that a passkey still provisional (N2) proves nothing. */
+  approvalAuthAt(account,session){const now=this.clock(),provisional=id=>account?.credentials?.some(c=>c.id===id&&Number.isSafeInteger(c.provisionalUntil)&&c.provisionalUntil>now);return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=now?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=now&&!provisional(session.credentialId)?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=now&&!(session.stepUpCredential?.kind==='passkey'&&provisional(session.stepUpCredential.id))?session.stepUpAt:-Infinity);}
   authAt(session){return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=this.clock()?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=this.clock()?session.stepUpAt:-Infinity);}
   /** Removes sessions and their transitive descendants. Removing a still-live session is an explicit termination
    * in every mode: approval lineage through it ends and its app families enter the revocation outbox in this same
@@ -361,7 +375,7 @@ export class IdentityService {
   /** SI-4 email step-up (spike §3.5): a session created by an email sign-in within the last 5 minutes, on an account
    * with no passkey. It counts only for the narrow list (adding a passkey, verifying an extra address, turning sign-in
    * on for another address); it never sets `stepUpAt`, so nothing else (LA-7, reissue, removals, deletion) sees it. */
-  emailStepUp(account,session){return account.credentials.length===0&&session.source==='email'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()&&session.createdAt+300000>this.clock()&&signInEmails(account).some(entry=>entry.address===session.emailAddress);}
+  emailStepUp(account,session,{crossDevice=false}={}){return account.credentials.length===0&&(session.source==='email'||crossDevice&&session.source==='email-cross-device')&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()&&session.createdAt+300000>this.clock()&&signInEmails(account).some(entry=>entry.address===session.emailAddress);}
   async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!account.credentials.length)return {passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {passkey:true,authenticationOptions};}
   async stepUp(input,context){
     const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!await this.rateLimiter.check({operation:'step-up',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
@@ -464,7 +478,7 @@ export class IdentityService {
   }
   async downloadRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
-    if (!account.credentials.length) fail('credential_required', 'Set up your passkey first.');
+    if (!account.credentials.length && !this.emailSignupReady(account)) fail('credential_required', 'Set up your passkey first.');
     // Downloads are budgeted: at most 5 per setup token and the network/per-account windows (wargame 2026-10-23).
     if(!Number.isSafeInteger(account.recoveryDownloads??0)||(account.recoveryDownloads??0)>=5)fail('rate_limited','Please wait before trying again.');
     if(!await this.rateLimiter.check({operation:'recovery-download',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
@@ -804,14 +818,18 @@ export class IdentityService {
   async confirmRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision,activationDeadline=account.pendingExpiresAt;
     if (input.downloadConfirmed !== true || !account.recoveryHash || typeof input.recoveryToken !== 'string' || !secureEqual(account.recoveryHash, await this.crypto.hash('recovery', input.recoveryToken))) fail('recovery_confirmation_required', 'Download and confirm your recovery file before continuing.');
-    if (!account.credentials.length) fail('credential_required');
+    if (!account.credentials.length && !this.emailSignupReady(account)) fail('credential_required');
     await this.requireSetupChannel(account);
     if(account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false){if(!this.setupBilling)fail('payment_required','Verify your paid subscription before activating this account.');const payment=await this.setupBilling.status(account.id,account.admission);if(payment?.paymentVerified!==true||payment.signupPlan!==account.admission.plan||payment.validUntil<=this.clock())fail('payment_required','Payment is still being verified. Recheck before activating your account.');account.admission.initialPaymentRequired=false;}
     if(account.systemIdentity)account.admission={...account.admission,initialSystemActivationRequired:false};
     const source=account.status==='recovering'?'recovery':'activation',activationCredentialAt=account.pendingCredentialAt;if(source==='recovery')raiseAuthorityEpoch(account,{reason:'recovery'});delete account.pendingCredentialAt;
+    // Email sign-up (spike §3.4 steps 5-6): the activation session is an email session (cross-device when the link was
+    // redeemed with a code, N2), and the queue gets the passkey suggestion while the account has no passkey.
+    const emailSignup=source==='activation'&&this.emailSignupReady(account)?{source:account.emailSignup.crossDevice===true?'email-cross-device':'email',emailAddress:signInEmails(account).find(entry=>entry.source==='signup-link').address}:null;
+    if(emailSignup&&!account.credentials.length)account.passkeySuggestion={admittedAt:this.clock()};delete account.emailSignup;
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
     delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid; delete account.recoveryResumeFileId;
-    this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
+    this.audit(account, 'account-activated'); const result = await this.session(account,emailSignup??{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
     await this.save(account, revision); if (account.pendingSever) await this.flushSever(account.id);
     // SI-8 (c): the console discards a held sign-in continuation after a recovery and resumes it after a sign-up.
     return { ...result, recovered: source === 'recovery' };
@@ -918,7 +936,7 @@ export class IdentityService {
     }
     // `securityEpoch` feeds the ORG-0 actor (packages/orgs/authority.mjs); the HTTP router strips it from /api/session.
     return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,securityEpoch:securityState(account).epoch,authorityEpoch:authorityEpoch(account),organizationVerification:organizationVerification(account,session),sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
-      credentials: publicCredentials(account),
+      credentials: publicCredentials(account, this.clock()),
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
         id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},
         lastUsedAt: s === session ? this.clock() : s.lastUsedAt || s.createdAt, expiresAt: s.expiresAt, current: s === session }))),
@@ -933,7 +951,9 @@ export class IdentityService {
   async passkeyAddAuthority(context) {
     const result = await this.authorized(context, true);
     if (this.authAt(result.session) + 900000 > this.clock()) return { ...result, via: this.sessionKind(result.session) };
-    if (this.emailStepUp(result.account, result.session)) return { ...result, via: 'email' };
+    // N2 (spike §8.4, recommendation): a session from the cross-device code path may add a passkey too, but that
+    // passkey is provisional for 24 hours (credentialFinish).
+    if (this.emailStepUp(result.account, result.session, { crossDevice: true })) return { ...result, via: result.session.source };
     fail('reauthentication_required', result.account.credentials.length ? 'Confirm with your passkey before changing account access.' : 'Sign in again with your sign-in email to add a passkey.');
   }
   async credentialBegin(input, context) {
@@ -952,7 +972,7 @@ export class IdentityService {
     const challenge = account.challenges.find(c => c.purpose === 'credential' && c.id === input.challengeId && c.expiresAt > now && secureEqual(c.sessionHash, session.hash));
     // A challenge begun under the SI-4 email step-up finishes within its own 5-minute lifetime while the account still has
     // no passkey and the session's sign-in email is still one; anything else needs the ordinary recent authentication.
-    const byEmail = challenge?.via === 'email' && account.credentials.length === 0 && session.source === 'email' && signInEmails(account).some(entry => entry.address === session.emailAddress);
+    const byEmail = ['email', 'email-cross-device'].includes(challenge?.via) && challenge.via === session.source && account.credentials.length === 0 && signInEmails(account).some(entry => entry.address === session.emailAddress);
     if (!byEmail && this.authAt(session) + 900000 <= now) fail('reauthentication_required', 'Confirm with your passkey before changing account access.');
     if (!challenge) fail('invalid_challenge');
     let credential;
@@ -960,16 +980,18 @@ export class IdentityService {
     if (!credential?.id || !credential.publicKey || account.credentials.length >= 5 || account.credentials.some(c => c.id === credential.id)) fail('invalid_passkey');
     // `addedBy` (spike §3.2, §6.4): the kind of session that added it; an email-added passkey also names the sign-in
     // email and session that added it, so RM-3 can undo it and the owner can see where it came from.
-    account.credentials.push({ ...credential, label: challenge.label, createdAt: now, addedBy: byEmail ? { session: 'email', at: now, emailAddress: session.emailAddress, sessionId: await this.sessionID(session) } : { session: this.sessionKind(session), at: now } });
+    // N2: a passkey added from an `email-cross-device` session is provisional for 24 hours: it signs in, but it cannot
+    // satisfy LA-7 (`approvalAuthAt`) or count as established (it is under 7 days old for the whole period anyway).
+    account.credentials.push({ ...credential, label: challenge.label, createdAt: now, addedBy: byEmail ? { session: session.source, at: now, emailAddress: session.emailAddress, sessionId: await this.sessionID(session) } : { session: this.sessionKind(session), at: now }, ...byEmail && session.source === 'email-cross-device' ? { provisionalUntil: now + PROVISIONAL_PASSKEY_MS } : {} });
     account.challenges = account.challenges.filter(c => c !== challenge); this.audit(account, byEmail ? 'passkey-added-by-email' : 'passkey-added'); this.securityChanged(account);
-    this.queueNotice(account, 'passkey-added', await this.sessionID(session)); await this.save(account, revision); return { credentials: publicCredentials(account) };
+    this.queueNotice(account, 'passkey-added', await this.sessionID(session)); await this.save(account, revision); return { credentials: publicCredentials(account, this.clock()) };
   }
   async renamePasskey(input, context) {
     const { account } = await this.recent(context); const revision = account.revision;
     const credential = account.credentials.find(c => c.id === input.credentialId);
     if (!credential) fail('not_found', 'Passkey not found.');
     credential.label = safeLabel(input.label, 'Passkey'); this.audit(account, 'passkey-renamed');
-    await this.save(account, revision); return { credentials: publicCredentials(account) };
+    await this.save(account, revision); return { credentials: publicCredentials(account, this.clock()) };
   }
   /** The removal process for a passkey (sign-in and intents spike §6.4, provisional; review 2026-10-29 M2), in the same
    * tiers as sign-in emails (`signInRemovalAuthority`):
@@ -991,7 +1013,7 @@ export class IdentityService {
     const others = account.credentials.filter(c => c.id !== target.id && established(c.createdAt));
     const stepped = session.stepUpCredential?.kind === 'passkey' && Number.isSafeInteger(session.stepUpAt) && session.stepUpAt <= now && session.stepUpAt + 300000 > now ? others.find(c => c.id === session.stepUpCredential.id) : null;
     if (stepped) return 'passkey';
-    if (['email', 'email-cross-device'].includes(target.addedBy?.session) && session.source === 'email' && Number.isSafeInteger(session.createdAt) && session.createdAt <= now && session.createdAt + 600000 > now && signInEmails(account).some(item => item.address === session.emailAddress && established(item.signInSince))) return 'email';
+    if (['email', 'email-cross-device'].includes(target.addedBy?.session) && ['email', 'email-cross-device'].includes(session.source) && Number.isSafeInteger(session.createdAt) && session.createdAt <= now && session.createdAt + 600000 > now && signInEmails(account).some(item => item.address === session.emailAddress && established(item.signInSince))) return 'email';
     if (others.length) fail('step_up_required', 'Confirm with a passkey you have had for at least 7 days to remove this recent passkey.');
     fail('removal_proof_required', 'Removing a recent passkey needs a passkey you have had for at least 7 days.', 403);
   }
@@ -1004,7 +1026,7 @@ export class IdentityService {
     await this.pruneSessions(account,s=>s.credentialId===input.credentialId);
     account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, authority === 'email' ? 'passkey-removed-by-email' : 'passkey-removed'); this.securityChanged(account);
     this.authorityEvent(account, 'passkey-removed'); this.queueNotice(account, 'passkey-removed', await this.sessionID(session));
-    await this.save(account, revision); return { removed: true, currentSessionRevoked: !account.sessions.includes(session), credentials: publicCredentials(account) };
+    await this.save(account, revision); return { removed: true, currentSessionRevoked: !account.sessions.includes(session), credentials: publicCredentials(account, this.clock()) };
   }
   async renameSession(input, context) {
     const {account}=await this.authorized(context,true);const revision=account.revision;
@@ -1052,10 +1074,10 @@ export class IdentityService {
   async cancelDeviceLogin(input, context) { return this.deviceFlow().cancel(input, context); }
   /** The kind of authority `session` holds right now, for `addedBy` (spike §3.2, §6.4): 'passkey' when a passkey
    * signed it in or stepped it up, 'email' for an email-sign-in session, otherwise the session's own source. */
-  sessionKind(session){return session.stepUpCredential?.kind==='passkey'||typeof session.credentialId==='string'?'passkey':session.source==='email'?'email':session.source==='activation'?'setup':session.source??'unknown';}
+  sessionKind(session){return session.stepUpCredential?.kind==='passkey'||typeof session.credentialId==='string'?'passkey':session.source==='email'||session.source==='email-cross-device'?session.source:session.source==='activation'?'setup':session.source??'unknown';}
   /** Recent authentication for adding or verifying an address: a passkey sign-in or step-up within 15 minutes, or (SI-4)
    * an email-sign-in session within 15 minutes on an account that has no passkey. */
-  recentForEmail(account,session){const now=this.clock();if(this.authAt(session)+900000>now)return;if(account.credentials.length===0&&session.source==='email'&&Number.isSafeInteger(session.createdAt)&&session.createdAt+900000>now)return;fail('reauthentication_required','Confirm with your passkey before changing your email addresses.');}
+  recentForEmail(account,session){const now=this.clock();if(this.authAt(session)+900000>now)return;if(account.credentials.length===0&&(session.source==='email'||session.source==='email-cross-device')&&Number.isSafeInteger(session.createdAt)&&session.createdAt+900000>now)return;fail('reauthentication_required','Confirm with your passkey before changing your email addresses.');}
   /** Adds an address as `unverified` (or re-sends the link for the unverified one) and mails a session-bound link.
    * Uniform answer (no enumeration): an address another account already verified gets the same response and an entry
    * that can never verify; no mail goes to it. The mail is sent in the background so latency does not depend on it. An
@@ -1109,6 +1131,8 @@ export class IdentityService {
    * depend on the address, and provider errors never reach the caller. Only a sign-in email of an active account gets a
    * link; the challenge binds (address, signInSince), so turning sign-in off and on again invalidates it. */
   async emailLoginStart(input, context) {
+    // The bearer link (it signs in wherever it is opened) never coexists with the cross-device protocol (spike §8.2 P3).
+    if (this.emailFlowEnabled()) fail('not_found', 'Use Continue with email.', 404);
     if (!this.mailer || typeof this.repository.findByEmail !== 'function') fail('email_unavailable', 'Email delivery is not configured.');
     await this.guard('email', input, context); const email = emailAddress(input.email);
     if (!await this.rateLimiter.check({ phase: 'mailbox', operation: 'email-login', remoteIP: context.remoteIP, region: context.region, handle: `mailbox\0${email}` })) fail('rate_limited', 'Please wait before trying again.');
@@ -1127,7 +1151,7 @@ export class IdentityService {
     return { sent: true };
   }
   async emailLoginConfirm(input, context) {
-    this.origin(context); const [id] = tokenParts(input.token); const account = await this.repository.get(id);
+    this.origin(context); if (this.emailFlowEnabled()) fail('unauthorized', 'Email login failed.'); const [id] = tokenParts(input.token); const account = await this.repository.get(id);
     if (input.confirmed !== true) fail('confirmation_required');
     const hash = await this.crypto.hash('email', input.token);
     const challenge = account?.emailChallenges?.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
@@ -1135,6 +1159,74 @@ export class IdentityService {
     if (!account || account.status !== 'active' || !challenge || !entry || challenge.signInSince !== entry.signInSince) fail('unauthorized', 'Email login failed.');
     const revision = account.revision; account.emailChallenges = account.emailChallenges.filter(c => c !== challenge);
     this.interactive(account,'sign-in',context); const result = await this.session(account,{source:'email',emailAddress:entry.address}); await this.save(account, revision); return result;
+  }
+
+  // ---- Cross-device email flow and email sign-up (spike §3.4, §3.6, §4; P3; behind EMAIL_FLOW_V2 / EMAIL_SIGNUP_ENABLED).
+  // The state machine is packages/identity/email-flow.mjs; these are its engine entry points.
+  /** A global flag through the flags port; any failure is "off". */
+  flagOn(name){try{const port=typeof this.flags==='function'?this.flags():this.flags;return port?.for({}).enabled(name)===true;}catch{return false;}}
+  emailFlowEnabled(){return this.flagOn('EMAIL_FLOW_V2');}
+  emailSignupEnabled(){return this.emailFlowEnabled()&&this.flagOn('EMAIL_SIGNUP_ENABLED');}
+  emailFlow(){return this.emailFlowEngine??=new EmailFlow(this,IdentityFault);}
+  canonicalEmail(value){return emailAddress(value);}
+  securityEpoch(account){return securityState(account).epoch;}
+  /** A sign-up nobody finished: a pending (never recovering) record whose setup window has passed. Its address claim
+   * may be released for a new email sign-up. */
+  abandonedSignup(account){return account?.status==='pending'&&Number.isSafeInteger(account.pendingExpiresAt)&&account.pendingExpiresAt<=this.clock();}
+  async emailFlowStart(input,context){return this.emailFlow().start(input,context);}
+  async emailFlowStatus(input,context){return this.emailFlow().status(input,context);}
+  async emailFlowRedeem(input,context){return this.emailFlow().redeem(input,context);}
+  async emailFlowCancel(input,context){return this.emailFlow().cancel(input,context);}
+  async emailFlowResend(input,context){return this.emailFlow().resend(input,context);}
+  async emailLinkInspect(input,context){return this.emailFlow().inspect(input,context);}
+  async emailLinkApprove(input,context){return this.emailFlow().approve(input,context);}
+  async emailLinkReveal(input,context){return this.emailFlow().reveal(input,context);}
+  async emailLinkCancel(input,context){return this.emailFlow().cancelLink(input,context);}
+  async emailLinkStatus(input,context){return this.emailFlow().linkStatus(input,context);}
+  async emailLinkCompleteHere(input,context){return this.emailFlow().completeHere(input,context);}
+  /** Removes `address` from an abandoned sign-up record (its claim no longer protects anyone), by CAS. */
+  async releaseAbandonedEmail(holder,address){
+    for(let attempt=0;attempt<3;attempt++){const fresh=attempt?await this.repository.get(holder.id):holder;if(!fresh||!this.abandonedSignup(fresh))fail('email_already_linked','This address now belongs to an account. Sign in with it instead.',409);const revision=fresh.revision;migrateEmails(fresh,this.clock());fresh.emails=(fresh.emails??[]).filter(entry=>entry.address!==address);fresh.revision=revision+1;if(await this.repository.compareAndSwap(fresh.id,revision,fresh))return;}
+    fail('conflict','The account changed; start this step again.');
+  }
+  /** Email sign-up confirmation on the original tab (spike §3.4 step 3): the redeemed create-account link's binding,
+   * the current terms and the age attestation. One repository create allocates the `n.` handle, creates the account as
+   * `pending` and claims the address as a sign-in email (the link was the verification). No passkey step (owner decision
+   * 2026-10-28): the recovery file is the only setup step before activation (Q2). A concurrent claim fails; nothing merges. */
+  async emailSignupConfirm(input,context){
+    this.origin(context);const flows=this.emailFlow();flows.enabled();if(!this.emailSignupEnabled())fail('not_found','Email sign-up is not available.',404);
+    if(!input||typeof input!=='object')fail('invalid_request','Confirm the terms to create your account.');
+    if(input.termsAccepted!==true||input.termsVersion!==this.config.termsVersion)fail('terms_required','Agree to the current account terms.');
+    const signupPlan=input.signupPlan??'free';if(!['free','paid','plus','ultra'].includes(signupPlan))fail('invalid_plan','Choose a supported signup plan.');const age=this.ageAttestation(input,context,{paid:signupPlan!=='free'});
+    if(signupPlan!=='free'&&(this.config.paidSignupEnabled!==true||!this.setupBilling))throw Object.assign(new IdentityFault('paid_signup_unavailable','Paid signup is not available.'),{status:503});
+    const flow=await flows.signupFlow(input.signupToken),address=flow.address;
+    const holder=await this.repository.findByEmail(address);
+    if(holder&&!this.abandonedSignup(holder))fail('email_already_linked','This address now belongs to an account. Sign in with it instead.',409);
+    const id=this.crypto.id(),assignmentId=this.crypto.id();
+    if(!await this.rateLimiter.check({phase:'admitted',operation:'signup',signupKind:signupPlan==='free'?'free':'paid',remoteIP:context.remoteIP,region:context.region,handle:flow.flowId,admissionId:id}))fail('rate_limited','Account creation is limited for this network or region. Please try again in a few hours.');
+    await flows.useSignup(flow);
+    if(holder)await this.releaseAbandonedEmail(holder,address);
+    const allocatedHandle=this.repository.allocateFreeHandle?await this.repository.allocateFreeHandle(undefined,id,assignmentId):handle(input.handle),now=this.clock();
+    const account={id,assignmentId,nameAssignmentId:assignmentId,revision:0,handle:allocatedHandle,status:'pending',
+      admission:{version:1,kind:signupPlan==='free'?'free':'paid',plan:signupPlan,...signupPlan==='free'?{}:{incarnation:this.crypto.id(),checkoutStartUntil:now+86400000,initialPaymentRequired:true}},
+      createdAt:now,lastActiveAt:now,termsVersion:this.config.termsVersion,termsAcceptedAt:now,...age,security:{epoch:0,changedAt:now},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,
+      emails:[{address,state:'sign-in',verifiedAt:now,signInSince:now,notices:true,source:'signup-link',addedBy:{session:'signup',at:now}}],
+      emailSignup:{crossDevice:flow.redeemedVia==='code',at:now}};
+    if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
+    const pendingToken=await this.newPending(account,context);
+    this.audit(account,'signup-pending-email');
+    if(!await this.repository.create(account))fail('email_already_linked','This address now belongs to an account. Sign in with it instead.',409);
+    return {pendingToken,account:await this.projectAccount(account),readyForRecovery:true,credentialRequired:false,emailSignup:true,signupPlan,paymentRequired:signupPlan!=='free'};
+  }
+  /** A pending email sign-up whose sign-in email is its method: it may issue and confirm the recovery file without a
+   * passkey (owner decision 2026-10-28). */
+  emailSignupReady(account){return account?.status==='pending'&&Boolean(account.emailSignup)&&signInEmails(account).some(entry=>entry.source==='signup-link');}
+  /** Dismisses a host system item (the passkey suggestion) until it repeats. */
+  async dismissHostItem(input,context){
+    const {account}=await this.authorized(context,true),revision=account.revision;
+    if(!input||input.id!=='passkey-suggestion'||Object.keys(input).length!==1)fail('invalid_request','Choose an item to dismiss.');
+    if(!hostItems(account,this.clock()).length)return {account:await this.projectAccount(account)};
+    account.passkeySuggestion={...account.passkeySuggestion,dismissedAt:this.clock()};await this.save(account,revision);return {account:await this.projectAccount(account)};
   }
   /** The address an owner request names: `address` (or the legacy `expectedEmail`), else the notice address. */
   requestedEmail(account,input,now){const named=input?.address??input?.expectedEmail;const address=named===undefined?noticeEmail(account):typeof named==='string'?named:null;const entry=address?emailEntry(account,address,now):null;if(!entry)fail('email_not_linked','This address is not on your account.',409);return entry;}
@@ -1151,14 +1243,14 @@ export class IdentityService {
     if(established(entry.signInSince))fail('removal_unavailable','Turning off an established sign-in email needs your recovery file and a waiting period. This is not available yet.',409);
     const passkey=session.stepUpCredential?.kind==='passkey'&&Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=now&&session.stepUpAt+300000>now?account.credentials.find(c=>c.id===session.stepUpCredential.id):null;
     if(passkey&&established(passkey.createdAt))return 'passkey';
-    if(entry.addedBy?.session==='email'&&session.source==='email'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=now&&session.createdAt+600000>now&&session.emailAddress!==entry.address&&signInEmails(account).some(item=>item.address===session.emailAddress&&established(item.signInSince)))return 'email';
+    if(['email','email-cross-device'].includes(entry.addedBy?.session)&&['email','email-cross-device'].includes(session.source)&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=now&&session.createdAt+600000>now&&session.emailAddress!==entry.address&&signInEmails(account).some(item=>item.address===session.emailAddress&&established(item.signInSince)))return 'email';
     fail('removal_proof_required','Confirm with a passkey you have had for at least 7 days to undo this recent change.',403);
   }
   /** RM-9 effects of removing a sign-in method that was `entry`, in the caller's CAS: email-login challenges for it end,
    * sessions that signed in with it end, the security epoch rises (caller), and a notice goes to every channel. */
   async endSignInEmail(account,session,entry){
     account.emailChallenges=(account.emailChallenges??[]).filter(c=>!(c.purpose==='login'&&c.email===entry.address));
-    await this.pruneSessions(account,s=>s.source==='email'&&s.emailAddress===entry.address);
+    await this.pruneSessions(account,s=>(s.source==='email'||s.source==='email-cross-device')&&s.emailAddress===entry.address);
     this.authorityEvent(account,'email-changed');this.queueNotice(account,'email-sign-in-removed',await this.sessionID(session));
   }
   /** Turns sign-in on for a verified address (`verified → sign-in`, SI-3) or off (`sign-in → verified`, the removal
@@ -1176,7 +1268,8 @@ export class IdentityService {
     const target = account.emails.find(item => item.address === entry.address && item.state !== 'unverified');
     if (input.enabled) {
       const passkey = session.stepUpCredential?.kind === 'passkey' && Number.isSafeInteger(session.stepUpAt) && session.stepUpAt <= now && session.stepUpAt + 300000 > now && account.credentials.some(c => c.id === session.stepUpCredential.id);
-      if (!passkey && !this.emailStepUp(account, session)) fail('step_up_required', account.credentials.length ? 'Confirm with your passkey to turn on email sign-in.' : 'Sign in again with one of your sign-in emails to turn on another one.');
+      // N2: never from a session the cross-device code path created.
+      if (!passkey && !this.emailStepUp(account, session)) fail('step_up_required', account.credentials.length ? 'Confirm with your passkey to turn on email sign-in.' : session.source === 'email-cross-device' ? 'A sign-in completed with a code from another device cannot turn on another sign-in email. Open the email link on this device, or add a passkey first.' : 'Sign in again with one of your sign-in emails to turn on another one.');
       target.state = 'sign-in'; target.signInSince = now; target.addedBy = { session: passkey ? 'passkey' : 'email', at: now };
       this.queueNotice(account, 'email-sign-in-enabled', await this.sessionID(session));
     } else {

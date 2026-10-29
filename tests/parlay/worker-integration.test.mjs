@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {rpcHeaders,encodeRPC,rpcBody,RPC_MEDIA_TYPE} from '../helpers/rpc.mjs';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createTestEngine,memoryStore} from './helpers/engine.mjs';
@@ -82,13 +83,15 @@ test('BB-B8 authenticated SETs are idempotent, keep generation floors monotonic 
 });
 
 test('BB-B8 integration HTTP never accepts a body-supplied verifier, and translates authenticated RPC/SET to dispatch',async()=>{
- const calls=[],http=createHTTP({PARLAY_ENABLED:true,mailbox:async()=>({run:async(...args)=>{calls.push(args);return {accepted:true};}}),services:{verifyIntegration:async()=>verified,verifyEvent:async()=>event('unknown',{})}}),headers={'Content-Type':'application/json',Authorization:'Bearer broker-test'};
- const request=B.rpcRequest({resource,contract:B.MAILBOX_CONTRACT,method:'describe',args:{},tx:crypto.randomUUID()}),response=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(request)}));assert.equal(response.status,200);assert.equal(calls[0][1],'shell.describe');assert.deepEqual(calls[0][2].input.verified,verified);
+ const calls=[],http=createHTTP({PARLAY_ENABLED:true,mailbox:async()=>({run:async(...args)=>{calls.push(args);return {accepted:true};}}),services:{verifyIntegration:async()=>verified,verifyEvent:async()=>event('unknown',{})}}),headers=rpcHeaders({Authorization:'Bearer broker-test'});
+ const request=B.rpcRequest({resource,contract:B.MAILBOX_CONTRACT,method:'describe',args:{},tx:crypto.randomUUID()}),response=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:encodeRPC(request)}));assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),RPC_MEDIA_TYPE);assert.deepEqual(await rpcBody(response),{version:'0',tx:request.tx,result:{accepted:true}});
+ // JSON is refused with 415 (CBOR body) before verification or dispatch: brokered RPC has no dual stack.
+ {const before=calls.length,json=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer broker-test'},body:JSON.stringify(request)}));assert.equal(json.status,415);assert.equal((await rpcBody(json)).error,'unsupported_media_type');assert.equal(calls.length,before);}assert.equal(calls[0][1],'shell.describe');assert.deepEqual(calls[0][2].input.verified,verified);
  assert.equal((await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'signed-test-token'}))).status,202);assert.equal(calls.at(-1)[1],'shell.integration-event');
  // The retired public-intake contract is refused in the RPC error envelope before verification or any mailbox dispatch.
- const before=calls.length,retired=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(B.rpcRequest({resource,contract:RETIRED_INTAKE,method:'deliver',args:{message:{parts:[]},provenance:'a.b.c'},tx:crypto.randomUUID()}))}));
- assert.equal(retired.status,200);assert.deepEqual(await retired.json(),{version:'0',error:{code:'unsupported_contract'}});assert.equal(calls.length,before);
- const closed=createHTTP({PARLAY_ENABLED:true});assert.equal((await closed(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(request)}))).status,503);
+ const before=calls.length,retired=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:encodeRPC(B.rpcRequest({resource,contract:RETIRED_INTAKE,method:'deliver',args:{message:{parts:[]},provenance:'a.b.c'},tx:crypto.randomUUID()}))}));
+ assert.equal(retired.status,200);assert.deepEqual(await rpcBody(retired),{version:'0',error:{code:'unsupported_contract'}});assert.equal(calls.length,before);
+ const closed=createHTTP({PARLAY_ENABLED:true});{const unavailable=await closed(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:encodeRPC(request)}));assert.equal(unavailable.status,503);assert.equal((await rpcBody(unavailable)).error,'recipient_unavailable');}
 });
 
 test('AU-S5 verified subject-deleted clears every hot key, pending obligation and alarm silently',async t=>{

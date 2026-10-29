@@ -17,7 +17,12 @@ import {flagsFor,siteGlobal} from '../flags/read.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {validateSchema,fail} from '../federation/schema.mjs';
 import {validateBusManifest} from '../federation/event-buses.mjs';
-export const ARTEFACT_STORE='bindle-artefacts-v1';
+// CBOR in-place artefact rewrite reset (2026-10-29): object-storage/v1, app-messages/v1, preferences/v2, signaling/v1,
+// item-classification/v1 and automation/v1 were rewritten in place at version 1 (pre-release rule). A store that had
+// observed the old version-1 record would answer `artefact_history_rewritten` for the line forever, so the store moves
+// to a fresh name (Worker: a new Durable Object; Node: a new SQLite file). O(1), idempotent; the old store is abandoned
+// unread. Grants or requests that still pin an old digest fail closed (`artefact_digest_mismatch`) until re-consent.
+export const ARTEFACT_STORE='bindle-artefacts-v2',ARTEFACT_STORE_FILE='artefacts-v2.sqlite';
 // Messaging-published intent kinds this provider ships as operator-reviewed documents (contacts spike §4.2, CL-11,
 // CR-C3, contacts phase 4; provisional, unsigned). Kinds stay public URL-identified artefacts: the intents code hard-codes
 // none, and these are ordinary operator registrations, pinned only while INTENT_LINKS_ENABLED (the intent router is their

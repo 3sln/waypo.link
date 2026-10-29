@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spec.bindle.example/contracts/item-classification/v1",
   "title": "Item classification v1",
-  "description": "The item-classification/v1 contract of docs/spec/extensions/item-classification.md (draft, provisional, unsigned). `capabilities` reports which kinds of items a classifier accepts; `classify` scores one item, given inline as base64url or as a presigned HTTPS URL the classifier fetches, against labels the caller supplies with every call, under the detail level the owner allows. The classifier hard-codes no categories. Validates the contract method/args projection of a Bindle RPC envelope; a classifier applies every rule of the specification (decoded size, UTF-8 text, presigned-URL and fetch rules, detail/tag consistency, one score per supplied label, no retention).",
+  "description": "The item-classification/v1 contract of docs/spec/extensions/item-classification.md (draft, provisional, unsigned). `capabilities` reports which kinds of items a classifier accepts; `classify` scores one item, given inline as bytes (a CBOR byte string) or as a presigned HTTPS URL the classifier fetches, against labels the caller supplies with every call, under the detail level the owner allows. The classifier hard-codes no categories. Validates the contract method/args projection of a Bindle RPC envelope; a classifier applies every rule of the specification (size, UTF-8 text, presigned-URL and fetch rules, detail/tag consistency, one score per supplied label, no retention).",
   "oneOf": [
     {
       "type": "object",
@@ -69,10 +69,9 @@
           "maximum": 262144
         },
         "data": {
-          "type": "string",
-          "maxLength": 349526,
-          "pattern": "^[A-Za-z0-9_-]*$",
-          "description": "The item's bytes, exactly `size` of them. This schema validates the JSON transport, where they are unpadded base64url; under the planned CBOR transport they are a native byte string with the same bound."
+          "x-type": "bytes",
+          "maxLength": 262144,
+          "description": "The item's bytes, exactly `size` of them, as a CBOR byte string."
         }
       },
       "additionalProperties": false
@@ -120,7 +119,8 @@
             },
             "expiresAt": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "additionalProperties": false

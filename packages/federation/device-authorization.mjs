@@ -1,3 +1,4 @@
+import {rpcEnvelope} from '../core/rpc-wire.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // Federation half of the device authorization grant (docs/spec/device-authorization.md, `device-authorization.v1`;
 // docs/architecture/linked-approval.md slice LA2). The identity half is the LA1 linked-approval core, reached only
@@ -235,6 +236,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    * envelope, origin?}. Checks the proof (ath, iat window, jti), the token's key, then the approval lineage, before
    * the owner shard's own live token, grant, account and connection checks. */
   async rpc({authorization,dpop,envelope,origin,busWaits=false,busResume,checkOnly=false,memberOnly=false}={}){
+   envelope=rpcEnvelope(envelope);// the route passes the received CBOR bytes across the isolate hop (spike §2.6)
    const token=typeof authorization==='string'&&authorization.startsWith('DPoP ')?authorization.slice(5):'',owner=OWNER_TOKEN.exec(token)?.[1];if(!owner)fault('unauthorized','A DPoP access token is required.');
    if(typeof dpop!=='string'||!dpop||dpop.includes(',')||dpop.length>4096)fault('unauthorized','A DPoP proof is required.');
    let proof;try{proof=await verifyProof(crypto,dpop,{typ:DPOP_TYP,htm:'POST',htu:`${issuer}/bindle/rpc`,now:clock(),ath:token,nonce:value=>value===undefined?null:nonces.check('rpc',value)});}catch(error){fault(error?.code==='use_dpop_nonce'?'use_dpop_nonce':'unauthorized','A valid DPoP proof is required.');}

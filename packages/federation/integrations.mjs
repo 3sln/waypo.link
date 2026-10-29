@@ -14,6 +14,7 @@ import {siteGlobal} from '../flags/read.mjs';
 import {parseReference,versionDigest} from '../core/artefacts.mjs';
 import {AppQuery} from '../app/engine.mjs';
 import {fail,object} from './schema.mjs';
+import {X_KEYWORDS,sameContractValue,checkCBORKeywords,typeMatches,xTypeMatches,tableMatches,numericMatches} from './contract-values.mjs';
 export const INTEGRATIONS_FEATURE='integrations.v1';
 export const PREFERENCES_UPDATED_EVENT='https://spec.bindle.example/events/preferences-updated/v1';
 export const INTEGRATION_LIMITS=Object.freeze({manifestBytes:8192,fragments:8,fields:32,methods:32,contracts:32,events:16,keys:16,urlLength:2048,idLength:256});
@@ -287,19 +288,22 @@ export function shapeContractResult(root,method,value,{check=null}={}){
  * coercion, defaults, remote references or mutable compilation cache. The caller keys each instance by record digest. */
 export function compileContractVersion(root){
  const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions','x-permissions','x-status']);
- const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not','dependentRequired']);
+ // CBOR phase 6 keywords (spike §2.5): x-type, x-element, x-shape, x-table, x-minimum, x-maximum (contract-values.mjs).
+ const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not','dependentRequired',...X_KEYWORDS]);
  const reference=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');const s=ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);if(s===undefined)fail('artefact_unverifiable');return s;};
- const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ // const/enum/uniqueItems compare by deterministic CBOR encoding, never JSON.stringify (spike §2.5, §6 item 3).
+ const same=sameContractValue;
  const check=(s,v,depth=0)=>{
   if(depth>64)fail('artefact_unverifiable');if(typeof s==='boolean')return s;if(!object(s))fail('artefact_unverifiable');
   // RTC-i: contract-level `x-bindle-brokerable` (contracts "Contract method metadata") is an annotation of the root
   // only, and only a boolean; brokered registration is decided by the brokered contract pins, never by this compiler.
   for(const k of Object.keys(s))if(!annotations.has(k)&&!supported.has(k)&&!(k==='x-bindle-brokerable'&&s===root&&typeof s[k]==='boolean'))fail('artefact_unverifiable');
+  checkCBORKeywords(s);
   if(s.$ref!==undefined&&!check(reference(s.$ref),v,depth+1))return false;
   if(s.const!==undefined&&!same(s.const,v)||s.enum&&!s.enum.some(x=>same(x,v)))return false;
   const types=Array.isArray(s.type)?s.type:s.type?[s.type]:[];
-  const matches=t=>t==='null'?v===null:t==='array'?Array.isArray(v):t==='object'?object(v)&&!Array.isArray(v):t==='integer'?Number.isSafeInteger(v):t==='number'?typeof v==='number'&&Number.isFinite(v):typeof v===t;
-  if(types.length&&!types.some(matches))return false;
+  if(types.length&&!types.some(t=>typeMatches(t,v)))return false;
+  if(!xTypeMatches(s,v)||!tableMatches(s,v,(schema,value)=>check(schema,value,depth+1)))return false;
   if(s.oneOf&&s.oneOf.filter(x=>check(x,v,depth+1)).length!==1||s.anyOf&&!s.anyOf.some(x=>check(x,v,depth+1))||s.allOf&&!s.allOf.every(x=>check(x,v,depth+1))||s.not&&check(s.not,v,depth+1))return false;
   if(typeof v==='string'){
    if(s.minLength!==undefined&&[...v].length<s.minLength||s.maxLength!==undefined&&[...v].length>s.maxLength||s.pattern!==undefined&&!new RegExp(s.pattern,'u').test(v))return false;
@@ -309,7 +313,7 @@ export function compileContractVersion(root){
     else fail('artefact_unverifiable');
    }
   }
-  if(typeof v==='number')for(const [k,ok] of [['minimum',v>=s.minimum],['maximum',v<=s.maximum],['exclusiveMinimum',v>s.exclusiveMinimum],['exclusiveMaximum',v<s.exclusiveMaximum],['multipleOf',Number.isInteger(v/s.multipleOf)]])if(s[k]!==undefined&&!ok)return false;
+  if(!numericMatches(s,v))return false;
   if(Array.isArray(v)){
    if(s.minItems!==undefined&&v.length<s.minItems||s.maxItems!==undefined&&v.length>s.maxItems||s.uniqueItems&&v.some((x,i)=>v.slice(0,i).some(y=>same(x,y))))return false;
    for(const [i,x] of v.entries()){const item=s.prefixItems?.[i]??s.items;if(item!==undefined&&!check(item,x,depth+1))return false;}

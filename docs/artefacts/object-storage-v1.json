@@ -102,7 +102,8 @@
         },
         "size": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "contentType": {
           "type": "string"
@@ -141,11 +142,13 @@
           "properties": {
             "start": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 9007199254740991
             },
             "end": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -168,9 +171,9 @@
           "minLength": 1,
           "maxLength": 1024
         },
-        "dataBase64": {
-          "type": "string",
-          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        "data": {
+          "x-type": "bytes",
+          "maxLength": 1048576
         },
         "condition": {
           "oneOf": [
@@ -207,7 +210,7 @@
       },
       "required": [
         "key",
-        "dataBase64",
+        "data",
         "condition"
       ],
       "additionalProperties": false
@@ -294,11 +297,13 @@
           "properties": {
             "start": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 9007199254740991
             },
             "end": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -406,7 +411,8 @@
         },
         "maxObjectBytes": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "namespace": {
           "type": "string"
@@ -430,11 +436,13 @@
         },
         "maxObjects": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "retainedVersionLimit": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -450,15 +458,16 @@
     "getResult": {
       "type": "object",
       "properties": {
-        "dataBase64": {
-          "type": "string"
+        "data": {
+          "x-type": "bytes",
+          "maxLength": 1048576
         },
         "object": {
           "$ref": "#/$defs/ObjectMetadata"
         }
       },
       "required": [
-        "dataBase64",
+        "data",
         "object"
       ],
       "additionalProperties": false
@@ -506,7 +515,9 @@
           ]
         },
         "expiresAt": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "revocation": {
           "enum": [

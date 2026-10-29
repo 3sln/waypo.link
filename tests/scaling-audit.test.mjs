@@ -131,13 +131,13 @@ test('audit: Node metadata commit failure rolls back SQL index and usage, then r
 test('audit: actual hosted objects share inbox quota and preserve reads/shrinks/deletes after downgrade',async()=>{
   const f=await controllerFixture();try{
     const resource=await f.invoke('addResource',{provider:'hosted',name:'Audit storage'}),call=(method,args)=>f.controller.hostedOperation(resource,method,args);
-    const created=await call('put',{key:'📁/one',dataBase64:Buffer.from('one').toString('base64'),condition:{absent:true}});assert.equal(f.checks.length,1);
+    const created=await call('put',{key:'📁/one',data:new TextEncoder().encode('one'),condition:{absent:true}});assert.equal(f.checks.length,1);
     const disconnect=await f.controller.invoke({method:'deleteResource',args:[owner,resource.id]});assert.equal(disconnect.$fault?.code,'resource_not_empty');assert(await f.metadata.get('resource/'+resource.id));
     await f.metadata.put(key('app-message-usage',owner),{bytes:500000000,messages:1});
     assert.equal((await f.controller.storageUsage(owner)).overLimit,true);
-    const before=f.checks.length;await assert.rejects(call('put',{key:'two',dataBase64:'eA==',condition:{absent:true}}),{code:'account_quota_exceeded'});assert.equal(f.checks.length,before,'over-quota growth must be refused before upload');
-    assert.equal(Buffer.from((await call('get',{key:'📁/one'})).dataBase64,'base64').toString(),'one');
-    const shrunk=await call('put',{key:'📁/one',dataBase64:'eA==',condition:{version:created.object.version}});assert.equal(shrunk.object.size,1);assert.equal((await f.controller.storageUsage(owner)).usedBytes,500000001);
+    const before=f.checks.length;await assert.rejects(call('put',{key:'two',data:new Uint8Array([120]),condition:{absent:true}}),{code:'account_quota_exceeded'});assert.equal(f.checks.length,before,'over-quota growth must be refused before upload');
+    assert.equal(Buffer.from((await call('get',{key:'📁/one'})).data).toString(),'one');
+    const shrunk=await call('put',{key:'📁/one',data:new Uint8Array([120]),condition:{version:created.object.version}});assert.equal(shrunk.object.size,1);assert.equal((await f.controller.storageUsage(owner)).usedBytes,500000001);
     await assert.rejects(call('list',{prefix:'📁/'}),{code:'unsupported_method'});
     await call('delete',{key:'📁/one',version:shrunk.object.version});assert.equal((await f.controller.storageUsage(owner)).usedBytes,500000000);await assert.rejects(call('get',{key:'📁/one'}),{code:'not_found'});
     await f.invoke('deleteResource',resource.id);assert.equal(await f.metadata.get('resource/'+resource.id),undefined);
@@ -146,7 +146,7 @@ test('audit: actual hosted objects share inbox quota and preserve reads/shrinks/
 test('audit: hosted object post-index failure rolls metadata, SQL and quota back and removes orphan',async()=>{
   const f=await controllerFixture();try{
     const resource=await f.invoke('addResource',{provider:'hosted',name:'Audit storage'}),commit=f.controller.quota.commit.bind(f.controller.quota);f.controller.quota.commit=async(...args)=>{await commit(...args);throw new Error('injected hosted transaction failure');};
-    await assert.rejects(f.controller.hostedOperation(resource,'put',{key:'object',dataBase64:'eA==',condition:{absent:true}}),/injected hosted transaction failure/);
+    await assert.rejects(f.controller.hostedOperation(resource,'put',{key:'object',data:new Uint8Array([120]),condition:{absent:true}}),/injected hosted transaction failure/);
     assert.equal(f.checks.length,1);assert.equal(f.stored.size,0);assert.equal(f.deleted.length,1);assert.equal((await f.controller.storageUsage(owner)).usedBytes,0);assert.equal((await f.controller.storageUsage(owner)).reservedBytes,0);
     assert.equal(f.controller.itemIndex.objectPage(resource.id).objects.length,0);assert.equal((await f.metadata.list({prefix:'hosted/'})).size,0);
   }finally{f.close();}
@@ -171,11 +171,11 @@ test('audit: large-account alarms use bounded metadata pages and retain content 
 test('audit: committed blob garbage retries fairly and cannot delete a current hosted replacement',async()=>{
   const f=await controllerFixture();try{
     const resource=await f.invoke('addResource',{provider:'hosted',name:'Garbage audit'}),call=(method,args)=>f.controller.hostedOperation(resource,method,args);
-    const first=await call('put',{key:'item',dataBase64:'eA==',condition:{absent:true}}),replacement=await call('put',{key:'item',dataBase64:'eQ==',condition:{version:first.object.version}});
+    const first=await call('put',{key:'item',data:new Uint8Array([120]),condition:{absent:true}}),replacement=await call('put',{key:'item',data:new Uint8Array([121]),condition:{version:first.object.version}});
     const current=await f.metadata.get(`hosted/${resource.id}/${encodeURIComponent('item')}`),old=[...f.stored.keys()].find(ref=>ref!==current.blobRef);assert(old);assert.equal(f.stored.size,2);
     const deletion=f.controller.blobs.delete;f.controller.blobs.delete=async()=>{throw new Error('bucket outage');};await f.controller.collectBlobGarbage();assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,1);assert.equal(f.stored.size,2);
     f.controller.blobs.delete=deletion;const retry=await f.metadata.get('storage/garbage-retry');await f.metadata.put('storage/garbage-retry',{...retry,retryAt:0});await f.controller.collectBlobGarbage();assert.equal(f.stored.size,1);assert(f.stored.has(current.blobRef));assert(!f.stored.has(old));assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,0);
-    assert.equal((await call('get',{key:'item',ifVersion:replacement.object.version})).dataBase64,'eQ==');
+    assert.deepEqual((await call('get',{key:'item',ifVersion:replacement.object.version})).data,new Uint8Array([121]));
   }finally{f.close();}
 });
 test('audit: HTTP webhook validates exact raw signature before identity lookup or account allocation',async()=>{

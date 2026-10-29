@@ -87,6 +87,13 @@ const rows=[
  // Kill switch for the signaling declaration, outbound foreign delivery and the /bindle/signaling endpoint (uniform 404
  // when off). Local narrowing and control statements to already-held sessions are never gated (§9.3).
  ['SIGNALING_FOREIGN_ENABLED','a','G A',{risk:'crit',requires:['SIGNALING_ENABLED','DIRECTORY_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider signaling stops at once; same-provider sessions and local narrowing are unaffected.',envParse:'boolean'}],
+ // Sign-in and intents spike P3 (§3.4, §3.6, §4; provisional, unsigned protocol; direction owner-approved 2026-10-28).
+ // EMAIL_FLOW_V2 gates the cross-device email sign-in link ("Continue with email", helper page, same-browser approval,
+ // copy-code fallback); with it on, the older bearer link (`/api/auth/email/login/*`) is refused. EMAIL_SIGNUP_ENABLED
+ // gates the create-account branch (email sign-up without a passkey step); account creation also needs SIGNUP_ENABLED's
+ // route gate. Global only: every route they gate is unauthenticated. Off by default.
+ ['EMAIL_FLOW_V2','c','G',{risk:'crit',envParse:'boolean'}],
+ ['EMAIL_SIGNUP_ENABLED','c','G',{risk:'crit',requires:['EMAIL_FLOW_V2'],envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],

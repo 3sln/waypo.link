@@ -44,20 +44,26 @@ export async function mcpCollections(account,owner){
  if(resources.length>200+legacyDefaultAllowance||storage.length>100+legacyDefaultAllowance)fail('resource_limit','This account has too many sources.',429);
  return [...inbox,...resources.filter(r=>r.owner===owner&&r.kind!=='app-connection'&&r.status==='connected').map(r=>({id:`resource:${r.id}`,name:r.name,kind:'storage',tools:['collections_list',...r.capabilities?.read?['item_read']:[],...r.capabilities?.write?['item_write']:[],...(r.provider==='hosted'||r.capabilities?.delete)?['item_delete']:[]]}))];
 }
+// MCP is a JSON surface: it keeps standard base64 at its own boundary and maps it explicitly to the object-storage/v1
+// `data` byte string (rewritten in place for CBOR, 2026-10-29). Canonical padding only; anything else is invalid_args.
+const B64=/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+function mcpBytes(text){if(typeof text!=='string'||text.length>1398104||!B64.test(text))fail('invalid_args','Canonical base64 data is required.',400);return Uint8Array.from(atob(text),c=>c.charCodeAt(0));}
+const mcpBase64=bytes=>{let out='';for(let i=0;i<bytes.length;i+=8192)out+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(out);};
+function mcpStorageResult(result){if(result&&typeof result==='object'&&result.data instanceof Uint8Array){const {data,...rest}=result;return {...rest,dataBase64:mcpBase64(data)};}return result;}
 export async function mcpOperation(account,owner,clientId,tool,args,{itemRead=false,workCharged=false,connection}={}){
  const collection=(await mcpCollections(account,owner)).find(c=>c.id===args.collectionId);
  if(!collection||!collection.tools.includes(tool))fail('forbidden','The collection or function is no longer available.');
  const id=collection.id.split(':')[1];
  if(collection.kind==='storage'){
   const method={item_read:'get',item_write:'put',item_delete:'delete'}[tool];
-  const input=tool==='item_read'?{key:args.key}:tool==='item_write'?{key:args.key,dataBase64:args.dataBase64,contentType:args.contentType,condition:args.condition}:{key:args.key,version:args.version};
+  const input=tool==='item_read'?{key:args.key}:tool==='item_write'?{key:args.key,data:mcpBytes(args.dataBase64),contentType:args.contentType,condition:args.condition}:{key:args.key,version:args.version};
   if(tool==='item_read'&&collection.kind==='storage'){
    const resource=await account.metadata.get(`resource/${id}`);
    if(resource.provider==='hosted'){const item=await account.metadata.get(`hosted/${id}/${encodeURIComponent(args.key)}`);if(item?.size>65536)fail('result_too_large','Download this item through the account interface.',413);}
    // Managed Drive objects record their verified size locally, so oversize reads are refused before any download.
    else if(resource.provider==='google-drive'&&typeof account.googleDrive?.path==='function'){const entry=await account.metadata.get(await account.googleDrive.path(id,args.key));if(entry?.size>65536)fail('result_too_large','Download this item through the account interface.',413);}
   }
-  return account.federationRPC({subject:`${account.config.APP_ORIGIN}/entities/${owner}`,clientId:`mcp:${clientId}`,resource:`${account.config.APP_ORIGIN}/entities/${owner}/resources/${id}`,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method,args:input,tx:args.requestId??crypto.randomUUID()},workCharged?WORK_PRECHARGED:undefined,connection?{connection:{id:connection.id,generation:connection.generation}}:{});
+  return mcpStorageResult(await account.federationRPC({subject:`${account.config.APP_ORIGIN}/entities/${owner}`,clientId:`mcp:${clientId}`,resource:`${account.config.APP_ORIGIN}/entities/${owner}/resources/${id}`,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method,args:input,tx:args.requestId??crypto.randomUUID()},workCharged?WORK_PRECHARGED:undefined,connection?{connection:{id:connection.id,generation:connection.generation}}:{}));
  }
  if(tool==='items_list'){const page=await account.messagePage(owner,{collection:id,limit:args.limit??20,cursor:args.cursor});return {items:page.items.map(item=>mcpListItem(item,{itemRead})),cursor:page.cursor??null};}
  const writing=['item_write','item_delete'].includes(tool);

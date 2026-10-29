@@ -11,7 +11,7 @@ export const publicSources = [
   'vendor/tldts/index.js',
   'packages/sdk/src',
   'packages/intents/format.mjs','packages/intents/schema.mjs','packages/intents/sessions.mjs','packages/intents/project.mjs',
-  'packages/core/strict-json.mjs','packages/core/artefacts.mjs','packages/core/extensions.mjs','packages/core/fragments.mjs','packages/core/ip-address.mjs','packages/core/cbor.mjs',
+  'packages/core/strict-json.mjs','packages/core/artefacts.mjs','packages/core/extensions.mjs','packages/core/fragments.mjs','packages/core/ip-address.mjs','packages/core/cbor.mjs','packages/core/rpc-wire.mjs',
   'packages/i18n',
   'packages/consent/model.mjs','packages/consent/localization.mjs','packages/consent/reviewed-contracts.mjs',
   'packages/portal',
@@ -36,6 +36,8 @@ export const pages = [
   {source:'apps/web/intent.html',output:'intent.html',entry:'intent',module:'/src/intent.mjs'},
   {source:'apps/web/console.html',output:'console.html',entry:'app',module:'/src/main.mjs'},
   {source:'apps/web/authorize.html',output:'authorize.html',entry:'authorize',module:'/src/authorize.mjs'},
+  // The email-link helper page (sign-in and intents spike §4, P3): its own small graph, no third-party assets.
+  {source:'apps/web/email-link.html',output:'email-link.html',entry:'emailLink',module:'/src/email-link.mjs'},
 ];
 export const clientManifest = '.output/client-manifest.mjs';
 
@@ -55,6 +57,7 @@ export default defineConfig({
     intent: {module:'apps/web/src/intent.mjs',css:'apps/web/styles.css'},
     app: {module:'apps/web/src/main.mjs',css:'apps/web/styles.css'},
     authorize: {module:'apps/web/src/authorize.mjs',css:'apps/web/styles.css'},
+    emailLink: {module:'apps/web/src/email-link.mjs',css:'apps/web/styles.css'},
     // Islands shell runtime for the dedicated embed origin. build-assets re-roots its graph under /embed/assets/,
     // gives it its own static import map and adds apps/embed/styles/parts.css as the shell's second stylesheet.
     embed: {module:'apps/embed/src/boot.mjs',css:'apps/embed/styles/shell.css'},

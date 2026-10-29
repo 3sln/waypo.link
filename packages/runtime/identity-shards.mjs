@@ -7,7 +7,9 @@ import {isFreeHandle,isReservedHandle,encodeFreeHandleNumber,normalizeHandle,val
 // offline, verified migration. No request consults the legacy singleton.
 export const IDENTITY_LAYOUT = 'v1-64-fresh';
 export const IDENTITY_SHARDS = 64;
-const families = new Set(['account', 'handle', 'email', 'device', 'device-code', 'namespace']);
+// `email-flow` and `email-flow-link` route the cross-device email flow store (email-flow-store.mjs); each is a single-key
+// record on its own shard, never part of the account/device two-phase writes.
+const families = new Set(['account', 'handle', 'email', 'device', 'device-code', 'namespace', 'email-flow', 'email-flow-link']);
 const namespaceKey = handle => `identity-namespace/${handle}`;
 // Expiry index for unredeemed onboarding reservations, ordered by due time.
 // The release grace absorbs clock skew and redemptions verified just before

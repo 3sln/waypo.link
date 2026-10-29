@@ -1,3 +1,4 @@
+import {decodeRPC,isRPCMediaType} from '../core/rpc-wire.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // EXT-X7 brokered resource records and provider-to-integration resource calls (docs/spec/integrations.md §4.3–§4.5,
 // §5.3, §5.6, §7.1; docs/spec/messaging.md §2.2; extensibility-design X7). Engine-first: `brokeredResourcesProvider`
@@ -132,9 +133,10 @@ function scope(p,actor){
  async function brokeredCall(c,record,{purpose,contract,method,grant,feature,pool='owner'}){
   if(c.manifest.resources?.dpop==='required')unavailable();// The provider consumer holds no DPoP key (§5.4).
   const url=p.discovery.endpoint(c,'rpc_endpoint');if(resourceId(record.resource,url.href)!==record.resource)unavailable();
-  const txId=p.uuid(),answer=await p.discovery.call({connection:c,url,pool,maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose,connection:c.id,generation:c.generation,resource:record.resource,grant,methods:{[contract]:[method]},scope:null,lifetime:60,...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,[contract])}:{},...feature?{feature}:{}},body:{version:"0",tx:txId,resource:record.resource,contract,method,args:{}}});
-  if(answer.status!==200||!/^application\/json(?:\s*;.*)?$/i.test(answer.contentType??''))fault('describe_failed','The integration did not describe this resource.',502);
-  let body;try{body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(answer.bytes));}catch{body=null;}
+  const txId=p.uuid(),answer=await p.discovery.call({connection:c,url,pool,maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose,connection:c.id,generation:c.generation,resource:record.resource,grant,methods:{[contract]:[method]},scope:null,lifetime:60,...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,[contract])}:{},...feature?{feature}:{}},body:{version:"0",tx:txId,resource:record.resource,contract,method,args:{}},encoding:'cbor'});
+  // Brokered RPC is Bindle CBOR (integrations §5): only a response of the RPC media type is decoded, strictly.
+  if(answer.status!==200||!isRPCMediaType(answer.contentType??''))fault('describe_failed','The integration did not describe this resource.',502);
+  let body;try{body=decodeRPC(answer.bytes);}catch{body=null;}
   if(!plain(body)||Object.keys(body).some(k=>!['version','tx','result','error'].includes(k))||body.version!=='0'||body.tx!==txId||Object.hasOwn(body,'error')||!plain(body.result))fault('describe_failed','The integration did not describe this resource.',502);
   return body.result;
  }

@@ -41,6 +41,7 @@
         "seq": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "Integration readers only: the connection's configuration seq, comparable with preferences-updated events (§6.2)."
         }
       },
@@ -61,7 +62,7 @@
         },
         "token": {"type": "string", "maxLength": 8192, "description": "Opaque. Issuer-hosted: an attenuated issuer RPC token. Brokered: an RFC 9068 at+jwt for broker.endpoint only."},
         "token_type": {"enum": ["Bearer", "DPoP"]},
-        "expires_at": {"type": "integer", "description": "Seconds since the epoch."},
+        "expires_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991, "description": "Seconds since the epoch."},
         "broker": {
           "type": "object",
           "description": "Present only for brokered members. Send the RPC envelope to endpoint with resource set to broker.resource.",

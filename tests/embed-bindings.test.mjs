@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {rpcInit} from './helpers/rpc.mjs';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {provider,post,form,createEntry,entryBody,providerPage,pageHeaders,exchange,refresh,dpopKey,tokenNonce,embedHeaders,embedNonce,codeOf,b64,issuer,embedOrigin,appOrigin,clientId} from './authorization-entry-helpers.mjs';
@@ -59,7 +60,7 @@ test('component credentials never appear in client-reachable outputs and are ref
  assert.ok(p.log.filter(e=>JSON.stringify(e).includes(credential)).every(e=>e.url.startsWith(embedOrigin)));
  assert.equal((await refresh(p,credential)).status,400);
  assert.equal((await form(p,`${issuer}/oauth/revoke`,{token:credential,client_id:clientId},{Origin:appOrigin})).status,200);assert.equal((await startSession(p,credential,flow.key)).status,200);
- const rpc=await p.fetch(`${issuer}/bindle/rpc`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${credential}`},body:JSON.stringify({version:'0',tx:randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}})});assert.equal(rpc.status,401);
+ const rpc=await p.fetch(`${issuer}/bindle/rpc`,rpcInit({version:'0',tx:randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}},{Authorization:`Bearer ${credential}`}));assert.equal(rpc.status,401);
  // The access token cannot open an embed session either.
  assert.equal((await startSession(p,token.access_token,flow.key)).status,401);
  // Plain completions and app-created entries never carry a claim.

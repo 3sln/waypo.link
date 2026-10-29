@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {rpcInit,rpcAware} from './helpers/rpc.mjs';
 import assert from 'node:assert/strict';
 import {createHash, randomUUID} from 'node:crypto';
 import {FederationController} from '../packages/federation/runtime.mjs';
@@ -45,7 +46,7 @@ async function fixture(){
   }
   const envelope=(args={})=>{const tx=randomUUID();return {version:'0',tx,resource,contract:APP_NOTIFICATIONS,method:'createOwn',args:{transactionId:tx,createdAt:now,subject:'Literal subject',body:'Literal content',...args}};};
   const read=token=>controller.rpc(token,{version:'0',tx:randomUUID(),resource:'@preferences',contract:PREFERENCES,method:'read',args:{fragment}});
-  const http=(token,origin,envelope)=>handleFederation(new Request(issuer+'/bindle/rpc',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,...origin===undefined?{}:{Origin:origin}},body:JSON.stringify(envelope)}),{controller,issuer,clients});
+  const http=(token,origin,envelope)=>handleFederation(new Request(issuer+'/bindle/rpc',rpcInit(envelope,{Authorization:'Bearer '+token,...origin===undefined?{}:{Origin:origin}})),{controller,issuer,clients}).then(rpcAware);
   return {controller,service,apps,metadata,owner,resource,connect,envelope,read,http,get effects(){return effects;},get syncs(){return syncs;},setNow:value=>{now=value;}};
 }
 

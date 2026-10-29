@@ -61,10 +61,11 @@ export function linkedNetwork(ip) {
  * form is the non-durable poll limiter and the test double for the durable budget port. */
 export class MemoryLinkedLimits {
   constructor(clock = () => Date.now()) { this.clock = clock; this.windows = new Map(); }
-  async consume(key, { windowMs, limit, units = 1 }) {
+  // `peek: true` answers whether `units` more would fit without consuming (as the durable FixedWindowGuard does).
+  async consume(key, { windowMs, limit, units = 1, peek = false }) {
     const now = this.clock(); let window = this.windows.get(key);
     if (!window || window.end <= now || window.end > now + 2 * windowMs) window = { count: 0, end: now + windowMs };
-    if (window.count + units > limit) return false; window.count += units; this.windows.set(key, window);
+    if (window.count + units > limit) return false; if (peek) return true; window.count += units; this.windows.set(key, window);
     if (this.windows.size > 50000) for (const [name, value] of this.windows) if (value.end <= now) this.windows.delete(name);
     return true;
   }
@@ -203,7 +204,8 @@ export class LinkedApproval {
   // One fresh credential confirmation at approval for both kinds (DEVLOG 2026-10-20): a passkey sign-in or step-up within
   // 5 minutes (passwords dropped, owner approval 2026-10-28). Linked-approval, email-link and recovery sessions count only after their own step-up.
   // An app approval's confirmation must also postdate the request, binding the step-up to this approval (review LA2-S7).
-  fresh(session, request) { const at = this.identity.authAt(session); return at + LINKED.freshMs > this.now() && (request?.kind !== 'app' || at >= request.createdAt); }
+  // N2: a provisional passkey (added from an `email-cross-device` session, 24 h) never satisfies this (`approvalAuthAt`).
+  fresh(session, request, account) { const at = this.identity.approvalAuthAt ? this.identity.approvalAuthAt(account, session) : this.identity.authAt(session); return at + LINKED.freshMs > this.now() && (request?.kind !== 'app' || at >= request.createdAt); }
   idleMs() { return appIdleMs(this.identity.config.appRefreshIdleMs); }
   async review(request, account, session, context) {
     const identity = this.identity, now = this.now(), app = request.kind === 'app', network = request.requester?.network ?? {};
@@ -213,7 +215,7 @@ export class LinkedApproval {
       requester: { deviceKind: request.deviceKind ?? null },
       ...app ? { app: { clientId: request.app.clientId, host: request.app.host, reviewedName: request.app.reviewedName ?? null, requests: structuredClone(request.app.requests), preselect: Boolean(hint && [account.handle, account.paidHandle].includes(hint)) }, idleLimitMs: this.idleMs() } : {},
       warnings: { countryMismatch: Boolean(network.trusted && network.country && context?.networkTrusted === true && typeof context.country === 'string' && context.country !== network.country), sameBrowser },
-      freshness: { required: 'step-up', satisfied: this.fresh(session, request) },
+      freshness: { required: 'step-up', satisfied: this.fresh(session, request, account) },
       durations: linkedDurations({ kind: request.kind, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() }), defaultChoice: app ? 'ongoing' : 'session' };
   }
   /** Signed-in members only. Every miss is the same `invalid_code`; nothing is written, so the requester cannot
@@ -245,7 +247,7 @@ export class LinkedApproval {
     // consent path `app`); a mismatch is the uniform miss, so an app request is never approved without owner consent.
     if ((legacy && app) || (input.kind ?? 'session') !== request.kind) this.invalid();
     if(!legacy&&!this.allowed(account,request))this.fail('not_found','Linked approval is not enabled.');
-    if (!this.fresh(session, request)) this.fail('reauthentication_required', 'Confirm with your passkey before approving this sign-in.');
+    if (!this.fresh(session, request, account)) this.fail('reauthentication_required', 'Confirm with your passkey before approving this sign-in.');
     const choice = legacy ? 'session' : input.choice ?? (app ? 'ongoing' : 'session'), lifetime = linkedLifetime({ kind: request.kind, choice, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() });
     if (!lifetime) this.fail('invalid_choice', 'Choose how long this sign-in lasts.');
     if (input.consent !== undefined && (!app || !plain(input.consent, 4096) || Array.isArray(input.consent))) this.fail('invalid_consent', 'Review the requested access again.');

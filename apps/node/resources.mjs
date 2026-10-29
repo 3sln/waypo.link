@@ -1,6 +1,6 @@
 import {producerIndexedMetadata} from '../../packages/storage/producer-index.mjs';
 import {intentIndexedMetadata} from '../../packages/intents/index.mjs';
-import {configuredArtefacts} from '../../packages/runtime/artefact-pins.mjs';
+import {configuredArtefacts,ARTEFACT_STORE_FILE} from '../../packages/runtime/artefact-pins.mjs';
 import {siteGlobal,capability,flagsFor} from '../../packages/flags/read.mjs';
 import {FlagsRuntime,flagWriter} from '../../packages/runtime/flags.mjs';
 import {createNodeFlagStats} from './flag-stats.mjs';
@@ -19,6 +19,7 @@ import {configuredFormOrigins} from '../../packages/apps/form-fetch-policy.mjs';
 import {createNodeFormFetch} from '../../packages/apps/node-form-fetch.mjs';
 import {PlanCatalogRegistry,cachedCatalogPort} from '../../packages/billing/registry.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import {serialize as v8Serialize,deserialize as v8Deserialize} from 'node:v8';
 import { mkdir, readFile, writeFile, rename, unlink, stat, open } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -65,13 +66,19 @@ export class SerialGate {
  constructor(){this.tail=Promise.resolve();}
  async run(operation){const previous=this.tail;let release;this.tail=new Promise(r=>release=r);await previous;try{return await operation();}finally{release();}}
 }
+// CBOR phase 2 (spike §3.2, §6 item 4): JSON text cannot hold a Uint8Array (it becomes an index map) or a bigint (it
+// throws). A value containing either is written as a V8 structured-clone blob, which is what Durable Object storage
+// keeps; every other value stays JSON text exactly as before. Reads accept both, so no stored row changes.
+const needsClone=(value,depth=0)=>{if(typeof value==='bigint')return true;if(value===null||typeof value!=='object'||depth>64)return false;if(ArrayBuffer.isView(value))return true;for(const child of Array.isArray(value)?value:Object.values(value))if(needsClone(child,depth+1))return true;return false;};
+const storeValue=value=>needsClone(value)?v8Serialize(value):JSON.stringify(value);
+const loadValue=raw=>raw instanceof Uint8Array?v8Deserialize(raw):JSON.parse(raw);
 export class SqliteMetadata {
  constructor(file){this.db=new DatabaseSync(file);this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT NOT NULL)');this.gate=new SerialGate();this.timer=null;this.closed=false;this.sql=nodeSqlPort(this.db);return producerIndexedMetadata(intentIndexedMetadata(this));}
  raw(){const self=this;return {
-  get:async key=>{const row=self.db.prepare('SELECT value FROM records WHERE key=?').get(key);return row?JSON.parse(row.value):undefined;},
-  put:async(key,value)=>{if(typeof key==='object'){for(const [k,v]of Object.entries(key))await self.raw().put(k,v);return;}self.db.prepare('INSERT INTO records(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));},
+  get:async key=>{const row=self.db.prepare('SELECT value FROM records WHERE key=?').get(key);return row?loadValue(row.value):undefined;},
+  put:async(key,value)=>{if(typeof key==='object'){for(const [k,v]of Object.entries(key))await self.raw().put(k,v);return;}self.db.prepare('INSERT INTO records(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,storeValue(value));},
   delete:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])self.db.prepare('DELETE FROM records WHERE key=?').run(key);},
-  list:async({prefix='',startAfter='',limit=100000}={})=>new Map(self.db.prepare('SELECT key,value FROM records WHERE key>=max(?,?) AND key<? AND key<>? ORDER BY key LIMIT ?').all(prefix,startAfter,prefix+'\uffff',startAfter,limit).map(row=>[row.key,JSON.parse(row.value)])),
+  list:async({prefix='',startAfter='',limit=100000}={})=>new Map(self.db.prepare('SELECT key,value FROM records WHERE key>=max(?,?) AND key<? AND key<>? ORDER BY key LIMIT ?').all(prefix,startAfter,prefix+'\uffff',startAfter,limit).map(row=>[row.key,loadValue(row.value)])),
   getAlarm:async()=>self.raw().get('@alarm'),
   setAlarm:async time=>{await self.raw().put('@alarm',time);self.arm(time);}
  };}
@@ -126,7 +133,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Lifecycle ports exist only when LIFECYCLE_ENABLED. FileBucket has no storage classes, so cold tiering reports unsupported.
  let adminStore;const flagsRuntime=new FlagsRuntime({env:config,platform:'node',store:{flagsSnapshot:()=>adminStore.flagsSnapshot()}}),flagStats=createNodeFlagStats(join(directory,'flag-stats.sqlite'));const lifecycleConfig=lifecycleMode(config)==='off'?{}:{LIFECYCLE_IDENTITY:lifecycleIdentityPort(repository),LIFECYCLE_ADMIN_HOLD:owner=>lifecycleAdminHoldPort({store:adminStore,repository})(owner),LIFECYCLE_MAIL:mailer??null,LIFECYCLE_PUSH:createPushTransport(config),LIFECYCLE_COLD_STORAGE_SUPPORTED:false};
  const adminDb=new SqliteMetadata(join(directory,'admin.sqlite'));adminStore=new AdminStorage(adminDb);const commit=adminStore.commit.bind(adminStore);adminStore.commit=async input=>{const result=await commit(input);if(result.committed&&Object.hasOwn(input.writes??{},'flags-head')){flagsRuntime.invalidate();try{await flagsRuntime.publish(await adminStore.flagsSnapshot());}catch{/* Commit succeeded; the next pin retries the invalidated cache. */}}return result;};await flagsRuntime.pin();config.FLAGS_RUNTIME=flagsRuntime;
- const artefactDb=new SqliteMetadata(join(directory,'artefacts.sqlite'));config.ARTEFACTS=configuredArtefacts({config,store:artefactDb});
+ const artefactDb=new SqliteMetadata(join(directory,ARTEFACT_STORE_FILE));config.ARTEFACTS=configuredArtefacts({config,store:artefactDb});
  let population;const guardFor=async name=>{const file=createHash('sha256').update(name).digest('hex');if(!guardMap.has(file)){const metadata=new SqliteMetadata(join(directory,'abuse',file+'.sqlite'));const guard=new FixedWindowGuard({metadata,config:{...config,...name==='active-user-v1/census'?{ACTIVE_POPULATION_CENSUS:()=>population.censusStep()}:{} }});metadata.onAlarm=()=>guard.alarm();guardMap.set(file,{metadata,guard});const alarm=await metadata.getAlarm();if(alarm)metadata.arm(alarm);}return guardMap.get(file).guard;};const abuse={waitlist:async(method,input)=>(await guardFor('signup:waitlist:v1')).waitlistAction(method,input),consume:async(name,limits)=>(await guardFor(name)).consume(limits),consumeSignup:async(name,limits)=>(await guardFor(name)).consumeSignup(limits),signupStatus:async(name,limits)=>(await guardFor(name)).signupStatus(limits)};
  // Restore the one bounded waitlist expiry alarm even before its next visitor.
  await guardFor('signup:waitlist:v1');

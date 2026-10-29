@@ -66,7 +66,7 @@ Arguments are exactly `{detail, item, tags?, labels}`.
 | `item.kind` | One of §2.1. |
 | `item.mediaType` | §2.2. |
 | `item.size` | The item's exact length in bytes. |
-| `item.data` | Inline form: a byte string of exactly `size` bytes, `size` at most 262,144. On today's JSON transport it is encoded as unpadded base64url; under the planned CBOR transport it is a native byte string with the same bound. |
+| `item.data` | Inline form: a CBOR byte string (`x-type: "bytes"`) of exactly `size` bytes, `size` at most 262,144. RPC is [Bindle CBOR](../cbor.md) (2026-10-29), so there is no base64 form; the contract was rewritten in place. |
 | `item.url` | Presigned form: `{href, expiresAt}` (§5), `size` 1–104,857,600. |
 | `tags` | Optional; §2.4, and only the members `detail` allows. |
 | `labels` | 1–16 objects `{id, description}` with distinct `id`s. |
@@ -201,12 +201,12 @@ For an item of kind K, an app reads the fragment's values once for the operation
 | ID | Decision | Sign-off |
 | --- | --- | --- |
 | IC-1 | Bindle-owned generic contract; classifiers implement it, apps own their taxonomies (owner direction 2026-10-27). | Reviewer ___ Date ___ Outcome ___ |
-| IC-2 | The item travels inline (base64url, at most 256 KiB) or as a presigned HTTPS URL the classifier fetches under §5 (owner direction 2026-10-28). The fetch is exactly one URL, public addresses only, no redirects, no credentials, bounded in size and time. | Reviewer ___ Date ___ Outcome ___ |
+| IC-2 | The item travels inline (a CBOR byte string, at most 256 KiB) or as a presigned HTTPS URL the classifier fetches under §5 (owner direction 2026-10-28). The fetch is exactly one URL, public addresses only, no redirects, no credentials, bounded in size and time. | Reviewer ___ Date ___ Outcome ___ |
 | IC-3 | `classify` carries `effect: write`, because it discloses the item and may cost the owner; it is never treated as read-only or pure. `capabilities` is a read. | Reviewer ___ Date ___ Outcome ___ |
 | IC-4 | One shared Bindle fragment instead of per-app classifier fragments; apps use their own grants on it. | Owner-approved 2026-10-28 (DEVLOG "Owner directions: classification, built-in integrations, platform resources"). Reviewer ___ Date ___ Outcome ___ |
 | IC-5 | Per-kind classifier fields (`text`, `image`, `audio`, `video`, `document`) plus `fallback`, each `exclusive`; cross-field failover only on `unsupported_item` or a proven no-effect failure (§8.3) (owner direction 2026-10-28). | Reviewer ___ Date ___ Outcome ___ |
 | IC-6 | Detail is owner-chosen per classifier field with three levels; kind, media type and size always travel; the call carries `detail` so a classifier can tell withheld from unknown and refuse tags beyond it. | Reviewer ___ Date ___ Outcome ___ |
 | IC-7 | `unsupported_item` is the pre-effect, no-effect "cannot classify this" error; a refusal after any effect is `indeterminate`. | Reviewer ___ Date ___ Outcome ___ |
 | IC-8 | An item an app meant to classify but could not score is explicitly `unscored`, never treated as checked; capability gaps are surfaced to the owner. | Reviewer ___ Date ___ Outcome ___ |
-| IC-9 | The inline item is abstract bytes: base64url on the JSON transport, a native byte string under the planned CBOR transport, with one size bound (owner direction 2026-10-28). | Reviewer ___ Date ___ Outcome ___ |
+| IC-9 | The inline item is abstract bytes, a native CBOR byte string now that RPC is CBOR, with one size bound (owner direction 2026-10-28). | Reviewer ___ Date ___ Outcome ___ |
 | IC-10 | Apps may split labels across calls to one classifier whose `maxLabels` is smaller, and never fail over after a part succeeded. | Reviewer ___ Date ___ Outcome ___ |
