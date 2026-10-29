@@ -43,7 +43,7 @@
 //                            <origin>/entities/<org>/resources/<uuid>; imports are never in the pool (spec §9.7)
 //   documents / catalogue    the RL-14 catalogue (packages/orgs/relation-catalogue.mjs)
 //   transport                sameHostRelationTransport over relationsPeer; foreign counterparts are refused (ORG-11)
-import {rpcEnvelope} from '../../core/rpc-wire.mjs';
+import {rpcEnvelope,encodeRPC} from '../../core/rpc-wire.mjs';
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
 import {cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {StorageError} from '../../storage/policy.mjs';
@@ -306,7 +306,7 @@ export const methods={
   // The storage dispatch runs under the composed scope (edge ∩ certificate) as the call's assigned scope (review L3),
   // so the adapter refuses, for example, a `get` of an object larger than maxObjectBytes. The journal key carries
   // (grantor, acting entity, client_id, tx) (spec §9.5).
-  const result=await this.federationRPC({subject:`${this.config.APP_ORIGIN}/entities/${owner}`,resource:env.resource,contract:env.contract,method:env.method,args:structuredClone(env.args),tx:env.tx,clientId:`relation:${context.journal.grantee} ${context.journal.client_id}`,scope:structuredClone(context.assignedScope??{}),authority:'relation'});
+  const result=await this.federationRPC({subject:`${this.config.APP_ORIGIN}/entities/${owner}`,resource:env.resource,contract:env.contract,method:env.method,args:encodeRPC(env.args),tx:env.tx,clientId:`relation:${context.journal.grantee} ${context.journal.client_id}`,scope:structuredClone(context.assignedScope??{}),authority:'relation'});
   return {version:'0',tx:env.tx,result};
  },
  async relationsToken(owner,{assertion,clientId,dpop,htu}={}){

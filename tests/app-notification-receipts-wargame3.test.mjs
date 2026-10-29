@@ -1,4 +1,5 @@
 // Wargame 3 F5: per-connection app-notification receipt caps and short leases for `reserved` receipts.
+import {decodeRPC} from '../packages/core/rpc-wire.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -82,7 +83,7 @@ test('concurrent sends at the per-connection cap cannot both pass the capacity c
  const f=await fixture(t,Date.UTC(2026,9,20,12,0,0)),conn=await f.connect(good);
  // Capture one verified federation context, then drive the handler concurrently without the account's serial gate,
  // as a Worker Durable Object interleaves at awaited I/O (budget and quota calls) between check and write.
- let context;const original=f.account.federationRPC;f.account.federationRPC=async function(c,...rest){context??=c;return original.call(this,c,...rest);};
+ let context;const original=f.account.federationRPC;f.account.federationRPC=async function(c,...rest){context??={...c,args:c.args instanceof Uint8Array?decodeRPC(c.args):c.args};return original.call(this,c,...rest);};
  const first=await f.send(conn);assert.equal(first.error,undefined);assert.ok(context,'the federation context was not captured');
  const [prefix]=[...(await f.db.list({prefix:'app-notification-receipt/'})).keys()].map(k=>k.slice(0,k.lastIndexOf('/')+1));
  await seed(f.db,prefix+'seed-',318,Date.now()+86400000); // 319 live receipts for this connection; one slot left

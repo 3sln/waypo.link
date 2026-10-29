@@ -7,6 +7,7 @@ import { UUID } from '../../packages/core/primitives.mjs';
 import {deletionNoticeTemplate} from '../../packages/runtime/deletion-notices.mjs';
 import {transferNoticeTemplate} from '../../packages/identity/transfer-out.mjs';
 import {redirectReminderTemplate} from '../../packages/identity/redirect-records.mjs';
+import {requesterLine} from '../../packages/identity/email-flow.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -139,7 +140,7 @@ export function mailTransport(env = {}) {
       });
     }
   };
-  const notice = (templates, from, { email, type, days, owner, cancelToken, count, trailing }) => {
+  const notice = (templates, from, { email, type, days, owner, cancelToken, count, trailing, requester }) => {
     // Coalesced account notices carry how many changes they stand for (IdentityService#queueNotice); a trailing one
     // reports changes made after the previous notice.
     if (count !== undefined && (!Number.isSafeInteger(count) || count < (trailing === true ? 1 : 2) || count > 100000)) throw new Error('Invalid notice count.');
@@ -156,7 +157,9 @@ export function mailTransport(env = {}) {
       if (typeof cancelToken !== 'string' || !/^[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/.test(cancelToken) || cancelToken.slice(0, 36) !== owner) throw new Error('Invalid reissue cancel link.');
       return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nCancel the replacement: ${origin}${REISSUE_CANCEL_PATH}#token=${cancelToken}\n\nOpening this link does not cancel anything until you confirm on the page. It cannot sign you in.` });
     }
-    return send({ from, to: email, subject: format(subject), text: `${format(text)}${count ? (trailing === true ? `\n\n${count} more such change(s) happened shortly after the previous notice.` : `\n\nThis notice covers ${count} such changes in the last few minutes.`) : ''}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
+    // The email sign-in notice names the requesting device and coarse place (spike T3), from the fixed vocabulary only.
+    const requested = templates === SECURITY_ALERTS && type === 'email-sign-in' ? requesterLine(requester) : '';
+    return send({ from, to: email, subject: format(subject), text: `${format(text)}${requested ? `\n\n${requested}` : ''}${count ? (trailing === true ? `\n\n${count} more such change(s) happened shortly after the previous notice.` : `\n\nThis notice covers ${count} such changes in the last few minutes.`) : ''}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
     // DX-7: admin-assisted deletion confirmation, sent only to the account's own verified address. The capability

@@ -258,3 +258,9 @@ test('seeded fuzz: random byte strings never escape as anything but CBORFault',a
   try{const v=decode(b,{top:'any'});assert.equal(toHex(encode(v)),toHex(b));}catch(error){assert.ok(error instanceof CBORFault,String(error?.stack));}
  },{base:20_001});
 });
+
+test('decimal mantissa and exponent are major 0/1 integers or bignums, never floats (one encoding per value)',()=>{
+ // 4([-1, float32(2^60)]) would decode to the same decimal as 4([-1, 2^60]) with different bytes.
+ refuses('c48220fa5d800000','decimal');
+ const d=decode(encode(BindleDecimal.from('1152921504606846976.1')),{top:'any'});assert.equal(d.toString(),'1152921504606846976.1');
+});

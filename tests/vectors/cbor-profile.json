@@ -181,6 +181,8 @@
   {"name": "bignum 2^64-1 in eight bytes", "hex": "c248ffffffffffffffff", "code": "bignum"},
   {"name": "bignum with leading zero", "hex": "c24a00010000000000000000", "code": "bignum"},
   {"name": "bignum with integer content", "hex": "c201", "code": "bignum"},
+  {"name": "decimal with integral float mantissa beyond 2^53 (second encoding of an integer)", "hex": "c48220fa5d800000", "code": "decimal"},
+  {"name": "decimal with non-integral float mantissa", "hex": "c48220f93e00", "code": "decimal"},
   {"name": "decimal with positive exponent", "hex": "c482010f", "code": "decimal"},
   {"name": "decimal with zero exponent", "hex": "c482000f", "code": "decimal"},
   {"name": "decimal with trailing-zero mantissa", "hex": "c482211896", "code": "decimal"},

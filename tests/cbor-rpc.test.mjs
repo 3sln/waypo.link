@@ -232,3 +232,21 @@ test('RPC encoding omits what JSON omitted (undefined, symbol-keyed and non-enum
  assert.throws(()=>encode(result),{code:'unsupported'},'the strict default keeps refusing them');
  assert.throws(()=>encodeRPC(Object.defineProperty({},'g',{get:()=>1,enumerable:true})),{code:'unsupported'});
 });
+
+test('L2: request arguments cross the owner-shard and relations hops as CBOR bytes; the handler sees the codec types',async()=>{
+ const {methods}=await import('../packages/runtime/account/storage.mjs');
+ const owner='00000000-0000-4000-8000-000000000001',origin='https://provider.example',resourceId='22222222-2222-4222-8222-222222222222';
+ let seen;const controller={config:{APP_ORIGIN:origin},warm:async()=>{},apps:{check:async()=>{}},
+  metadata:{get:async k=>k==='resource/'+resourceId?{id:resourceId,owner,provider:'hosted',status:'connected',capabilities:{}}:undefined,put:async()=>{},delete:async()=>{},list:async()=>new Map()},
+  hostedOperation:async(resource,method,args)=>{seen=args;return {ok:true};}};
+ const args={key:'k',price:BindleDecimal.from('1.25'),grid:new NDArray([2,2],new Int16Array([1,2,3,4])),big:2n**70n};
+ const call=a=>methods.federationRPC.call(controller,{subject:`${origin}/entities/${owner}`,resource:`${origin}/entities/${owner}/resources/${resourceId}`,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method:'get',clientId:'c',tx:crypto.randomUUID(),args:a});
+ await call(encodeRPC(args));
+ assert.ok(seen.price instanceof BindleDecimal&&seen.price.toString()==='1.25');
+ assert.ok(seen.grid instanceof NDArray&&seen.grid.shape.join()==='2,2');
+ assert.equal(seen.big,2n**70n);
+ // The structured clone the hop used to apply is exactly what loses the types.
+ assert.ok(!(structuredClone(args).price instanceof BindleDecimal));
+ await call(args);assert.ok(seen.price instanceof BindleDecimal); // an in-process caller's object form is still accepted
+ await assert.rejects(call(new Uint8Array([0xa1,0x61,0x61,0xc4,0x82,0x20,0xfa,0x5d,0x80,0,0])),{code:'invalid_request'}); // strict options on the far side
+});

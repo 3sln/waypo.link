@@ -15,7 +15,7 @@ export function createEmailFlowResource({storage=globalThis.sessionStorage,Chann
  const stored=()=>{if(flow&&validStoredFlow(flow,now()))return flow;const value=read(EMAIL_FLOW_STORE);if(validStoredFlow(value,now())){flow=value;return flow;}if(value)write(EMAIL_FLOW_STORE,null);flow=null;return null;};
  const close=()=>{try{channel?.close();}catch{}channel=null;};
  const listen=()=>{if(channel||typeof Channel!=='function'||!stored())return;try{channel=new Channel(EMAIL_FLOW_CHANNEL);}catch{channel=null;return;}
-  channel.onmessage=event=>{const current=stored();if(!current||!acceptWake(event.data,current))return;try{channel.postMessage(ackMessage(current.flowId));}catch{}for(const listener of listeners)try{listener();}catch{}};};
+  channel.onmessage=event=>{const current=stored();if(!current||!acceptWake(event.data,current))return;try{channel.postMessage(ackMessage(current));}catch{}for(const listener of listeners)try{listener();}catch{}};};
  const resource={
   /** A fresh S for a flow about to start; only its hash and T leave this resource. */
   async prepare(){prepared=await createFlowSecret(crypto);return {secretHash:prepared.secretHash,channelTag:prepared.channelTag};},

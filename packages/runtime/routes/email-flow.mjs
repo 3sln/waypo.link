@@ -11,6 +11,7 @@ import {IdentityAction} from '../../identity/index.mjs';
 import {requesterSummary} from '../../identity/email-flow.mjs';
 import {installAccountSession} from '../account-session-http.mjs';
 import {json,body,cookie,status,flagGlobal,signupEnabled,accountHandle} from './shared.mjs';
+import {MAX_ACCOUNTS,parseAccountCookies,observedAccountMembers} from '../account-cookies.mjs';
 
 export const EMAIL_FLOW_PATHS=Object.freeze({
  '/api/auth/email/flow/start':'emailFlowStart','/api/auth/email/flow/status':'emailFlowStatus','/api/auth/email/flow/redeem':'emailFlowRedeem',
@@ -42,6 +43,9 @@ export async function emailFlowRoutes({request,env,path,local,engine,context,vau
  const ctx={...context,emailBrowser:marker};
  if(path==='/api/auth/email/flow/start'){ctx.requester=requestRequester(request,local);ctx.signupOpen=signupEnabled(env,{request})&&flagGlobal(env,'EMAIL_SIGNUP_ENABLED');}
  if(path==='/api/auth/email/signup')ctx.setupBinding=crypto.randomUUID()+crypto.randomUUID();
+ // The multi-account cap before redemption (P3 security review L4): the engine refuses a new account beyond the cap
+ // without consuming the flow or sending a sign-in notice. Installation below keeps the same check as a backstop.
+ if(vault&&(path==='/api/auth/email/flow/redeem'||path==='/api/auth/email/link/complete-here'))ctx.accountMembers={owners:(await observedAccountMembers(env,parseAccountCookies(request,local),local)).map(member=>member.owner),limit:MAX_ACCOUNTS};
  let result;
  try{result=(await engine.dispatch(new IdentityAction(method,input,ctx)).next('result')).detail;}
  catch(error){if(typeof error?.code!=='string')throw error;return json({error:error.code,message:error.message,...Number.isSafeInteger(error.remaining)?{remaining:error.remaining}:{}},status(error),Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{'Retry-After':String(error.retryAfter)}:{});}

@@ -34,6 +34,10 @@ test('helper page: GET is a static, no-store, unframeable document that sets no 
  assert.deepEqual(response.headers.getSetCookie(),[]);
  // POST is not served by the page.
  assert.equal((await s.app.fetch(new Request(s.origin+'/email/link',{method:'POST',headers:{Origin:s.origin}}))).status,405);
+ // I1 (P3 security review): the document's static asset path is never served directly, so it never appears with the
+ // generic page policy; it answers like any unknown page.
+ const unknown=await s.app.fetch(new Request(s.origin+'/no-such-page',{headers:{Accept:'text/html'}}));
+ for(const path of ['/email-link.html','/email-link','/email-link/']){const direct=await s.app.fetch(new Request(s.origin+path,{headers:{Accept:'text/html'}}));assert.equal(direct.status,404,path);assert.equal(await direct.text(),await unknown.clone().text(),path);}
 });
 
 test('flag off: the email flow paths and the helper page answer exactly like unknown paths',async t=>{
@@ -42,6 +46,7 @@ test('flag off: the email flow paths and the helper page answer exactly like unk
  assert.deepEqual([known.status,known.value],[unknown.status,unknown.value]);
  const page=await s.app.fetch(new Request(s.origin+'/email/link',{headers:{Accept:'text/html'}})),other=await s.app.fetch(new Request(s.origin+'/email/linkx',{headers:{Accept:'text/html'}}));
  assert.equal(page.status,other.status);
+ assert.equal((await s.app.fetch(new Request(s.origin+'/email-link.html',{headers:{Accept:'text/html'}}))).status,404,'the helper document is not reachable with the flag off (I1)');
  const config=(await s.call('/api/config',undefined,{method:'GET'})).value;assert.equal(config.emailFlowEnabled,false);assert.equal(config.emailSignupEnabled,false);
 });
 
@@ -122,4 +127,10 @@ test('mail templates: the link only in the fragment, no requester text, the neve
  await assert.rejects(transport.sendEmailFlow({email:'a@inbox.example',token,purpose:'notice-verified',issuer:env.APP_ORIGIN}),'a notice never carries a token');
  await assert.rejects(transport.sendEmailFlow({email:'a@inbox.example',token,purpose:'sign-in',issuer:'https://evil.example'}));
  for(const type of ['email-sign-in','email-sign-in-cancelled'])await transport.sendSecurityAlert({email:'a@inbox.example',type});
+ // The sign-in notice names the requester from the fixed vocabulary only (spike T3); anything else is dropped.
+ await transport.sendSecurityAlert({email:'a@inbox.example',type:'email-sign-in',requester:{browser:'Chrome',system:'Windows',location:{city:'Berlin',country:'DE'}}});
+ assert.match(sent.at(-1).text,/Requested from Chrome on Windows, near Berlin, DE \(approximate/);
+ await transport.sendSecurityAlert({email:'a@inbox.example',type:'email-sign-in',requester:{browser:'Evil\r\nBcc: x@y.example',system:'Plan9',location:{city:'<b>x</b>'}}});
+ assert.equal(sent.at(-1).text.includes('Requested from'),false);assert.equal(/Evil|Bcc|<b>/.test(sent.at(-1).text),false);
+ await transport.sendSecurityAlert({email:'a@inbox.example',type:'passkey-added',requester:{browser:'Chrome',system:'Windows'}});assert.equal(sent.at(-1).text.includes('Requested from'),false,'only the sign-in notice carries it');
 });

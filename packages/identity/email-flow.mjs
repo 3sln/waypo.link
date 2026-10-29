@@ -77,6 +77,7 @@ export class MemoryEmailFlows {
 
 const BROWSERS = [['Edg/', 'Edge'], ['OPR/', 'Opera'], ['SamsungBrowser/', 'Samsung Internet'], ['Firefox/', 'Firefox'], ['FxiOS/', 'Firefox'], ['CriOS/', 'Chrome'], ['Chrome/', 'Chrome'], ['Safari/', 'Safari']];
 const SYSTEMS = [['iPad', 'iPadOS'], ['iPhone', 'iOS'], ['Android', 'Android'], ['CrOS', 'ChromeOS'], ['Windows', 'Windows'], ['Mac OS X', 'macOS'], ['Macintosh', 'macOS'], ['Linux', 'Linux']];
+const KNOWN_BROWSERS = new Set(BROWSERS.map(([, name]) => name)), KNOWN_SYSTEMS = new Set(SYSTEMS.map(([, name]) => name));
 const place = value => typeof value === 'string' && value.length > 0 && value.length <= 60 && /^[\p{L}\p{M} .'’-]+$/u.test(value) ? value : null;
 /** Display-only requester context (spike §4.4, N7), derived by the adapter from the request: the browser family and
  * system from a fixed vocabulary (never the raw User-Agent) and the edge's coarse geo (city when reported, region,
@@ -117,6 +118,9 @@ export class EmailFlow {
     }
     return null;
   }
+  /** The mailbox, region and global windows of `email-login` (packages/core/abuse-policy.mjs), keyed by the mailbox
+   * pseudonym. */
+  mailboxWindow(mailbox, context) { return this.identity.rateLimiter.check({ phase: 'mailbox', operation: 'email-login', remoteIP: context?.remoteIP, region: context?.region, handle: `mailbox\0${mailbox}` }); }
   async network(context, purpose) { const net = linkedNetwork(context?.remoteIP); return net.resolve === 'unknown' ? null : this.mac(purpose, net.resolve); }
   slot() { return Math.floor(this.now() / EMAIL_FLOW_LIMITS.slotMs); }
   /** Live revealed codes: reveals in the current and previous slot (≥ a code's life). Without a counting limiter the cap
@@ -147,10 +151,17 @@ export class EmailFlow {
     await identity.guard('email', input, context);
     const email = identity.canonicalEmail(input.email);
     if (typeof input.secretHash !== 'string' || !B64.test(input.secretHash) || typeof input.channelTag !== 'string' || !B64.test(input.channelTag) || typeof context?.emailBrowser !== 'string' || !B64.test(context.emailBrowser)) this.fail('invalid_request', 'Reload the page and try again.');
-    const locale = input.locale === 'es' ? 'es' : 'en';
-    if (!await identity.rateLimiter.check({ phase: 'mailbox', operation: 'email-login', remoteIP: context.remoteIP, region: context.region, handle: `mailbox\0${email}` })) this.fail('rate_limited', 'Please wait before trying again.');
-    const mailbox = await this.mac('mailbox', email), browserHash = await this.mac('browser', context.emailBrowser);
+    const locale = input.locale === 'es' ? 'es' : 'en', mailbox = await this.mac('mailbox', email);
+    // The mailbox windows (5 per 15 minutes, 12 per 6 hours) are keyed by the keyed pseudonym `mailbox`, which every
+    // flow keeps, so a resend charges the very same windows on every branch (P3 security review L1; spike §4.7 "resend
+    // counts as a send"). The older bearer link keys them by the address itself; the two never run together (flag).
+    if (!await this.mailboxWindow(mailbox, context)) this.fail('rate_limited', 'Please wait before trying again.');
+    const browserHash = await this.mac('browser', context.emailBrowser);
     if (!await this.limits.consume(`ef-a:${mailbox}`, EMAIL_FLOW_LIMITS.address) || !await this.limits.consume(`ef-b:${browserHash}`, EMAIL_FLOW_LIMITS.browser)) this.fail('rate_limited', 'Please wait before trying again.');
+    // T13 (P3 security review L3): the repositories' `findByEmail` reads a random account key on a miss, so a known and
+    // an unknown address both cost one index lookup plus one account read (Node `accounts.mjs`, Worker
+    // `identity-shards.mjs`). Residual: CPU and storage latency still differ slightly (record size, the sign-in
+    // classification below); the deployed timing gate stays.
     const account = await identity.repository.findByEmail(email), now = this.now();
     const entry = account?.status === 'active' && interactiveIdentity(account) ? signInEmails(account).find(item => item.address === email) : null;
     let purpose = 'inert', notice = null;
@@ -176,7 +187,11 @@ export class EmailFlow {
     const identity = this.identity; this.enabled(); identity.origin(context);
     const flow = FLOW_ID.test(input?.flowId ?? '') ? await this.store.get(input.flowId) : null;
     if (!await this.secretMatches(flow, input?.secret) || !['pending', 'code-revealed'].includes(flow.state) || flow.expiresAt <= this.now()) this.invalidFlow();
-    if (flow.resends >= EMAIL_FLOW.resends || !await this.limits.consume(`ef-s:${flow.mailbox}`, EMAIL_FLOW_LIMITS.send)) this.fail('rate_limited', 'Please wait before asking for another link.');
+    // A resend counts as a send (spike §4.7; P3 security review L1): the per-flow cap, the per-mailbox send window and
+    // the same mailbox windows as start (5 per 15 minutes, 12 per 6 hours, keyed by the flow's mailbox pseudonym, so
+    // inert flows do the same work and charge the same windows). Starts and resends together therefore mail one
+    // address at most 12 times in 6 hours, so a resend needs no Turnstile of its own.
+    if (flow.resends >= EMAIL_FLOW.resends || !await this.limits.consume(`ef-s:${flow.mailbox}`, EMAIL_FLOW_LIMITS.send) || !await this.mailboxWindow(flow.mailbox, context)) this.fail('rate_limited', 'Please wait before asking for another link.');
     const token = identity.crypto.random(32), linkIndex = await this.mac('link', token);
     const next = await this.transition(flow.flowId, current => {
       if (current.secretHash !== flow.secretHash || !['pending', 'code-revealed'].includes(current.state) || current.expiresAt <= this.now() || current.resends >= EMAIL_FLOW.resends) return false;
@@ -300,24 +315,35 @@ export class EmailFlow {
     if (input?.confirmed !== true) this.fail('confirmation_required', 'Confirm to continue.');
     const flow = typeof input?.flowId === 'string' && FLOW_ID.test(input.flowId) ? await this.store.get(input.flowId) : null, now = this.now();
     if (!await this.secretMatches(flow, input?.secret) || flow.expiresAt <= now || !['approved-same-browser', 'code-revealed'].includes(flow.state)) this.invalidFlow();
+    if (flow.purpose === 'sign-in') this.accountCap(flow, context);
     let via = 'same-browser';
     if (flow.state === 'code-revealed') {
       via = 'code';
-      // Failed codes are charged (spike §4.7): 20 per network prefix per hour, and the global budget, after which a code
-      // redemption needs a fresh Turnstile proof. Both are checked first without being charged (`peek`).
-      const prefix = await this.network(context, 'redeem'), prefixKey = prefix && `ef-r:${prefix}`, budget = { windowMs: EMAIL_FLOW_LIMITS.globalWindowMs, limit: globalRedeemBudget(await this.liveCodes()) };
-      if (prefixKey && !await this.limits.consume(prefixKey, { ...EMAIL_FLOW_LIMITS.redeemPrefix, peek: true })) this.fail('rate_limited', 'Too many attempts. Please wait before trying again.', { status: 429 });
-      if (!await this.limits.consume('ef-g', { ...budget, peek: true })) {
+      if (flow.codeExpiresAt <= now) { await this.transition(flow.flowId, current => { if (current.state !== 'code-revealed' || current.codeNonce !== flow.codeNonce) return false; current.state = 'expired'; current.outcome = 'code-expired'; current.endedAt = this.now(); }); this.invalidFlow(); }
+      // Every code attempt is reserved before any comparison (P3 security review L2), so parallel guesses cannot exceed a
+      // limit: the network prefix's 20 per hour and the global budget are charged first (a correct code spends one unit
+      // too), and once the global budget is spent a code redemption needs a fresh Turnstile proof (spike §4.7).
+      const prefix = await this.network(context, 'redeem'), budget = { windowMs: EMAIL_FLOW_LIMITS.globalWindowMs, limit: globalRedeemBudget(await this.liveCodes()) };
+      if (prefix && !await this.limits.consume(`ef-r:${prefix}`, EMAIL_FLOW_LIMITS.redeemPrefix)) this.fail('rate_limited', 'Too many attempts. Please wait before trying again.', { status: 429 });
+      if (!await this.limits.consume('ef-g', budget)) {
         if (typeof input.turnstileToken !== 'string' || input.turnstileToken.length > 4096 || !await identity.turnstile.verify({ token: input.turnstileToken, remoteIP: context.remoteIP, action: 'email', hostname: new URL(identity.config.origin).hostname })) this.fail('challenge_required', 'Complete the security check and enter the code again.', { status: 403 });
       }
-      const code = normalizeCode(input.code), matches = /^\d{6}$/.test(code) && flow.codeExpiresAt > now && secureEqual(flow.codeHash, await this.mac('code', `${flow.flowId}|${code}`));
-      if (flow.codeExpiresAt <= now) { await this.transition(flow.flowId, current => { if (current.state !== 'code-revealed' || current.codeNonce !== flow.codeNonce) return false; current.state = 'expired'; current.outcome = 'code-expired'; current.endedAt = this.now(); }); this.invalidFlow(); }
+      // The flow's own attempt is taken by CAS (at most 5 per revealed code) before the comparison. A reservation that
+      // cannot be made (the five are taken, the flow moved on, or the CAS kept losing) evaluates nothing.
+      let exhausted = false;
+      const reserved = await this.transition(flow.flowId, current => {
+        if (current.state !== 'code-revealed' || current.codeNonce !== flow.codeNonce || current.codeExpiresAt <= this.now()) return false;
+        if (current.codeAttempts >= EMAIL_FLOW.codeAttempts) { exhausted = true; return false; }
+        current.codeAttempts += 1;
+      });
+      if (!reserved) { if (exhausted) this.fail('flow_locked', 'Too many wrong codes. Start again.', { status: 400 }); this.invalidFlow(); }
+      const code = normalizeCode(input.code), matches = /^\d{6}$/.test(code) && secureEqual(reserved.codeHash, await this.mac('code', `${reserved.flowId}|${code}`));
       if (!matches) {
-        if (prefixKey) await this.limits.consume(prefixKey, EMAIL_FLOW_LIMITS.redeemPrefix);
-        await this.limits.consume('ef-g', budget);
-        const next = await this.transition(flow.flowId, current => { if (current.state !== 'code-revealed' || current.codeNonce !== flow.codeNonce) return false; current.codeAttempts += 1; if (current.codeAttempts >= EMAIL_FLOW.codeAttempts) { current.state = 'locked'; current.outcome = 'locked'; current.endedAt = this.now(); } });
-        if (next?.state === 'locked') this.fail('flow_locked', 'Too many wrong codes. Start again.', { status: 400 });
-        this.fail('invalid_code', 'That code does not match. Check the code on your other device.', { remaining: next ? EMAIL_FLOW.codeAttempts - next.codeAttempts : 0 });
+        if (reserved.codeAttempts >= EMAIL_FLOW.codeAttempts) {
+          await this.transition(flow.flowId, current => { if (current.state !== 'code-revealed' || current.codeNonce !== flow.codeNonce) return false; current.state = 'locked'; current.outcome = 'locked'; current.endedAt = this.now(); });
+          this.fail('flow_locked', 'Too many wrong codes. Start again.', { status: 400 });
+        }
+        this.fail('invalid_code', 'That code does not match. Check the code on your other device.', { remaining: EMAIL_FLOW.codeAttempts - reserved.codeAttempts });
       }
     }
     if (flow.purpose === 'sign-in') return this.signIn(flow, via, context, { secretHash: flow.secretHash });
@@ -335,11 +361,26 @@ export class EmailFlow {
     });
   }
 
-  /** `via`: 'same-browser' and 'complete-here' mint an `email` session, 'code' an `email-cross-device` one (N2). */
+  /** The multi-account cap (spike T16) before anything is consumed (P3 security review L4). The HTTP adapter passes the
+   * accounts this browser already holds as `context.accountMembers` = {owners, limit}; redeeming for an account that is
+   * already one of them replaces its session, so only a new account counts. A refusal consumes nothing and sends no
+   * notice: the person signs out of an account and redeems the same flow again. The adapter's installation keeps the
+   * same check as a backstop for a concurrent sign-in in the same browser (residual: that race still sends the notice
+   * of a session that was minted and then revoked). */
+  accountCap(flow, context) {
+    const members = context?.accountMembers;
+    if (!members || !Array.isArray(members.owners) || !Number.isSafeInteger(members.limit)) return;
+    if (!members.owners.includes(flow.accountId) && new Set(members.owners).size >= members.limit) this.fail('account_limit', 'Sign out of an account before adding another.', { status: 409 });
+  }
+
+  /** `via`: 'same-browser' and 'complete-here' mint an `email` session, 'code' an `email-cross-device` one (N2). The
+   * sign-in notice is queued in the same account write that mints the session, after the flow was consumed, and only
+   * once the account cap allowed it (L4). */
   async signIn(flow, via, context, guard) {
     const identity = this.identity, source = via === 'code' ? 'email-cross-device' : 'email';
     const first = await identity.repository.get(flow.accountId);
     if (!this.rebinds(flow, first)) { await this.transition(flow.flowId, current => { if (!live(current.state)) return false; current.state = 'expired'; current.outcome = 'rebind-failed'; current.endedAt = this.now(); }); this.invalidFlow(); }
+    this.accountCap(flow, context);
     if (!await this.consume(flow, via, guard)) this.invalidFlow();
     for (let attempt = 0, account = first; attempt < 4; attempt++, account = await identity.repository.get(flow.accountId)) {
       if (!this.rebinds(flow, account)) this.invalidFlow();
@@ -347,7 +388,8 @@ export class EmailFlow {
       identity.interactive(account, 'sign-in', context);
       const result = await identity.session(account, { source, emailAddress: flow.address });
       identity.audit(account, source === 'email' ? 'email-sign-in' : 'email-sign-in-cross-device');
-      identity.queueNotice(account, 'email-sign-in', result.sessionContext);
+      // The notice names the requesting device and coarse place (spike T3; display only, from the fixed vocabulary).
+      identity.queueNotice(account, 'email-sign-in', result.sessionContext, { requester: noticeRequester(flow.requester) });
       try { await identity.save(account, revision); } catch (error) { if (error?.code === 'conflict') continue; throw error; }
       return { ...result, source };
     }
@@ -387,6 +429,22 @@ export class EmailFlow {
     if (!next) this.fail('invalid_flow', 'This sign-up link expired. Start again with your email.');
     return next;
   }
+}
+/** The requester summary a sign-in notice carries: browser and system from the fixed vocabulary and the coarse place,
+ * or null when nothing is known. */
+export const noticeRequester = value => {
+  const { uaSummary, approxLocation } = requesterShape(value), browser = KNOWN_BROWSERS.has(uaSummary.browser) ? uaSummary.browser : null, system = KNOWN_SYSTEMS.has(uaSummary.system) ? uaSummary.system : null;
+  const location = approxLocation && Object.fromEntries(Object.entries({ city: place(approxLocation.city), region: place(approxLocation.region), country: /^[A-Z]{2}$/.test(approxLocation.country ?? '') ? approxLocation.country : null }).filter(([, v]) => v));
+  return browser || system || location && Object.keys(location).length ? { browser, system, location: location && Object.keys(location).length ? location : null } : null;
+};
+/** One plain-text line for a notice from `noticeRequester` output, or '' (rejects anything outside the vocabulary). */
+export function requesterLine(requester) {
+  if (!requester || typeof requester !== 'object') return '';
+  const browser = KNOWN_BROWSERS.has(requester.browser) ? requester.browser : null, system = KNOWN_SYSTEMS.has(requester.system) ? requester.system : null, at = requester.location && typeof requester.location === 'object' ? requester.location : {};
+  const where = [place(at.city), place(at.region), /^[A-Z]{2}$/.test(at.country ?? '') ? at.country : null].filter(Boolean).join(', ');
+  const device = browser && system ? `${browser} on ${system}` : browser ?? system;
+  if (!device && !where) return '';
+  return `Requested from ${[device, where && `near ${where}`].filter(Boolean).join(', ')} (approximate; a VPN can change the place).`;
 }
 const requesterShape = value => {
   const ua = value?.uaSummary ?? {}, location = value?.approxLocation;

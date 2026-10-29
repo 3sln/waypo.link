@@ -30,9 +30,11 @@ export function acceptWake(message, { flowId, channelTag }) {
 }
 /** The wake-up the helper posts after a same-browser approval. */
 export const wakeMessage = ({ flowId, channelTag }) => ({ v: 1, type: 'approved', flowId, tag: channelTag });
-/** The original tab's acknowledgement on the channel: it carries the flow id only. */
-export const ackMessage = flowId => ({ v: 1, type: 'ack', flowId });
-export const acceptAck = (message, flowId) => Boolean(message) && typeof message === 'object' && message.v === 1 && message.type === 'ack' && message.flowId === flowId;
+/** The original tab's acknowledgement on the channel, carrying the flow id and T like the wake-up (P3 security review
+ * I3), so an unrelated same-origin poster cannot make the helper say "Done" and skip its closed-tab offer. */
+export const ackMessage = ({ flowId, channelTag }) => ({ v: 1, type: 'ack', flowId, tag: channelTag });
+/** Whether a channel message is the original tab's acknowledgement for this flow: its id and its T (constant time). */
+export const acceptAck = (message, { flowId, channelTag }) => Boolean(message) && typeof message === 'object' && message.v === 1 && message.type === 'ack' && typeof message.flowId === 'string' && FLOW_ID.test(message.flowId) && message.flowId === flowId && typeof channelTag === 'string' && B64.test(channelTag) && sameValue(message.tag, channelTag);
 /** The stored flow record of the original tab: {v:1, flowId, secret, channelTag, maskedAddress?, expiresAt, interval}. */
 export function validStoredFlow(value, now = Date.now()) {
   return Boolean(value) && value.v === 1 && FLOW_ID.test(value.flowId ?? '') && B64.test(value.secret ?? '') && B64.test(value.channelTag ?? '') && Number.isSafeInteger(value.expiresAt) && value.expiresAt > now && value.expiresAt <= now + 900000 && (value.email === undefined || typeof value.email === 'string' && value.email.length <= 254);

@@ -92,6 +92,10 @@ export const stages={
     headers.set('Cross-Origin-Opener-Policy','same-origin');headers.set('X-Robots-Tag','noindex, nofollow');headers.set('Cache-Control','no-store');
     return new Response(request.method==='HEAD'?null:page.body,{status:page.status,headers});
    }
+   // I1 (P3 security review): the helper document is served only through /email/link above, with its own headers. Its
+   // static asset path answers like any unknown path (flag on or off), so it neither leaks the feature nor appears with
+   // the generic page policy.
+   if(/^\/email-link(?:\.html)?\/?$/.test(path))return securePage(new Response(request.method==='HEAD'?null:NOT_FOUND_PAGE,{status:404,headers:{'Content-Type':'text/html; charset=utf-8','Vary':'Accept'}}));
    if(path==='/preferences'&&request.method==='GET'){const page=await env.ASSETS.fetch(new Request(new URL('/authorize.html',url),request));return passthrough(securePage(await brandPage(page,env)));}
    if(path.startsWith('/users/')||path==='/integrations/google/complete'||path==='/mcp/consent'||path==='/unsubscribe'||path==='/waitlist/confirm'||path==='/waitlist/leave'||path==='/email/confirm'||path==='/email/login'||path==='/device'||path==='/device/approve'||path.startsWith('/artefacts/')){
      if(path.startsWith('/artefacts/'))return passthrough(env.ASSETS.fetch(request));

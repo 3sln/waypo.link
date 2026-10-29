@@ -345,8 +345,8 @@ class Reader {
     if (t === 4) {
       this.need(1); if (this.b[this.pos] !== 0x82) fail('decimal', 'A decimal must be a two-element array.');
       const [exponent, mantissa] = this.item(depth + 1);
-      if (typeof exponent !== 'number' || !Number.isInteger(exponent) || exponent >= 0 || exponent < this.limits.minDecimalExponent) fail('decimal', 'A decimal exponent must be a negative integer within the profile bound.');
-      if (typeof mantissa !== 'number' && typeof mantissa !== 'bigint' || typeof mantissa === 'number' && !Number.isInteger(mantissa)) fail('decimal', 'A decimal mantissa must be an integer.');
+      if (typeof exponent !== 'number' || !Number.isSafeInteger(exponent) || exponent >= 0 || exponent < this.limits.minDecimalExponent) fail('decimal', 'A decimal exponent must be a negative integer within the profile bound.');
+      if (typeof mantissa !== 'number' && typeof mantissa !== 'bigint' || typeof mantissa === 'number' && !Number.isSafeInteger(mantissa)) fail('decimal', 'A decimal mantissa must be an integer.');
       const m = BigInt(mantissa); if (m === 0n || m % 10n === 0n) fail('decimal', 'A decimal must be normalized.');
       return new BindleDecimal(m, exponent);
     }

@@ -147,7 +147,8 @@ export class TransferEvidence extends Query{
  static deps=['identity'];constructor(context){super();this.context=context;}
  async fetch({identity}){
   const {account,session}=await identity.authorized({...this.context,requireCurrentTerms:false},true);
-  const credential=account.credentials.find(entry=>entry.id===session.credentialId);
+  // H1 (P3 security review): a passkey still provisional (added under email authority, 24 h) is no known-device evidence.
+  const credential=session.source==='credential'?account.credentials.find(entry=>entry.id===session.credentialId&&!identity.provisionalAt(account,entry.id)):undefined;
   // `stepUpCredentialId`: the credential that confirmed the step-up (P17 compares it), beside the sign-in credential.
   const used=session.stepUpCredential,stepUpCredentialId=used?.kind==='passkey'&&typeof used.id==='string'?used.id:null;
   return {owner:account.id,stepUpAt:Number.isSafeInteger(session.stepUpAt)?session.stepUpAt:null,sessionId:await identity.sessionID(session),sessionCreatedAt:session.createdAt,...credential?{credentialId:credential.id,credentialCreatedAt:credential.createdAt}:{},...stepUpCredentialId?{stepUpCredentialId}:{}};

@@ -184,7 +184,7 @@ test('budgets: 20 failed code redemptions per network prefix per hour; the globa
   await g.engine.container.use(['identity'], ({ identity }) => { identity.emailFlow().liveCodes = async () => 1e9; });
   const one = await g.start('alice@mail.example'), two = await g.start('alice@mail.example');
   const c1 = (await g.act('emailLinkReveal', { t: one.token, confirmed: true }, g.other())).code, c2 = (await g.act('emailLinkReveal', { t: two.token, confirmed: true }, g.other())).code;
-  assert.equal((await g.act('emailFlowRedeem', { flowId: one.flowId, secret: one.secret, code: c1, confirmed: true }, g.R())).source, 'email-cross-device', 'a correct code is never charged');
+  assert.equal((await g.act('emailFlowRedeem', { flowId: one.flowId, secret: one.secret, code: c1, confirmed: true }, g.R())).source, 'email-cross-device', 'a correct code redeems (it spends one budget unit, reserved before the comparison: L2)');
   await g.engine.container.use(['identity'], async ({ identity }) => { for (let i = 0; i < GLOBAL_REDEEM_FLOOR; i++) await identity.linkedLimits.consume('ef-g', { windowMs: 3600000, limit: GLOBAL_REDEEM_FLOOR }); });
   await assert.rejects(g.act('emailFlowRedeem', { flowId: two.flowId, secret: two.secret, code: c2, confirmed: true }, g.R()), fault('challenge_required'));
   assert.equal((await g.act('emailFlowRedeem', { flowId: two.flowId, secret: two.secret, code: c2, confirmed: true, turnstileToken: 'verified' }, g.R())).source, 'email-cross-device');
@@ -345,7 +345,9 @@ test('sign-up: create-account link → original tab confirms terms and age → p
   const begin = await w.act('credentialBegin', { label: 'Laptop' }, owner);
   await w.act('credentialFinish', { challengeId: begin.challengeId, response: passkeyResponse(begin, 'pk-new') }, owner);
   assert.equal((await w.owner(owner)).account.hostItems, undefined);
-  const added = (await w.repository.get(pending.account.id)).credentials[0]; assert.equal(added.addedBy.session, 'email'); assert.equal(added.provisionalUntil, undefined);
+  const added = (await w.repository.get(pending.account.id)).credentials[0]; assert.equal(added.addedBy.session, 'email');
+  // Coordinator decision 2026-10-29 (provisional; P3 security review H1): a passkey from any email session is provisional for 24 h.
+  assert.equal(added.provisionalUntil, w.clock.now() + DAY);
 });
 
 test('passkey suggestion: informational, dismissible, repeats at most once after 30 days, gone once a passkey exists', () => {
@@ -380,7 +382,7 @@ test('sign-up via a code from another device: the account opens with an email-cr
   const signedIn = await signInPasskey(w.act, 'tvuser', 'pk-tv');
   const after = await w.repository.get(id), session = after.sessions.at(-1);
   const freshness = await w.engine.container.use(['identity'], ({ identity }) => [identity.authAt(session), identity.approvalAuthAt(after, session)]);
-  assert.equal(freshness[0], w.clock.now()); assert.equal(freshness[1], -Infinity, 'a provisional passkey proves nothing for LA-7');
+  assert.equal(session.source, 'passkey-provisional'); assert.equal(freshness[0], -Infinity, 'a provisional passkey gives no recent authentication (H1)'); assert.equal(freshness[1], -Infinity, 'a provisional passkey proves nothing for LA-7');
   assert.equal((await w.owner(sessionContext(signedIn))).credentials[0].provisionalUntil, credential.provisionalUntil);
   w.clock.advance(DAY);
   const later = await signInPasskey(w.act, 'tvuser', 'pk-tv'), record2 = await w.repository.get(id);

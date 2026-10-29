@@ -204,7 +204,7 @@ export class LinkedApproval {
   // One fresh credential confirmation at approval for both kinds (DEVLOG 2026-10-20): a passkey sign-in or step-up within
   // 5 minutes (passwords dropped, owner approval 2026-10-28). Linked-approval, email-link and recovery sessions count only after their own step-up.
   // An app approval's confirmation must also postdate the request, binding the step-up to this approval (review LA2-S7).
-  // N2: a provisional passkey (added from an `email-cross-device` session, 24 h) never satisfies this (`approvalAuthAt`).
+  // N2/H1: a provisional passkey (added from any email session, 24 h) never satisfies this (`approvalAuthAt`).
   fresh(session, request, account) { const at = this.identity.approvalAuthAt ? this.identity.approvalAuthAt(account, session) : this.identity.authAt(session); return at + LINKED.freshMs > this.now() && (request?.kind !== 'app' || at >= request.createdAt); }
   idleMs() { return appIdleMs(this.identity.config.appRefreshIdleMs); }
   async review(request, account, session, context) {
@@ -256,7 +256,7 @@ export class LinkedApproval {
     // Wargame round 3 D5: an approval always leaves the device one maximum poll interval to collect it (RFC 8628 §3.5),
     // so an approval in the last interval before pendingUntil is not answered with expired_token.
     request.pendingUntil = Math.max(pendingUntil(request), now + LINKED.maxInterval * 1000); request.expiresAt = Math.max(request.expiresAt ?? 0, request.pendingUntil);
-    request.approval = { sessionId: await identity.sessionID(session), sessionHash: session.hash, sessionExpiresAt: session.expiresAt, authAt: identity.authAt(session), approvedAt: now, choice, ...lifetime, ...input.consent !== undefined ? { consent: structuredClone(input.consent) } : {} };
+    request.approval = { sessionId: await identity.sessionID(session), sessionHash: session.hash, sessionExpiresAt: session.expiresAt, authAt: identity.authAt(session, account), approvedAt: now, choice, ...lifetime, ...input.consent !== undefined ? { consent: structuredClone(input.consent) } : {} };
     if (!await this.save(request, revision)) this.fail('conflict', 'This request was already decided.');
     await this.notify(request);
     return { approved: true, requestId: request.id, kind: request.kind, ...lifetime };

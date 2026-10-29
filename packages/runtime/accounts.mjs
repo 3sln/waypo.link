@@ -124,7 +124,8 @@ export class IdentityRepository {
   async setSystemAdmission(handle,digest,binding){return this.shardSystemStep(handle,digest,binding,'admitted');}
   async setSystemCanonical(handle,digest,binding,canonical){return this.shardSystemStep(handle,digest,binding,'canonical',canonical);}
   async finishSystemIdentity(handle,digest,binding){const claim=await this.shardHandleLookup(handle),account=claim&&await this.get(claim.owner);if(!account||account.assignmentId!==claim.assignmentId||account.handle!==claim.bootstrap?.canonical||!sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker))return null;return this.shardSystemStep(handle,digest,binding,'consumed');}
-  async findByEmail(email) { const id=await this.metadata.get(`email/${email}`); return id ? this.get(id) : null; }
+  // T13 (P3 security review L3): a miss reads a random account key, so known and unknown addresses do the same reads.
+  async findByEmail(email) { const id=await this.metadata.get(`email/${email}`); if(!id){await this.get(globalThis.crypto.randomUUID());return null;} return this.get(id); }
   async create(account) {
     return this.metadata.transaction(async tx=>{
       if(account.onboardingIdentity){const handle=onboardingAlias(account),claim=handle&&await tx.get(`identity-namespace/${handle}`);if(account.systemIdentity||claim?.state!=='operator-alias'||claim.owner!==account.id||claim.assignmentId!==account.assignmentId||claim.onboarding?.phase!=='claiming'||!claim.onboarding.admitted||claim.onboarding.canonical!==account.handle||!sameOnboardingIdentity(account.onboardingIdentity,claim.onboarding.marker))return false;}

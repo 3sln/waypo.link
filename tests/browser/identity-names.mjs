@@ -85,6 +85,16 @@ for(const method of ['passkey'])test(`inline ${method} confirmation retries the 
  }finally{cancelStepUp(f.browser);await pending;await f.engine.dispose();}
 });
 
+test('a step-up while every passkey is provisional says when the passkey can confirm changes, in both languages, and offers no ceremony (H1)',{timeout:5000},async()=>{
+ const f=await fixture();let pending;try{
+  const until=Date.UTC(2026,9,30,12,0);f.api.request=async path=>{if(path.endsWith('/begin'))return {passkey:false,provisionalUntil:until};throw Object.assign(Error('Confirm first'),{code:'reauthentication_required',status:403});};
+  f.browser.consumeSubmission=()=>({handle:'7alias',confirmed:'on'});const ready=promptReady(f);pending=f.act(new ClaimHandle({operationId:'original'})).catch(()=>{});const prompt=await ready;
+  assert.equal(prompt.passkey,false);assert.equal(prompt.provisionalUntil,until);
+  const en=render(stepUpView,await f.read(),'en');assert.match(en.textContent,/added from an email sign-in less than 24 hours ago/);assert.equal(/Confirm with passkey/.test(en.textContent),false);assert.equal(/no passkey yet/.test(en.textContent),false);
+  const es=render(stepUpView,await f.read(),'es');assert.match(es.textContent,/hace menos de 24 horas/);
+ }finally{cancelStepUp(f.browser);await pending;await f.engine.dispose();}
+});
+
 test('wrong credentials and canceled passkey ceremonies retain the owner and prompt; cancel discards the pending action',{timeout:5000},async()=>{
  const f=await fixture();let pending;try{
   let claims=0,stepUps=0;f.api.request=async path=>{if(path.endsWith('/begin'))return {passkey:true,authenticationOptions:{challenge:'one'}};if(path.endsWith('/step-up')&&++stepUps)throw Object.assign(Error('Authentication failed.'),{status:401});claims++;throw Object.assign(Error('Confirm first'),{code:'reauthentication_required',status:403});};

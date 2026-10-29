@@ -300,8 +300,10 @@ export class ShardedIdentityRepository {
   }
   async get(id){return (await this.read('account',id))?.value || null;}
   async getDevice(id){return (await this.read('device',id))?.value || null;}
-  async find(kind,value,recordKind,field){
-    const bucket=await this.bucket(kind,value),link=await bucket.shardLookup(kind,value);if(!link)return null;
+  /** `uniform`: on a miss, read a random record key of `recordKind` as well, so a hit and a miss make the same shard
+   * reads (T13, P3 security review L3: email sign-in start must not reveal whether an address is known). */
+  async find(kind,value,recordKind,field,{uniform=false}={}){
+    const bucket=await this.bucket(kind,value),link=await bucket.shardLookup(kind,value);if(!link){if(uniform)await this.read(recordKind,crypto.randomUUID());return null;}
     const state=await this.read(recordKind,link.owner),matches=typeof field==='function'?Boolean(state?.value)&&field(state.value,value):state?.value?.[field]===value;
     if(!this.active(state,link)||!matches){
       // A pending operation may still own this claim; leave it for recovery.
@@ -350,7 +352,7 @@ export class ShardedIdentityRepository {
   async setSystemAdmission(handle,digest,binding){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'admitted');}
   async setSystemCanonical(handle,digest,binding,canonical){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'canonical',canonical);}
   async finishSystemIdentity(handle,digest,binding){const claim=await (await this.bucket('namespace',handle)).shardHandleLookup(handle),account=claim&&await this.get(claim.owner);if(!account||account.assignmentId!==claim.assignmentId||account.handle!==claim.bootstrap?.canonical||!sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker))return null;return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'consumed');}
-  findByEmail(email){return this.find('email',email,'account',(account,address)=>indexedEmails(account).includes(address));}
+  findByEmail(email){return this.find('email',email,'account',(account,address)=>indexedEmails(account).includes(address),{uniform:true});}
   findDeviceByCode(code){return this.find('device-code',code,'device','userCodeHash');}
   async write(kind,id,revision,value){
     await this.read(kind,id);

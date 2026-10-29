@@ -15,7 +15,7 @@ export function freshAPI(r,ctx){const invoke=async(method,args)=>{
   const id=crypto.randomUUID(),options=await r.api.request('/api/auth/step-up/begin',{});if(!live())throw Error('Account changed.');
   const confirmed=new Promise((resolve,reject)=>waiting.set(r.browser,{id,live,resolve,reject}));
   const invalidate=()=>{if(live())return;cancelStepUp(r.browser);if(snapshot(r).stepUp?.id===id)publish(r,ctx,{stepUp:null});};ctx.engineFeed.addEventListener('browser-state-updated',invalidate);
-  publish(r,ctx,{stepUp:{id,passkey:options.passkey===true,authenticationOptions:options.authenticationOptions},busy:false,modal:null,error:'',notice:''});r.browser.focus?.('.step-up h2');
+  publish(r,ctx,{stepUp:{id,passkey:options.passkey===true,authenticationOptions:options.authenticationOptions,...Number.isSafeInteger(options.provisionalUntil)?{provisionalUntil:options.provisionalUntil}:{}},busy:false,modal:null,error:'',notice:''});r.browser.focus?.('.step-up h2');
   try{await confirmed;}finally{ctx.engineFeed.removeEventListener('browser-state-updated',invalidate);}if(!live())throw Error('Account changed.');if(!r.state.reserve())throw Error('Please try again.');publish(r,ctx,{});
   return r.api[method](...args);
  }
