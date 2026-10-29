@@ -9,7 +9,7 @@ for(const browserName of ['chromium','firefox']){
   const context=await browser.newContext({viewport:{width,height},colorScheme});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(10000);
   const errors=[],missing=[],unhashed=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});page.on('response',r=>{if(r.status()===404)missing.push(r.url());});page.on('request',r=>{if(/\/(?:assets\/apps|assets\/packages|packages)\/.+\.(?:mjs|js)$/.test(new URL(r.url()).pathname)&&! /\.[a-f0-9]{10}\.(?:mjs|js)$/.test(r.url()))unhashed.push(r.url());});
-  const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'quality',status:'active',hasPassword:true,consoleFeatures:{organizationsEnabled:true,accountExportEnabled:true,overQuotaRetentionEnabled:true}};
+  const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'quality',status:'active',consoleFeatures:{organizationsEnabled:true,accountExportEnabled:true,overQuotaRetentionEnabled:true}};
   await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname;let value={};
    if(path==='/api/config')value={origin:baseURL,providers:{},localDevelopment:true,integrationsEnabled:false,organizationsEnabled:true};
    if(path==='/api/session')value={account,sessionContext:'quality',csrfToken:'csrf'};

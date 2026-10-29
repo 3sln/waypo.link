@@ -19,7 +19,7 @@ function fixture(random){
  const guard=new FixedWindowGuard({metadata:db()}),passwordHasher={hash:async x=>'hash:'+x,verify:async(x,h)=>h==='hash:'+x},rateLimiter={check:async()=>true},webauthn={registrationOptions:async()=>({challenge:'reg'}),authenticationOptions:async()=>({challenge:'auth'})};
  let admin;
  const onboarding=onboardingPort({config,repository,authority:{consumeSignup:(_,input)=>guard.consumeSignup(input)},clock:clock.now,runtimeName:(name,digest)=>admin.runtimeName(name,digest),redeemName:(name,digest)=>admin.redeemName(name,digest)});
- const identity=new IdentityService({repository,onboarding,clock:clock.now,reservedHandle:name=>admin.isReserved(name),config:{...config,origin,rpID:'admin.example',termsVersion:'v1'},turnstile:{verify:async()=>true},rateLimiter,webauthn,passwordHasher});
+ const identity=new IdentityService({repository,onboarding,clock:clock.now,reservedHandle:name=>admin.isReserved(name),config:{...config,origin,rpID:'admin.example',termsVersion:'v1'},turnstile:{verify:async()=>true},rateLimiter,webauthn});
  admin=new AdminService({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock:clock.now,config});
  const ctx=(extra={})=>({origin,remoteIP:'192.0.2.9',...extra});
  async function boot(){const token=mintBootToken(origin,{now:clock.now()});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);await admin.bootStart({bootToken:token},ctx({setupBinding:'boot-browser'}));const result=await admin.bootComplete({bootToken:token,method:'password',password:'long boot operator password',acknowledgeExpiry:true},ctx({setupBinding:'boot-browser'}));return ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken});}
@@ -32,7 +32,7 @@ test('chaos: revoking a claim while it is redeemed serializes on the claim recor
   const boot=await f.boot(),name='staff-member';await f.admin.reserve({name},boot);const minted=await f.admin.mintClaim({name},boot);
   const onboardingToken=decodeURIComponent(minted.link.split('#token=')[1]),setup=f.ctx({setupBinding:'claim-browser'});
   const [redeem,revoke]=await f.scheduler.run([
-   ()=>f.identity.claimOnboarding({onboardingToken,name,method:'password',password:'long internal account password',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},setup),
+   ()=>f.identity.claimOnboarding({onboardingToken,name,method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},setup),
    ()=>f.admin.revokeClaim({nonce:minted.nonce},boot)]);
   const trace=`trace ${f.scheduler.trace.join(' | ')}`,claim=await f.storage.get('claim/'+minted.nonce),row=await f.repository.onboardingLookup(name);
   assert.notEqual(redeem.status===revoke.status,true,`exactly one of redemption and revocation wins; ${trace}`);

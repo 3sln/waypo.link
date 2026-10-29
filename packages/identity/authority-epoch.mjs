@@ -6,7 +6,7 @@
 // organizations compare against the highest epoch they recorded for a membership (ORG-2 `observeAuthority`).
 //
 // It is deliberately narrower than `account.security.epoch` (DX-6), which also rises on routine credential changes
-// (adding a passkey, setting a password, changing email). Every `aep` increase is an authority reset at every
+// (adding a passkey, changing email). Every `aep` increase is an authority reset at every
 // organization the person belongs to, which holds their governance powers there, so it rises ONLY on:
 //   recovery      a recovery-file recovery completes (IdentityService#confirmRecovery): whoever completes it
 //                 inherits the identity (review R1-H3);
@@ -50,10 +50,10 @@ export function identityAuthorityEpochPort(repository) {
 
 /** Trusted same-host step-up evidence for dangerous organization elevation decisions. Never accepts wire input. */
 export function organizationVerification(account,session){
- const used=session?.stepUpCredential,enrolledAt=used?.kind==='passkey'?account.credentials?.find(c=>c.id===used.id)?.createdAt:used?.kind==='password'&&account.passwordHash?account.passwordSetAt:undefined;
+ const used=session?.stepUpCredential,enrolledAt=used?.kind==='passkey'?account.credentials?.find(c=>c.id===used.id)?.createdAt:undefined;
  const securityChangedAt=account.security===undefined?0:account.security?.changedAt;
  return Number.isSafeInteger(enrolledAt)&&enrolledAt>=0&&Number.isSafeInteger(securityChangedAt)&&securityChangedAt>=0&&Number.isSafeInteger(session?.stepUpAt)?{enrolledAt,securityChangedAt,stepUpAt:session.stepUpAt,
   // For the organization recovery-file reissue (packages/orgs/ownership.mjs): a passkey step-up is required when the
   // account has any passkey (coordinator decision 2026-10-23, the personal-reissue rule (a)).
-  hasPasskey:(account.credentials??[]).length>0,method:used.kind==='passkey'?'passkey':'password'}:null;
+  hasPasskey:(account.credentials??[]).length>0,method:'passkey'}:null;
 }

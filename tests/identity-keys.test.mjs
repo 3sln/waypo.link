@@ -13,6 +13,7 @@ import { KEY_PURPOSES, IdentityKeyRegistry, createIdentityKeyEngine, performKeyA
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';
 import { createNodeServer } from '../apps/node/server.mjs';
+import { softAuthenticator, signupBody, registerPending } from './helpers/soft-passkey.mjs';
 
 const OWNER = '11111111-1111-4111-8111-111111111111', OTHER = '22222222-2222-4222-8222-222222222222', ISSUER = 'https://3sln.example';
 const KEK = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
@@ -191,13 +192,15 @@ test('seeded concurrency: rotations, revocation and ensure interleave without tw
 
 // Recovery boundary (docs/3sln/accounts/recovery-identity.md): recovery file v3 holds no keys, so a signing rotation
 // never affects the current file, and a recovery never creates, restores or compares keys.
-const origin = 'http://localhost:8788', password = 'Portable recovery runtime test password!', challenge = 'local-browser-test-token';
+const origin = 'http://localhost:8788', challenge = 'local-browser-test-token';
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 async function runtime(t) {
   const directory = await mkdtemp(join(tmpdir(), 'identity-keys-runtime-')), app = await createNodeServer({ directory, config: {} });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
   const request = async (path, input) => { const response = await app.fetch(new Request(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) })); return { status: response.status, value: await response.json() }; };
-  const pending = (await request('/api/auth/signup', { method: 'password', password, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge })).value;
+  const send = async (path, input) => (await request(path, input)).value;
+  const pending = await send('/api/auth/signup', signupBody({ ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge }));
+  await registerPending(softAuthenticator({ origin }), send, pending);
   const file = (await request('/api/auth/recovery/download', { pendingToken: pending.pendingToken })).value;
   assert.equal((await request('/api/auth/recovery/confirm', { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true })).status, 200);
   const id = pending.account.id, recover = () => request('/api/auth/recover', { recoveryToken: file.recoveryToken, turnstileToken: challenge });

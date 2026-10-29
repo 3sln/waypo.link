@@ -17,11 +17,11 @@ import {stages as identityStages} from '../packages/runtime/routes/identity.mjs'
 import {ORG_CLAIM_ABORT_PATH,ORG_CLAIM_ABORT_API,orgClaimAbortScript,orgClaimRenderStamp,POST_FLOOR_MS} from '../packages/runtime/routes/org-claim-abort.mjs';
 import {PaidCheckoutAllowed} from '../packages/identity/age-policy.mjs';
 import {personActor} from '../packages/orgs/authority.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeHasher,fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 import {fakeClock} from '../packages/app/memory-providers.mjs';
 import {fakeOrgPolar,ORG_POLAR_CONFIG} from './helpers/org-polar.mjs';
 
-const ORIGIN='http://localhost:8788',PASSWORD='Break-glass runtime password, long enough!',DAY=86400000;
+const ORIGIN='http://localhost:8788',DAY=86400000;
 async function fixture(t){
  // The clock starts 40 days back so the 31-day advance stays before real time: the owner-route actor resolves admin
  // powers against real time (packages/orgs/authority.mjs), the writers against LIFECYCLE_CLOCK.
@@ -34,20 +34,20 @@ async function fixture(t){
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
  const signals=[];
  // The identity service with the sign-in hook wired exactly as apps/node/server.mjs wires it.
- const identity=new IdentityService({repository,clock:clock.now,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,
+ const identity=new IdentityService({repository,clock:clock.now,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),passwordHasher:fakeHasher,
   organizationSignals:{liveness:async(owner,input)=>{const result=await accounts.get(owner).invoke({method:'orgsBreakGlassOwnerSignal',args:[owner,input]});signals.push({owner,...input,result});return result;}},
   config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const base={origin:ORIGIN,remoteIP:'127.0.0.1'};
  const env={...ORG_POLAR_CONFIG,...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATION_BILLING_CLIENT:polar.client};
  const person=async()=>{
-  const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id);
   const call=async(method,path,{input,verification,owner,routeEnv=env}={})=>{
    const request=new Request(ORIGIN+path,{method,headers:input?{'Content-Type':'application/json'}:{},...input?{body:JSON.stringify(input)}:{}});
    const record=await repository.get(id);
-   const response=await stages.owner({request,env:routeEnv,url:new URL(request.url),path,id,object,context:{remoteIP:'127.0.0.1'},owner:owner??{devices:[]},actor:personActor({owner:id,iss:ORIGIN,authTime:clock.now(),verification:verification===undefined?{stepUpAt:clock.now(),enrolledAt:record.passwordSetAt,securityChangedAt:record.security?.changedAt??0}:verification||undefined})})
+   const response=await stages.owner({request,env:routeEnv,url:new URL(request.url),path,id,object,context:{remoteIP:'127.0.0.1'},owner:owner??{devices:[]},actor:personActor({owner:id,iss:ORIGIN,authTime:clock.now(),verification:verification===undefined?{stepUpAt:clock.now(),enrolledAt:record.credentials[0]?.createdAt,securityChangedAt:record.security?.changedAt??0}:verification||undefined})})
     .catch(error=>new Response(JSON.stringify({error:error.code,message:error.message}),{status:error.status??500}));
    return {status:response.status,body:await response.json()};
   };
@@ -56,9 +56,11 @@ async function fixture(t){
  /** Full HTTP through the Node application (the router's CSRF, budget and stage order), with no session cookie. */
  const http=(path,{method='GET',body,ip='192.0.2.10',origin=ORIGIN}={})=>app.fetch(new Request(ORIGIN+path,{method,headers:{'CF-Connecting-IP':ip,...body?{'Content-Type':'application/json',Origin:origin}:{}},...body?{body:JSON.stringify(body)}:{}}));
  const quiet=async id=>{for(;;){const r=await repository.get(id),revision=r.revision;r.lastInteractiveAt=clock.now()-60*DAY;r.revision=revision+1;if(await repository.compareAndSwap(id,revision,r))return;}};
- const setEmail=async(id,email)=>{for(;;){const r=await repository.get(id),revision=r.revision;r.verifiedEmail=email;r.emailVerifiedAt=clock.now();r.revision=revision+1;if(await repository.compareAndSwap(id,revision,r))return;}};
+ const setEmail=async(id,email)=>{for(;;){const r=await repository.get(id),revision=r.revision;r.emails=[{address:email,state:'verified',verifiedAt:clock.now(),notices:true,source:'linked',addedBy:{session:'passkey',at:clock.now()}}];r.revision=revision+1;if(await repository.compareAndSwap(id,revision,r))return;}};
  return {app,env,accounts,repository,identity,person,http,clock,polar,mail,signals,setEmail,quiet,secretEnv};
 }
+/** A passkey sign-in of person `x` (credential `passkey-<id>`, registered at signup). */
+const signIn=async(f,x)=>{const ctx={origin:ORIGIN,remoteIP:'127.0.0.1'},begin=await f.identity.beginPasskeyLogin({handle:x.handle,turnstileToken:'ok'},ctx);return f.identity.finishPasskeyLogin({challengeToken:begin.challengeToken,response:passkeyResponse(begin,'passkey-'+x.id)},ctx);};
 const drain=async(f,org)=>{for(let i=0;i<6;i++)await accountHandle(f.env,org).orgsBillingSync(org);};
 
 test('runtime: hints and the person route, sign-in liveness through the personâ€™s account, signed-in abort, flag gating and the checkout gate',async t=>{
@@ -95,14 +97,14 @@ test('runtime: hints and the person route, sign-in liveness through the personâ€
  // Review M1: the first delivery fails (the organization is unreachable); the signal stays queued in A's account and the
  // account alarm delivers it later.
  const person=f.accounts.get(a.id),reach=person.config.CONVERSATION_ACCOUNT;person.config.CONVERSATION_ACCOUNT=sub=>sub===org?{invoke:async()=>({$fault:{code:'temporarily_unavailable',message:'down',status:503}})}:reach(sub);
- await f.identity.loginPassword({handle:a.handle,password:PASSWORD,turnstileToken:'ok'},{origin:ORIGIN,remoteIP:'127.0.0.1'});await f.identity.settleBackground();
+ await signIn(f,a);await f.identity.settleBackground();
  assert.deepEqual(f.signals.map(s=>[s.owner,s.kind,s.result?.signalled]),[[a.id,'sign-in',0]]);
  const queued=(await a.call('GET',`/api/orgs/${org}/break-glass`)).body.claim;assert.equal(queued.state,'waiting','nothing reached the organization yet');
  person.config.CONVERSATION_ACCOUNT=reach;f.clock.advance(2*3600000);await person.orgsAlarm();
  assert.equal((await a.call('GET',`/api/orgs/${org}/break-glass`)).body.claim.state,'held-for-support','the retried signal holds the claim');
  assert.equal([...(await person.metadata.list({prefix:'orgs/break-glass-signal/'})).keys()].length,0,'the delivered row is removed');
  // B (no claim of their own) signs in: one hint read, no signal.
- await f.identity.loginPassword({handle:b.handle,password:PASSWORD,turnstileToken:'ok'},{origin:ORIGIN,remoteIP:'127.0.0.1'});await f.identity.settleBackground();assert.equal(f.signals.at(-1).result.signalled,0);
+ await signIn(f,b);await f.identity.settleBackground();assert.equal(f.signals.at(-1).result.signalled,0);
  // The interstitial's abort: a session created after T1 with no step-up is no proof; a session from before T1 is.
  const after={devices:[{current:true,createdAt:f.clock.now()}]},before={devices:[{current:true,createdAt:paid.createdAt-1000}]};
  assert.equal((await a.call('POST',`/api/orgs/${org}/break-glass`,{input:{operation:'abort',claim},verification:false,owner:after})).body.error,'owner_proof_required');

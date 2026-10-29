@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { IdentityAction } from '../packages/identity/index.mjs';
 import { normalizeHandle, encodeFreeHandleNumber, validatePaidHandle, isReservedHandle, isFreeHandle, MAX_FREE_HANDLE_NUMBER, RESERVED_HANDLES } from '../packages/identity/handles.mjs';
 import { createRandom, fakeClock } from './helpers/chaos.mjs';
-import { identityEngine, activate, signupInput, sessionContext, context, memoryShards, PASSWORD } from './helpers/identity-engine.mjs';
+import { identityEngine, activate, signupInput, sessionContext, context, memoryShards, signInPasskey, stepUpPasskey, passkeyResponse } from './helpers/identity-engine.mjs';
 
 // Engine-level identity edges: the real IdentityService dispatched through ngin
 // with in-memory resources and a fake clock. Behaviour and invariants only.
@@ -34,7 +34,7 @@ test('portable signup stores the canonical handle so case variants can neither d
   assert.equal(owner.account.handle, 'alice');
   await assert.rejects(act('signup', signupInput({ handle: 'ALICE' })), { code: 'handle_unavailable' });
   assert.equal(repository.records.size, 1);
-  assert.equal((await act('loginPassword', signupInput({ handle: 'aLiCe' }))).account.id, owner.account.id);
+  assert.equal((await signInPasskey(act, 'aLiCe', 'passkey-Alice')).account.id, owner.account.id);
 });
 
 test('allocated free handles ignore requested names, never repeat, and log in through case/confusable variants', async () => {
@@ -44,13 +44,14 @@ test('allocated free handles ignore requested names, never repeat, and log in th
   assert.equal(new Set(handles).size, handles.length); assert(handles.every(isFreeHandle));
   for (const handle of handles) {
     const variant = 'N.' + handle.slice(2).toUpperCase().replaceAll('0', 'o').replaceAll('1', 'l');
-    assert.equal((await act('loginPassword', signupInput({ handle: variant }))).account.handle, handle);
+    assert.equal((await signInPasskey(act, variant, 'passkey-alice')).account.handle, handle);
   }
 });
 
 test('per-account state stays bounded: sessions, audit trail and login challenges have hard caps and evict oldest first', async () => {
-  const { act, service, repository, owner } = identityEngine(), { owner: first } = await activate(act), tokens = [];
-  for (let i = 0; i < 105; i++) tokens.push(await act('loginPassword', signupInput()));
+  const { act, service, repository, owner, clock } = identityEngine(), { owner: first } = await activate(act), tokens = [];
+  // Passkey sign-in keeps at most 32 live replay nonces (5 minutes each), so the sign-ins are spaced 10 s apart.
+  for (let i = 0; i < 105; i++) { clock.advance(10000); tokens.push(await signInPasskey(act, 'alice', 'passkey-alice')); }
   const stored = await repository.get(first.account.id);
   assert(stored.sessions.length <= 10, `sessions ${stored.sessions.length}`); assert(stored.audit.length <= 100, `audit ${stored.audit.length}`);
   for (const result of tokens.slice(-9)) assert.equal((await owner(sessionContext(result))).account.id, first.account.id);
@@ -61,7 +62,7 @@ test('per-account state stays bounded: sessions, audit trail and login challenge
 
 test('expiry boundaries are exclusive: sessions, recent-auth and setup authority end exactly at their deadline', async () => {
   const clock = fakeClock(), { act, service, owner } = identityEngine({ clock });
-  const pending = await act('signup', signupInput());
+  const pending = await act('signup', signupInput()); await act('registerPasskey', { pendingToken: pending.pendingToken, response: passkeyResponse(pending, 'passkey-alice') });
   clock.advance(1800000 - 1); const file = await act('downloadRecovery', pending);
   clock.advance(1); await assert.rejects(act('confirmRecovery', { ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }), { code: 'unauthorized' });
   const { ownerContext, owner: session } = await activate(act, signupInput({ handle: 'bobby' }));
@@ -73,16 +74,16 @@ test('expiry boundaries are exclusive: sessions, recent-auth and setup authority
 
 test('revoking other devices reports and removes only live sessions; expired ones never count', async () => {
   const clock = fakeClock(), { act, service } = identityEngine({ clock }), { owner } = await activate(act);
-  await act('loginPassword', signupInput()); clock.advance(owner.expiresAt - clock.now() - 1000);
-  const fresh = await act('loginPassword', signupInput()), other = await act('loginPassword', signupInput()); clock.advance(2000);
+  await signInPasskey(act, 'alice', 'passkey-alice'); clock.advance(owner.expiresAt - clock.now() - 1000);
+  const fresh = await signInPasskey(act, 'alice', 'passkey-alice'), other = await signInPasskey(act, 'alice', 'passkey-alice'); clock.advance(2000);
   assert.deepEqual(await act('revokeOtherSessions', {}, sessionContext(fresh)), { revoked: 1 }, 'two expired sessions are not reported as revoked');
   await assert.rejects(service.owner({}, sessionContext(other)), { code: 'unauthorized' });
   assert.equal((await service.owner({}, sessionContext(fresh))).devices.length, 1);
 });
 
 test('clock jumps fail closed: a backwards jump never extends a session or a step-up, and future-dated windows refuse sends', async () => {
-  const clock = fakeClock(), { act, service } = identityEngine({ clock }), { ownerContext, owner } = await activate(act);
-  await service.stepUp({ method: 'password', password: PASSWORD }, ownerContext);
+  const clock = fakeClock(), { act, service } = identityEngine({ clock }), { ownerContext, owner, credentialId } = await activate(act);
+  await stepUpPasskey(act, ownerContext, credentialId);
   assert.ok((await service.privileged(ownerContext)).sessionId);
   clock.advance(-60000); await assert.rejects(service.privileged(ownerContext), { code: 'step_up_required' }, 'step-up dated in the future is not trusted');
   clock.advance(60000 + 300000); await assert.rejects(service.privileged(ownerContext), { code: 'step_up_required' });
@@ -99,12 +100,12 @@ test('recovery tokens: malformed or cross-account proofs change nothing; a compl
   assert.deepEqual([...repository.records.values()], before, 'failed proofs never mutate accounts');
   const recovering = await act('recover', { recoveryToken: a.file.recoveryToken, turnstileToken: 'verified' });
   assert.equal(recovering.credentialRequired, true);
-  await act('setPendingPassword', { pendingToken: recovering.pendingToken, password: 'a brand new replacement password' });
+  await act('registerPasskey', { pendingToken: recovering.pendingToken, response: passkeyResponse(await act('beginPasskeyRegistration', recovering), 'replacement-key') });
   const replacement = await act('downloadRecovery', recovering);
   await act('confirmRecovery', { pendingToken: recovering.pendingToken, recoveryToken: replacement.recoveryToken, downloadConfirmed: true });
   await assert.rejects(act('recover', { recoveryToken: a.file.recoveryToken, turnstileToken: 'verified' }), { code: 'unauthorized' }, 'old file is retired');
-  await assert.rejects(act('loginPassword', signupInput()), { code: 'unauthorized' }, 'old password is gone');
-  assert.equal((await act('loginPassword', signupInput({ password: 'a brand new replacement password' }))).account.id, a.owner.account.id);
+  await assert.rejects(signInPasskey(act, 'alice', 'passkey-alice'), { code: 'unauthorized' }, 'old passkey is gone');
+  assert.equal((await signInPasskey(act, 'alice', 'replacement-key')).account.id, a.owner.account.id);
   assert.equal((await act('recover', { recoveryToken: replacement.recoveryToken, turnstileToken: 'verified' })).resumed, false);
 });
 
@@ -134,6 +135,6 @@ test('failing guards fail closed before any account is reserved, and failed acti
   assert.equal(broken.repository.records.size + limited.repository.records.size, 0);
   assert.equal(updates, 0);
   const working = identityEngine(); working.engine.feed.addEventListener('identity-updated', () => updates++);
-  await activate(working.act); assert.equal(updates, 4);
+  await activate(working.act); assert.equal(updates, 6, 'signup, passkey registration, download, confirmation, step-up begin and step-up');
   for (const method of ['owner', 'constructor', '__proto__', 'privileged']) assert.throws(() => new IdentityAction(method, {}, context), TypeError);
 });

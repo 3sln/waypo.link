@@ -7,7 +7,7 @@ import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {createIdentityEngine} from '../packages/identity/index.mjs';
 import {lifecycleIdentityPort} from '../packages/identity/lifecycle-tombstone.mjs';
-import {identityEngine,activate,signupInput,sessionContext,PASSWORD} from './helpers/identity-engine.mjs';
+import {identityEngine,activate,signupInput,sessionContext,stepUpPasskey,signInPasskey} from './helpers/identity-engine.mjs';
 import {createFlags} from '../packages/flags/evaluate.mjs';
 import {transferIdentityPort,attestorFromJwk,transferDueIndex,TRANSFER_KEY} from '../packages/identity/transfer-out.mjs';
 import {signMoveStatement,verifyMoveAttestation,parseMoveStatement} from '../packages/identity/succession.mjs';
@@ -93,11 +93,11 @@ test('identity_moved lookup for authorization requests: this host only, live red
 
 const bucket=()=>({get:async()=>null,put:async()=>({}),delete:async()=>{}});
 async function integration(t,{flagOn=true}={}){
- const h=identityEngine({config:{origin:ORIGIN,rpID:'3sln.example',rpName:'Fixture',termsVersion:'2026-10-11'}});
- const {owner,file}=await activate(h.act,signupInput({handle:'mover'})),id=owner.account.id;t.after(()=>h.engine.dispose());
+ const h=identityEngine({config:{origin:ORIGIN,rpID:'3sln.example',rpName:'Fixture',termsVersion:'2026-10-11',linkedCodeKey:'test-linked-code-key-0001'}});
+ const {owner,file,credentialId}=await activate(h.act,signupInput({handle:'mover'})),id=owner.account.id;t.after(()=>h.engine.dispose());
  h.clock.advance(20*DAY);
  const record=await h.repository.get(id);Object.assign(record,{verifiedEmail:'owner@moved.example',emailVerifiedAt:h.clock.now()-15*DAY});record.revision++;assert(await h.repository.compareAndSwap(id,record.revision-1,record));
- const login=await h.act('loginPassword',{handle:'mover',password:PASSWORD,turnstileToken:'verified'}),ctx=sessionContext(login);
+ const login=await signInPasskey(h.act,'mover',credentialId),ctx=sessionContext(login);
  const state={on:flagOn,killed:false},notices=[],rpc=[],base=createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}}});
  const mine=name=>['IDENTITY_TRANSFER_OUT_ENABLED','FEDERATION_ENABLED'].includes(name);
  const flags={for:context=>({...base.for(context),enabled:name=>mine(name)?state.on&&!state.killed:base.for(context).enabled(name),background:name=>mine(name)?!state.killed:base.for(context).background(name),global:name=>mine(name)?state.on&&!state.killed:base.for(context).global(name)})};
@@ -114,7 +114,7 @@ async function integration(t,{flagOn=true}={}){
  const signing=signer.privateKey;
  const statement=(transfer,payload={})=>signMoveStatement({kid:keychain.signing.kid,payload:{bindle:'identity-move',v:1,sub:id,kind:'person',seq:1,prev:null,from:{iss:ORIGIN,identity:`${ORIGIN}/identity/${id}`},to:{iss:DEST,identity:`${DEST}/identity/${id}`},iat:Math.floor(h.clock.now()/1000),...payload}},signing);
  return {h,id,ctx,env,state,controller,metadata,notices,rpc,request,keychain,statement,attestation,file,
-  stepUp:()=>h.act('stepUp',{method:'password',password:PASSWORD},ctx),
+  credentialId,stepUp:()=>stepUpPasskey(h.act,ctx,credentialId),
   move:value=>http.fetch(new Request(ORIGIN+MOVE_PATH,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)}),env,{})};
 }
 
@@ -148,9 +148,9 @@ test('HTTP: begin and authorize with a fresh step-up, a move-endpoint commit aft
  const authz=await http.fetch(new Request(ORIGIN+'/api/oauth/requests',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://app.example'},body:JSON.stringify({clientId:'app',identity:'mover@3sln.example'})}),x.env,{});
  assert.equal(authz.status,400,await authz.clone().text());const moved=await authz.json();assert.equal(moved.error,'identity_moved');assert.deepEqual(moved.to,{iss:DEST,identity:`${DEST}/identity/${x.id}`});
  // Read-only export window: the owner signs in with existing credentials into the restricted session.
- const signin=await x.h.act('loginPassword',{handle:'mover',password:PASSWORD,turnstileToken:'verified'});assert.equal(signin.scope,'closure-export');assert.equal(signin.closure.moved,true);
+ const signin=await signInPasskey(x.h.act,'mover',x.credentialId);assert.equal(signin.scope,'closure-export');assert.equal(signin.closure.moved,true);
  const owner=await x.h.service.closureOwner(sessionContext(signin));assert.equal(owner.moved.error,'identity_moved');
- await assert.rejects(x.h.act('loginPassword',{handle:'mover',password:'wrong password that is long',turnstileToken:'verified'}),{code:'unauthorized'});
+ await assert.rejects(signInPasskey(x.h.act,'mover','not-a-registered-passkey'),{code:'unauthorized'});
  // Recovery of a moved account is refused like any invalid recovery.
  await assert.rejects(x.h.act('recover',{recoveryToken:x.file.recoveryToken,turnstileToken:'verified'}),{code:'unauthorized'});
  // After the redirect window: no redirect, and the authorization request answers like a deleted identity.

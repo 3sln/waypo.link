@@ -336,6 +336,8 @@ div.boot-only-zone{padding:14px;margin-top:16px}
    a scroll cue on the mobile navigation strip and on wide admin tables. */
 .contact-limits dd{color:var(--ink);font-weight:500}
 .credential-row>.buttons{flex:0 0 auto;align-self:center}
+/* Settings → email addresses: an address and its state badges wrap, and the row's controls wrap below it on narrow screens. */
+.email-row{flex-wrap:wrap;gap:8px 16px}.email-row>div:first-child{min-width:0;overflow-wrap:anywhere}.email-row>.buttons{flex:1 1 auto;flex-wrap:wrap;justify-content:flex-end}
 @media(max-width:760px){.sidebar nav{-webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent);scroll-padding-inline:16px}}
 .table-wrap{background:linear-gradient(90deg,var(--surface) 30%,transparent) left/24px 100% no-repeat local,linear-gradient(270deg,var(--surface) 30%,transparent) right/24px 100% no-repeat local,radial-gradient(farthest-side at 0 50%,#0000001f,transparent) left/10px 100% no-repeat scroll,radial-gradient(farthest-side at 100% 50%,#0000001f,transparent) right/10px 100% no-repeat scroll}
 /* F-10 (organization console UX pass): an unticked required confirmation box is marked inline after a submit attempt,

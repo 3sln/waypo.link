@@ -42,7 +42,7 @@ test('flags gate creation only; targeting ramp-down keeps status, downloads, can
 
 test('fresh step-up, owner binding, system authority and purpose validation fail closed',async t=>{
  const f=await fixture(t);for(const actor of [{...f.actor(),stepUpAt:f.clock.now()-300001},{...f.actor(),stepUpAt:f.clock.now()+1},{...f.actor(),stepUpMethod:'email'},{kind:'owner',owner:OWNER}])await assert.rejects(f.op(E.CreateExport,{actor,input:{operationId:OP}}),{code:'step_up_required'});
- await assert.rejects(f.op(E.CreateExport,{actor:{kind:'owner',owner:OTHER,stepUpAt:f.clock.now(),stepUpMethod:'password'},input:{operationId:OP}}),{code:'forbidden'});
+ await assert.rejects(f.op(E.CreateExport,{actor:{kind:'owner',owner:OTHER,stepUpAt:f.clock.now(),stepUpMethod:'passkey'},input:{operationId:OP}}),{code:'forbidden'});
  await assert.rejects(f.op(E.StepExport),{code:'unauthorized'});await assert.rejects(f.create(OP,{purpose:'closure'}),{code:'invalid_export'});await assert.rejects(f.create(OP,{stepUpAt:f.clock.now()}),{code:'invalid_export'});
  await f.metadata.put('deletion/fence-v1',{owner:OWNER});await assert.rejects(f.create(),{code:'account_deleting'});await assert.rejects(f.op(E.StepExport,{actor:f.system}),{code:'account_deleting'});
 });

@@ -8,23 +8,24 @@ import {createHash} from 'node:crypto';
 import {bgWorld,rejects,A,B,C,E,DAY,ORG,p} from './helpers/break-glass-world.mjs';
 import {ownerChannelsAdapter,orgClaimAbortUrl,OWNER_NOTICE_KINDS} from '../packages/identity/owner-channels.mjs';
 import {emailDomainHashes,memoryClaimHints,hintApply,liveHints,BreakGlassService,BREAK_GLASS} from '../packages/orgs/break-glass.mjs';
-import {PASSWORD,sessionContext} from './helpers/identity-engine.mjs';
+import {sessionContext,stepUpPasskey,signInPasskey} from './helpers/identity-engine.mjs';
 import {fixture,channelWorld,identityFor} from './helpers/break-glass-channels-world.mjs';
 
 const ISS='https://3sln.example',SECRET='owner-channels-test-secret-0001',H=3600000;
 const sha=text=>createHash('sha256').update(text).digest('hex');
-test('snapshot: emails (current and replaced within 30 days), push, credentials and known sessions; ids only, never addresses',async()=>{
+test('snapshot: emails (current and replaced within 30 days), push, passkeys and known sessions (no password channel since 2026-10-28); ids only, never addresses',async()=>{
  const now=1_800_000_000_000,f=fixture(now),r=f.records.get(A);
  r.previousEmails=[{email:'old@acme.example',verifiedAt:now-400*DAY,replacedAt:now-10*DAY},{email:'ancient@gone.example',verifiedAt:now-500*DAY,replacedAt:now-40*DAY}];
  r.sessions.push({id:'later',createdAt:now+1,expiresAt:now+H},{id:'expired',createdAt:now-30*H,expiresAt:now-6*H},{id:'closure',createdAt:now-H,expiresAt:now+H,scope:'closure-export'});
  const snap=await f.adapter.snapshot(p(A),{org:ORG,at:now});
  assert.equal(snap.status,'active');assert.equal(snap.lastInteractiveAt,now-90*DAY);
- assert.deepEqual(snap.channels.map(c=>c.kind),['email','email','push','credential','credential','session'],'out-of-band channels first (the engine keeps 16)');
- assert.ok(snap.channels.every(c=>/^(email|push|passkey|password|session):[0-9a-f]{32}$/.test(c.id)));
+ assert.deepEqual(snap.channels.map(c=>c.kind),['email','email','push','credential','session'],'out-of-band channels first (the engine keeps 16)');
+ assert.ok(snap.channels.every(c=>/^(email|push|passkey|session):[0-9a-f]{32}$/.test(c.id)));
  const text=JSON.stringify(snap);for(const secret of ['@','example','pushrow','cred-','sess-'])assert.ok(!text.includes(secret),'no address, domain or raw id crosses the port: '+secret);
  assert.deepEqual(snap.channels[0].domainHashes,await emailDomainHashes('home-alice.example'),'hashed with the engine’s own rule');
  assert.ok(snap.channels[1].domainHashes.includes(sha('acme.example')));
- assert.equal(new Set(snap.channels.map(c=>c.id)).size,6);
+ assert.equal(new Set(snap.channels.map(c=>c.id)).size,5);
+ {const legacy=fixture(now).records.get(A);legacy.passwordHash='fake';legacy.passwordSetAt=now-100*DAY;const g=ownerChannelsAdapter({origin:ISS,secret:SECRET,identity:async()=>legacy});assert.equal((await g.snapshot(p(A),{org:ORG,at:now})).channels.filter(c=>c.kind==='credential').length,1,'a stored legacy password hash is never a known channel');}
  assert.equal((await f.adapter.snapshot(p(A),{org:ORG,at:now})).channels[0].id,snap.channels[0].id,'stable ids');
  const other=ownerChannelsAdapter({origin:ISS,secret:'a-different-deployment-secret',identity:async sub=>f.records.get(sub)});
  assert.notEqual((await other.snapshot(p(A),{org:ORG,at:now})).channels[0].id,snap.channels[0].id,'ids are keyed by the deployment secret');
@@ -38,7 +39,7 @@ test('snapshot: emails (current and replaced within 30 days), push, credentials 
 });
 
 test('domains: suffix hashes after IDNA, for the organization and local principals only',async()=>{
- const now=Date.now(),f=fixture(now);f.records.get(ORG).verifiedEmail='ops@MAIL.Acme.Example';f.records.get(C).verifiedEmail='c@bücher.example';
+ const now=Date.now(),f=fixture(now);Object.assign(f.records.get(ORG),{verifiedEmail:'ops@MAIL.Acme.Example',emailVerifiedAt:now-DAY});f.records.get(C).verifiedEmail='c@bücher.example';
  const out=await f.adapter.domains({org:ORG,principals:[p(C),{iss:'https://other.example',sub:B}]});
  const all=out.flatMap(x=>x.hashes);assert.ok(out.every(x=>Array.isArray(x.hashes)&&x.hashes.every(h=>/^[0-9a-f]{64}$/.test(h))));
  assert.ok(all.includes(sha('mail.acme.example'))&&all.includes(sha('acme.example')),'every parent suffix, lowercased');
@@ -84,7 +85,7 @@ test('hint rows: reordered and retried effects converge; a contest entry ends wi
 
 test('the engine with the production adapter: no address is stored, Track A needs an out-of-band channel off every signer’s domain',async()=>{
  {const w=await channelWorld(32);try{
-  await w.start();const c=await w.claim();assert.equal(c.track,'A');assert.deepEqual(c.channels.map(ch=>ch.kind),['email','push','credential','credential','session']);
+  await w.start();const c=await w.claim();assert.equal(c.track,'A');assert.deepEqual(c.channels.map(ch=>ch.kind),['email','push','credential','session']);
   assert.ok(!/@|home-alice|pushrow|cred-|sess-/.test(JSON.stringify(c.channels)+JSON.stringify(c.adminDomains)),'claims hold ids and hashes only');
   assert.ok(c.channels.filter(ch=>ch.kind==='email').every(ch=>ch.domainHashes.length>=1));
  }finally{await w.close();}}
@@ -134,7 +135,7 @@ test('sign-in liveness: an interactive owner sign-in holds a waiting claim (T9) 
   const session=await id.login();assert.deepEqual(id.calls.map(x=>[x.owner,x.kind]),[[A,'sign-in']]);
   let now=await w.claim();assert.equal(now.state,'held','T9: the sign-in holds the claim for support');assert.equal(now.track,'S');assert.ok(now.causes.includes('owner-liveness'));
   assert.equal(id.repository.records.get(A).lastInteractiveAt,w.clock.now(),'the record keeps the last interactive sign-in for the next snapshot');
-  await id.act('stepUp',{method:'password',password:PASSWORD},sessionContext(session));await id.service.settleBackground();assert.equal(id.calls.at(-1).kind,'step-up');
+  await stepUpPasskey(id.act,sessionContext(session),id.credentialId);await id.service.settleBackground();assert.equal(id.calls.at(-1).kind,'step-up');
   // The interstitial: a session created after T1 alone is no proof (it is not a known channel); a session from before T1,
   // or a step-up with a credential enrolled before T1, is (§12d.3; the route adds the session's creation time).
   await rejects(w.run('orgs.breakglass-abort',A,{claim:c.id},{verification:{sessionCreatedAt:w.clock.now()}}),'owner_proof_required');
@@ -162,7 +163,7 @@ test('no-claim sign-in cost: the same identity writes as without the hook, and n
   assert.equal((await w.personStats(A)).writes,writes,'no write in the person’s account');
   assert.equal(JSON.stringify(await w.summary()),before,'the organization is never reached');
   // A refused sign-in signals nothing.
-  await rejects(wired.act('loginPassword',{handle:'alice',password:'wrong password but long enough',turnstileToken:'verified'}),'unauthorized');await wired.service.settleBackground();assert.equal(wired.calls.length,1);
+  await rejects(signInPasskey(wired.act,'alice','passkey-not-enrolled'),'unauthorized');await wired.service.settleBackground();assert.equal(wired.calls.length,1);
  }finally{await w.close();}
 });
 

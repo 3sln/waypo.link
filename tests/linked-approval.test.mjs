@@ -5,7 +5,7 @@
 import test from 'node:test';
 import {lifecycleIdentityPort} from '../packages/identity/lifecycle-tombstone.mjs';
 import assert from 'node:assert/strict';
-import { identityEngine, activate, context, sessionContext, signupInput, config, PASSWORD, MemoryAccounts, MemoryDevices } from './helpers/identity-engine.mjs';
+import { identityEngine, activate, context, sessionContext, signupInput, config, signInPasskey, stepUpPasskey, MemoryAccounts, MemoryDevices } from './helpers/identity-engine.mjs';
 import { IdentityCrypto } from '../packages/identity/crypto.mjs';
 import { forEachSeed, createScheduler, fakeClock } from './helpers/chaos.mjs';
 import { LinkedApprovalAction, LinkedSystemAction, LinkedResolveQuery, LinkedLineageQuery, LinkedOutboxQuery, IdentityAction, MemoryLinkedLimits, globalResolveBudget, linkedLifetime, linkedDurations, linkedNetwork, LINKED } from '../packages/identity/index.mjs';
@@ -20,8 +20,8 @@ function fixture(overrides = {}) {
     la: (method, input, ctx) => run(LinkedApprovalAction, method, input, ctx), sys: (method, input, ctx) => run(LinkedSystemAction, method, input, ctx),
     resolve: (input, ctx) => f.engine.query(new LinkedResolveQuery(input, ctx)).peek(),
     live: input => f.engine.query(new LinkedLineageQuery(input)).peek(), outbox: owner => f.engine.query(new LinkedOutboxQuery({ owner })).peek(),
-    login: (handle = 'alice', ip = context.remoteIP) => f.act('loginPassword', { handle, password: PASSWORD, turnstileToken: 'verified' }, { ...context, remoteIP: ip }),
-    step: session => f.act('stepUp', { method: 'password', password: PASSWORD }, sessionContext(session)) };
+    login: (handle = 'alice', ip = context.remoteIP) => signInPasskey(f.act, handle, `passkey-${handle}`, { ...context, remoteIP: ip }),
+    step: (session, id = `passkey-${session.account.handle}`) => stepUpPasskey(f.act, sessionContext(session), id) };
 }
 const startSession = f => f.la('linkedStart', { deviceKind: 'tv', turnstileToken: 'verified' }, tv);
 const startApp = (f, overrides) => f.sys('linkedStartApp', appInput(overrides), context);
@@ -156,7 +156,7 @@ test('lifetime caps: session E = min(S, now+24h, U) with collapsing options; app
   } finally { await f.engine.dispose(); }
 });
 
-test('fresh credential: one passkey/password confirmation within 5 minutes at approval, for sessions and apps alike', async () => {
+test('fresh credential: one passkey confirmation within 5 minutes at approval, for sessions and apps alike', async () => {
   const f = fixture(); try {
     const { owner } = await activate(f.act); f.clock.advance(LINKED.freshMs); const session = await startSession(f);
     await assert.rejects(approve(f, session, owner), { code: 'reauthentication_required' });

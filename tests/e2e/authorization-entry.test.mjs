@@ -4,15 +4,14 @@
 // exchange, manifest truthfulness and the embed origin) uses real browser networking. Fixture app: .example origin.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {launch,baseURL} from './browser.mjs';
+import {launch,baseURL,passkeyAccount} from './browser.mjs';
 const appOrigin='https://bindle-client.example',clientId=appOrigin+'/client',redirectUri=appOrigin+'/callback',embedOrigin=baseURL.replace('localhost','127.0.0.1');
 
 test('authorization entry: cookieless creation, strict entry document, owner selection through member cookies and a PKCE code',async t=>{
  const browser=await launch();t.after(()=>browser.close());
  const context=await browser.newContext({permissions:['local-network-access'],extraHTTPHeaders:{'CF-Connecting-IP':`198.51.100.${40+Math.floor(Math.random()*150)}`}});
  const config=await(await context.request.get(baseURL+'/api/config')).json(),post=(path,data)=>context.request.post(baseURL+path,{headers:{Origin:baseURL},data});
- const signup=await(await post('/api/auth/signup',{method:'password',password:'Authorization entry browser password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'})).json();assert.ok(signup.pendingToken,JSON.stringify(signup));
- const file=await(await post('/api/auth/recovery/download',{pendingToken:signup.pendingToken})).json();assert.equal((await post('/api/auth/recovery/confirm',{pendingToken:signup.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true})).status(),200);
+ await passkeyAccount(context.request,{body:{termsVersion:config.termsVersion}});
  // F8: the entry extension is declared because the routes are mounted; embedded components because the islands shell
  // is built, the embed routes are mounted and DPoP is configured (a loopback embed origin only under LOCAL_DEVELOPMENT).
  const manifest=await(await context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();

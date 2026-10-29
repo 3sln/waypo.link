@@ -178,7 +178,7 @@ test('execution order: billing stop, identity, grants, drain, email bridge, expo
  for(let i=0;i<5;i++)assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v${i}`),false);
  assert.equal(x.blobs.map.has(`objects/${FOREIGN}/res/v1`),true,'foreign refs are untouched');
  assert.equal([...x.archives.map.keys()].some(k=>k.startsWith('exports/')),false,'no export part survives');
- const account=await x.repository.get(OWNER);assert.equal(account.status,'deleted');assert.equal(account.handle,HANDLE);assert.equal(account.assignmentId,'assignment-1');assert.deepEqual(account.sessions,[]);assert.equal(account.passwordHash,null);
+ const account=await x.repository.get(OWNER);assert.equal(account.status,'deleted');assert.equal(account.handle,HANDLE);assert.equal(account.assignmentId,'assignment-1');assert.deepEqual(account.sessions,[]);assert.equal('passwordHash' in account,false,'the tombstone keeps no password hash');
  assert.equal(deletionReason(account),'owner');assert.equal(account.security,undefined);
  assert.equal(await x.repository.findByEmail(EMAIL),null,'the email address is released');
  assert.equal((await x.ports.due.due({now:Infinity})).length,0);

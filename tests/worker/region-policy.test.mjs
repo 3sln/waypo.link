@@ -5,7 +5,7 @@ import {createHarness} from './harness.mjs';
 // checkout. The harness runs with LOCAL_DEVELOPMENT=true, whose default is allow-unknown, so the production policy is
 // set explicitly here; tests/region-policy.test.mjs covers the default selection and a missing country (Miniflare
 // merges its own default country into an empty `cf`).
-const signupBody=handle=>({handle,method:'password',password:'isolated test account password',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token',ageConfirmed:18,country:'US'});
+const signupBody=handle=>({handle,method:'passkey',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token',ageConfirmed:18,country:'US'});
 test('real Worker blocks signup, paid checkout and organization checkouts from unknown, Tor and empty countries under block-unknown',async()=>{const h=await createHarness({bindings:{REGION_POLICY:'block-unknown'}});try{
  const post=(path,cf,value,headers={})=>h.mf.dispatchFetch(h.origin+path,{method:'POST',cf,headers:{Origin:h.origin,'Content-Type':'application/json','CF-IPCountry':'US',...headers},body:JSON.stringify(value)});
  for(const [label,cf] of [['XX',{country:'XX'}],['T1',{country:'T1'}],['empty',{country:''}]]){
@@ -15,6 +15,7 @@ test('real Worker blocks signup, paid checkout and organization checkouts from u
  assert.equal(await h.directory.findByHandle('region_xx'),null);
  // A known country still signs up; the same account's paid checkout from Tor is refused before billing.
  const start=await post('/api/auth/signup',{country:'US'},signupBody('region_known'));assert.equal(start.status,200,await start.clone().text());const pending=await start.json();
+ assert.equal((await post('/api/auth/passkey/register',{country:'US'},{pendingToken:pending.pendingToken,response:await h.authenticator.register(pending.registrationOptions)})).status,200);
  const file=await(await post('/api/auth/recovery/download',{country:'US'},{pendingToken:pending.pendingToken})).json(),activation=await post('/api/auth/recovery/confirm',{country:'US'},{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true});assert.equal(activation.status,200);
  const owner=await activation.json(),cookie=activation.headers.get('Set-Cookie').split(';')[0];
  const checkout=await post('/api/billing/checkout',{country:'T1'},{plan:'paid',ageConfirmed:18},{Cookie:cookie,'X-CSRF-Token':owner.csrfToken});assert.equal(checkout.status,403,await checkout.clone().text());assert.equal((await checkout.json()).error,'signup_region_blocked');

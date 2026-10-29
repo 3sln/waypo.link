@@ -7,6 +7,7 @@
 // {kind:'app'} actor); session kinds are operator-registered envelopes. The silent owner end is also covered at the
 // engine level (tests/helpers/signaling-fixture.mjs) and across providers (signaling-federation-fixture.mjs). Local
 // behaviour only; no foreign provider, relay or push service.
+import {softAuthenticator,registerPending} from './helpers/soft-passkey.mjs';
 import test from 'node:test';
 import {reviewed,approvals,reviewedHTTP} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
@@ -41,9 +42,11 @@ async function host(t,flags){
  const env={...flags,APP_ORIGIN:ORIGIN,IDENTITY_REPOSITORY:app.resources.repository,ACCOUNTS:app.resources.accounts};
  const fetch=(path,{user,method='GET',value,csrf=true,origin=true}={})=>app.fetch(new Request(ORIGIN+path,{method,headers:{'CF-Connecting-IP':'192.0.2.'+(network++%250+1),...user?{Cookie:user.cookie}:{},...user&&csrf?{'X-CSRF-Token':user.csrf}:{},...origin?{Origin:ORIGIN}:{},...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}}));
  const call=async(user,method,path,value,options={})=>{const r=await fetch(path,{user,method,value,...options});const text=await r.text();let body;try{body=JSON.parse(text);}catch{body=text;}return {status:r.status,body};};
+ const authenticator=softAuthenticator({origin:ORIGIN});
  const person=async(handle,{approve=flags.SIGNALING_ENABLED==='true'}={})=>{
   const post=(path,value)=>fetch(path,{method:'POST',value});
-  const pending=await (await post('/api/auth/signup',{handle,method:'password',password:'Signaling owner route fixture password, long!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));
+  const pending=await (await post('/api/auth/signup',{handle,method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));
+  await registerPending(authenticator,async(path,value)=>(await post(path,value)).json(),pending);
   const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
   const r=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}),session=await r.json();
   const id=session.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']};

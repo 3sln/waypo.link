@@ -32,7 +32,7 @@ export class DeletionFixture extends DurableObject{
   try{
    await this.ctx.storage.put('owner',owner);const url=new URL(request.url),path=url.pathname;
    if(path==='/test/init'){
-    const hash=await this.identity.container.use(['identity'],({identity})=>identity.crypto.hash('session',token));this.record.sessions=[{id:'worker-session-id',hash,csrfToken:csrf,expiresAt:Date.now()+3600000,createdAt:Date.now(),source:'credential'}];
+    const hash=await this.identity.container.use(['identity'],({identity})=>identity.crypto.hash('session',token));this.record.sessions=[{id:'worker-session-id',hash,csrfToken:csrf,expiresAt:Date.now()+3600000,createdAt:Date.now(),source:'credential',credentialId:'worker-passkey'}];
     await this.ctx.storage.put('push-subscription/'+owner+'/phone',{id:'phone',owner,endpoint:'https://push.example/copied',keys:{p256dh:'key',auth:'auth'}});return Response.json({token,csrf});
    }
    if(path==='/test/step-up'){this.record.sessions[0].stepUpAt=Date.now();return Response.json({ok:true});}

@@ -3,7 +3,7 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {launch,baseURL,waitForApp} from './browser.mjs';
 let browser;test.before(async()=>{browser=await launch();});test.after(async()=>browser?.close());
 for(const enabled of [false,true])for(const locale of ['en','es'])test(`Wave 5 shell ${locale}: integration flags ${enabled?'on':'off'}, navigation, adapters and access deep links`,async t=>{
- const context=await browser.newContext({viewport:{width:390,height:900}});t.after(()=>context.close());const page=await context.newPage(),errors=[],calls=[],account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'wave5',status:'active',hasPassword:true};page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
+ const context=await browser.newContext({viewport:{width:390,height:900}});t.after(()=>context.close());const page=await context.newPage(),errors=[],calls=[],account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'wave5',status:'active'};page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(locale=>localStorage.setItem('personal-space-preferences',JSON.stringify({locale})),locale);
  await page.route('**/api/**',async route=>{const request=route.request(),path=new URL(request.url()).pathname;calls.push(path);let value;
   if(path==='/api/config')value={origin:baseURL,providers:{},localDevelopment:true,integrationsEnabled:enabled,eventBusesEnabled:false};

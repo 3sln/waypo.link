@@ -101,9 +101,9 @@ const { personActor } = await import('../packages/orgs/authority.mjs');
 const { MEMBER_PURPOSES, signMemberPop } = await import('../packages/identity/member-certificates.mjs');
 const { JWT_BEARER, cachedIssuerKeys } = await import('../packages/orgs/certificates.mjs');
 const { federationEpoch } = await import('../packages/runtime/federation.mjs');
-const { fakeHasher } = await import('./helpers/identity-engine.mjs');
+const { fakeHasher, fakeWebAuthn, passkeyResponse } = await import('./helpers/identity-engine.mjs');
 const { holder, dpop } = await import('./helpers/member-certificates.mjs');
-const ORIGIN = 'http://localhost:8788', PASSWORD = 'Member token cap runtime test password!';
+const ORIGIN = 'http://localhost:8788';
 const APP = { client_id: 'https://erp.example/client.json', origin: 'https://erp.example' }, ACCESS = [MEMBER_PURPOSES.access];
 const flagsOn = { ORGANIZATIONS_ENABLED: 'true', MEMBER_CERTIFICATES_ENABLED: 'true', DIRECTORY_ENABLED: 'true', FEDERATION_ENABLED: 'true' };
 
@@ -112,9 +112,9 @@ test('F-06 runtime: one member flooding the token endpoint keeps the per-client 
   const app = await createNodeServer({ directory, config: { ...flagsOn, FEDERATION_CLIENTS: JSON.stringify([{ id: APP.client_id, name: 'ERP', origin: APP.origin, redirectUris: ['https://erp.example/callback'] }]), ORGANIZATION_PLANS: { check: async () => ({ paid: true, plan: 'organization-internal', source: 'test' }) } } });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
   const RECOVERY_SIGNING_KEY = await readFile(join(directory, 'recovery-signing-key'), 'utf8'), repository = app.resources.repository, accounts = app.resources.accounts;
-  const identity = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: ORIGIN, RECOVERY_SIGNING_KEY }, accounts }), turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: fakeHasher, config: { origin: ORIGIN, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
+  const identity = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: ORIGIN, RECOVERY_SIGNING_KEY }, accounts }), turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: fakeWebAuthn(), passwordHasher: fakeHasher, config: { origin: ORIGIN, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
   const base = { origin: ORIGIN, remoteIP: '127.0.0.1' };
-  const signup = async () => { const pending = await identity.signup({ method: 'password', password: PASSWORD, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'ok' }, base); const downloaded = await identity.downloadRecovery({ pendingToken: pending.pendingToken }, base); await identity.confirmRecovery({ pendingToken: pending.pendingToken, recoveryToken: downloaded.recoveryToken, downloadConfirmed: true }, base); return pending.account.id; };
+  const signup = async () => { const pending = await identity.signup({ method: 'passkey', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'ok' }, base); await identity.registerPasskey({ pendingToken: pending.pendingToken, response: passkeyResponse(pending, 'passkey-' + pending.account.id) }, base); const downloaded = await identity.downloadRecovery({ pendingToken: pending.pendingToken }, base); await identity.confirmRecovery({ pendingToken: pending.pendingToken, recoveryToken: downloaded.recoveryToken, downloadConfirmed: true }, base); return pending.account.id; };
   const env = { APP_ORIGIN: ORIGIN, RECOVERY_SIGNING_KEY, IDENTITY_REPOSITORY: repository, ACCOUNTS: accounts, ...flagsOn };
   const owner = (id, method, path, input) => orgRoutes.owner({ request: new Request(ORIGIN + path, { method, headers: input ? { 'Content-Type': 'application/json' } : {}, ...input ? { body: JSON.stringify(input) } : {} }), env, path, id, object: accountHandle(env, id), actor: personActor({ owner: id, iss: ORIGIN, authTime: Date.now() }) });
   const alice = await signup();

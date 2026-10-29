@@ -14,8 +14,8 @@ export function notificationsView(state,{legacy=false}={}){if(!legacy&&activityE
     h('div',h('section',h('h2','Delivery settings'),h('p','Email requires a verified address and configured delivery. Push requires permission on this device.').classes('muted'),
       form([
         checkbox('enabled','Enable notifications',preferences.enabled),
-        checkbox('email','Email reminders',state.config.notificationEmailEnabled===true&&preferences.email.enabled,state.config.notificationEmailEnabled!==true||!account()?.verifiedEmail),
-        h('p',state.config.notificationEmailEnabled!==true?'Email reminders are not available on this service yet.':account()?.verifiedEmail?interfaceText('Verified address: {email}',{email:account().verifiedEmail}):'Add and verify an email in Account & security before enabling email delivery.').classes('field-help'),
+        checkbox('email','Email reminders',state.config.notificationEmailEnabled===true&&preferences.email.enabled,state.config.notificationEmailEnabled!==true||!account()?.noticeEmail),
+        h('p',state.config.notificationEmailEnabled!==true?'Email reminders are not available on this service yet.':account()?.noticeEmail?interfaceText('Verified address: {email}',{email:account().noticeEmail}):'Add and verify an email in Account & security before enabling email delivery.').classes('field-help'),
         checkbox('push','Push notifications',preferences.push.enabled,!state.config.pushEnabled),
         checkbox('pushPreview','Show message previews in push notifications',preferences.push.preview===true,!state.config.pushEnabled),h('p','Previews can show message text and actions on your lock screen. Off by default.').classes('field-help'),
         !state.config.pushEnabled?h('p','Push delivery is not configured on this service.').classes('field-help'):null,

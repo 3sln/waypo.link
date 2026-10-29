@@ -10,35 +10,37 @@ let browser;
 test.before(async()=>{browser=await launch();});
 test.after(async()=>{await browser?.close();});
 
+// Passkey sign-in (passwords were dropped, owner approval 2026-10-28): begin, the WebAuthn ceremony (the fixture's soft
+// authenticator), then finish, which is the request that installs a session; faults are injected there.
+const BEGIN='/api/auth/login/passkey/begin',FINISH='/api/auth/login/passkey/finish';
 test('sign-in survives a seeded burst of every transport fault with one request per attempt and a usable form',async t=>{
  const c=await chaosConsole(browser,t,{signedIn:false,goto:'/console?signin'});const {page}=c;
- await page.getByRole('button',{name:'Sign in with password',exact:true}).click();
+ assert.equal(await page.locator('.auth-card input[name=password]').count(),0,'passkey only');
  const order=seeded(0x5157).shuffle(FAULTS);
  for(const [index,kind] of order.entries()){
-  await page.locator('.auth-card input[name=handle]').fill('n.chaos');await page.locator('.auth-card input[name=password]').fill('Correct horse battery staple 2026');
+  await page.locator('.auth-card input[name=handle]').fill('n.chaos');
   // The reply is held while the extra clicks land, so the busy state (not timing) must absorb them.
-  const held=c.hold('POST','/api/auth/login/password'),submit=page.locator('.auth-card form button[type=submit]');await submit.click({clickCount:3});
+  const held=c.hold('POST',FINISH),submit=page.locator('.auth-card form button[type=submit]');await submit.click({clickCount:3});
   const gate=await held;await c.busy();await submit.click({force:true});await c.release(gate,{kind});await page.getByRole('alert').waitFor();await c.settled();
-  assert.equal(c.count('POST','/api/auth/login/password'),index+1,`one login request for ${kind}`);
+  assert.equal(c.count('POST',FINISH),index+1,`one login request for ${kind}`);assert.equal(c.count('POST',BEGIN),index+1,`one passkey challenge for ${kind}`);
   const [alert]=await c.alerts();assert.ok(alert.trim().length>0,`honest error for ${kind}`);assert.equal((await c.notices()).length,0,`no success notice for ${kind}`);
   assert.equal(await submit.isEnabled(),true,`form usable after ${kind}`);assert.equal(await page.locator('.user-summary').count(),0,`no session after ${kind}`);
   // Raw transport wording never leaks into the interface.
   assert.doesNotMatch(alert,/Failed to fetch|NetworkError|Load failed|Unexpected (token|end)|JSON/,`localizable wording for ${kind}`);
  }
- await page.locator('.auth-card input[name=password]').fill('Correct horse battery staple 2026');await page.locator('.auth-card form button[type=submit]').click();
+ await page.locator('.auth-card input[name=handle]').fill('n.chaos');await page.locator('.auth-card form button[type=submit]').click();
  await page.locator('.user-summary').waitFor();assert.equal((await c.alerts()).length,0,'a later success clears the stale error');
 });
 
 test('going offline while sign-in is in flight releases the form and a late reply opens no session',async t=>{
  const c=await chaosConsole(browser,t,{signedIn:false,goto:'/console?signin'});const {page,context}=c;
- await page.getByRole('button',{name:'Sign in with password',exact:true}).click();
- const held=c.hold('POST','/api/auth/login/password');
- await page.locator('.auth-card input[name=handle]').fill('n.chaos');await page.locator('.auth-card input[name=password]').fill('Correct horse battery staple 2026');
+ const held=c.hold('POST',FINISH);
+ await page.locator('.auth-card input[name=handle]').fill('n.chaos');
  await page.locator('.auth-card form button[type=submit]').click();const gate=await held;
  await page.getByRole('button',{name:'Please wait…'}).waitFor();
  await context.setOffline(true);await page.getByText(/You’re offline/).waitFor();await c.settled();
  // The reply is delivered for the abandoned attempt (the fixture service did sign in): it must not open a session offline.
- const delivered=page.waitForEvent('requestfinished',request=>request.url().endsWith('/api/auth/login/password'));await c.release(gate);await delivered;await c.frames();await c.frames();
+ const delivered=page.waitForEvent('requestfinished',request=>request.url().endsWith(FINISH));await c.release(gate);await delivered;await c.frames();await c.frames();
  assert.equal(await page.locator('.user-summary').count(),0,'no session from a reply that arrived offline');assert.equal(await c.stuck(),0);
  // On reconnect the console shows what the service says now, never the abandoned reply's account data.
  const sessions=c.count('GET','/api/session');await context.setOffline(false);await page.waitForFunction(()=>!document.querySelector('.offline-banner'));await c.requests('GET','/api/session',sessions+1);
@@ -140,7 +142,6 @@ test('device QR: a failing poll ends in an honest interrupted state and Try agai
 test('signup wizard: a rapid triple click advances one question, and create-account faults keep the draft without a second request',async t=>{
  const c=await chaosConsole(browser,t,{signedIn:false,goto:'/console?signup',config:{signupContactRequired:true,emailSetupAvailable:true,pushSetupAvailable:false}});const {page}=c;
  const card=page.locator('.signup-wizard'),heading=()=>card.locator('.wizard-heading').textContent();
- await card.getByRole('button',{name:'Password',exact:true}).click();
  const visited=[];for(let step=0;step<6&&!await card.getByRole('button',{name:'Create my account',exact:true}).count();step++){
   const before=await heading();visited.push(before);
   if(await card.getByRole('button',{name:'Use email',exact:true}).count())await card.getByRole('button',{name:'Use email',exact:true}).click();
@@ -150,8 +151,7 @@ test('signup wizard: a rapid triple click advances one question, and create-acco
   await page.waitForFunction(previous=>document.querySelector('.signup-wizard .wizard-heading')?.textContent!==previous,before);await c.settled();
   assert.equal((await c.alerts()).length,0,`no validation error leaks from extra clicks on "${before}"`);
  }
- assert.deepEqual(visited,[...new Set(visited)],'no question was shown twice');assert.equal(visited.length,4,`no question was skipped: ${JSON.stringify(visited)}`);
- await card.getByLabel('Password',{exact:true}).fill('Private wizard password for chaos');
+ assert.deepEqual(visited,[...new Set(visited)],'no question was shown twice');assert.equal(visited.length,3,`no question was skipped (contact, email, terms; the sign-in method step was removed with passwords): ${JSON.stringify(visited)}`);
  const held=c.hold('POST','/api/auth/signup');await card.locator('form button[type=submit]').click({clickCount:3});const gate=await held;await c.busy();
  await c.release(gate,{kind:503});await page.getByRole('alert').waitFor();await c.settled();
  assert.equal(c.count('POST','/api/auth/signup'),1);assert.equal(await card.getByRole('button',{name:'Create my account',exact:true}).count(),1,'still on the credential question');

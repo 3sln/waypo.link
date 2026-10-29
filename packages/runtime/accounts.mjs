@@ -1,3 +1,4 @@
+import {indexedEmails} from '../identity/emails.mjs';
 import {producerIndexedMetadata} from '../storage/producer-index.mjs';
 import {intentIndexedMetadata} from '../intents/index.mjs';
 import {sweepMcpJournal} from '../mcp/account.mjs';
@@ -131,9 +132,11 @@ export class IdentityRepository {
   async compareAndSwap(id, revision, account) {
     return this.metadata.transaction(async tx=>{
       const old=await tx.get(`account/${id}`);if(!old||old.revision!==revision||account.handle!==old.handle||account.assignmentId!==old.assignmentId||!sameSystemIdentity(account.systemIdentity,old.systemIdentity)||!sameOnboardingIdentity(account.onboardingIdentity,old.onboardingIdentity))return false;
-      const email=account.verifiedEmail;
-      if(email){const owner=await tx.get(`email/${email}`);if(owner&&owner!==id)return false;await tx.put(`email/${email}`,id);}
-      if(old.verifiedEmail&&old.verifiedEmail!==email)await tx.delete(`email/${old.verifiedEmail}`);
+      // Every verified or sign-in address holds the uniqueness claim (packages/identity/emails.mjs); unverified ones never do.
+      const emails=indexedEmails(account),previous=indexedEmails(old);
+      for(const email of emails){const owner=await tx.get(`email/${email}`);if(owner&&owner!==id)return false;}
+      for(const email of emails)await tx.put(`email/${email}`,id);
+      for(const email of previous)if(!emails.includes(email)&&await tx.get(`email/${email}`)===id)await tx.delete(`email/${email}`);
       await tx.put(`account/${id}`,account);return true;
     });
   }
@@ -142,7 +145,7 @@ export class IdentityRepository {
   async alarm(){try{await this.shardOnboardingSweep({now:Date.now()});await sweepDeviceExpiry(this.metadata);}catch{await this.metadata.setAlarm(Date.now()+3600000);}}
   async lifecycleCandidates({cursor,limit=100}={}) {
     const rows=await this.metadata.list({prefix:'account/',startAfter:cursor,limit});
-    return {accounts:[...rows].map(([path,a])=>({cursor:path,id:a.id,status:a.status,createdAt:a.createdAt,lastActiveAt:a.lastActiveAt,verifiedEmail:Boolean(a.verifiedEmail)})),cursor:rows.size===limit?[...rows.keys()].at(-1):null};
+    return {accounts:[...rows].map(([path,a])=>({cursor:path,id:a.id,status:a.status,createdAt:a.createdAt,lastActiveAt:a.lastActiveAt,verifiedEmail:indexedEmails(a).length>0})),cursor:rows.size===limit?[...rows.keys()].at(-1):null};
   }
   async createDevice(record){return this.metadata.transaction(async tx=>{const oldId=await tx.get(`device-code/${record.userCodeHash}`);if(oldId){const old=await tx.get(`device/${oldId}`);if(old&&old.expiresAt>Date.now())return false;await tx.delete(`device/${oldId}`);}if(await tx.get(`device/${record.id}`))return false;await tx.put(`device/${record.id}`,record);await tx.put(`device-code/${record.userCodeHash}`,record.id);await indexDeviceExpiry(tx,`device/${record.id}`,record.expiresAt);await indexDeviceExpiry(tx,`device-code/${record.userCodeHash}`,record.pendingUntil??record.expiresAt,record.id);return true;});}
   async getDevice(id){return this.metadata.get(`device/${id}`);}

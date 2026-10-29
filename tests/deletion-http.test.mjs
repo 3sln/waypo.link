@@ -7,7 +7,7 @@ import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {createIdentityEngine} from '../packages/identity/index.mjs';
 import {lifecycleIdentityPort} from '../packages/identity/lifecycle-tombstone.mjs';
 import {identitySecurityPort} from '../packages/identity/service.mjs';
-import {identityEngine,activate,signupInput,PASSWORD} from './helpers/identity-engine.mjs';
+import {identityEngine,activate,signupInput,stepUpPasskey} from './helpers/identity-engine.mjs';
 import {createDeletionNotices,deletionNoticeTemplate} from '../packages/runtime/deletion-notices.mjs';
 import {REQUEST_KEY,FENCE_KEY} from '../packages/runtime/account-deletion.mjs';
 import {deletionEngine} from '../packages/runtime/account/deletion.mjs';
@@ -27,7 +27,7 @@ export async function deletionHTTPFixture(t){
  const base=createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}}}),flags={for:context=>({...base.for(context),enabled:name=>name==='ACCOUNT_DELETION_ENABLED'?state.enabled&&!state.killed&&context?.subject?.owner!==OTHER:base.for(context).enabled(name),background:()=>!state.killed,global:()=>state.enabled&&!state.killed})};
  const mail={async sendDeletionNotice(value){emails.push({...value,template:deletionNoticeTemplate(value.notice,{origin:ORIGIN,locale:value.locale})});if(!state.mailAccepted)throw Error('mail down');return state.accepted?{messageId:'fake-'+emails.length}:{};}},push={async send(subscription,payload){pushes.push({subscription:structuredClone(subscription),payload});if(!state.pushAccepted)throw Error('push down');return {accepted:state.accepted};}};
  const notices=createDeletionNotices({origin:ORIGIN,flags,mail,push});t.after(()=>notices.dispose());
- const record=await h.repository.get(id);Object.assign(record,{verifiedEmail:'owner@deletion.example',emailVerifiedAt:h.clock.now()-DAY,security:{epoch:2,changedAt:h.clock.now()-4*DAY},termsVersion:'superseded'});record.revision++;assert(await h.repository.compareAndSwap(id,record.revision-1,record));
+ const record=await h.repository.get(id);delete record.emails;Object.assign(record,{verifiedEmail:'owner@deletion.example',emailVerifiedAt:h.clock.now()-DAY,security:{epoch:2,changedAt:h.clock.now()-4*DAY},termsVersion:'superseded'});record.revision++;assert(await h.repository.compareAndSwap(id,record.revision-1,record));
  const metadata=new SqliteMetadata(':memory:');t.after(()=>metadata.close());
  const ports={identity:lifecycleIdentityPort(h.repository,{clock:h.clock.now}),security:identitySecurityPort(h.repository),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,notices,due:{put:async()=>{},delete:async()=>{}},exports:null,erasure:{federation:null,mcp:null,operatorApps:null}};
  const controller=new AccountController({metadata,gate:new SerialGate(),blobs:bucket(),archives:bucket(),sql:metadata.sql,config:{APP_ORIGIN:ORIGIN,flags,LIFECYCLE_CLOCK:h.clock.now,LIFECYCLE_LOG:()=>{},ACCOUNT_DELETION_PORTS:ports,IDENTITY_ACCOUNT:owner=>h.repository.get(owner)}});
@@ -54,7 +54,7 @@ test('HTTP: recent sign-in, stale/future step-up and body-forged authority never
   record=await x.h.repository.get(x.id);if(time===null)delete record.sessions[0].stepUpAt;else record.sessions[0].stepUpAt=time;record.revision++;await x.h.repository.compareAndSwap(x.id,record.revision-1,record);
   const response=await x.post({...x.input(),stepUpAt:x.h.clock.now(),sessionId:'forged'});assert.equal((await response.json()).error,'step_up_required');assert.equal(await x.metadata.get(REQUEST_KEY),undefined);
  }
- await x.h.act('stepUp',{method:'password',password:PASSWORD},x.ctx);const response=await x.post({...x.input(),stepUpAt:x.h.clock.now()});assert.equal(response.status,400);assert.equal((await response.json()).error,'invalid_request');
+ await stepUpPasskey(x.h.act,x.ctx,'passkey-alice');const response=await x.post({...x.input(),stepUpAt:x.h.clock.now()});assert.equal(response.status,400);assert.equal((await response.json()).error,'invalid_request');
 });
 test('HTTP adversarial: Origin, fetch metadata, CSRF, selector confusion, methods and bounded bodies',async t=>{
  const x=await deletionHTTPFixture(t);

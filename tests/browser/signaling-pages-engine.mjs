@@ -25,7 +25,7 @@ async function fixture({get,request,submissions={},enabled=true}={}){
    if(path.endsWith('/signaling')&&body.operation==='review')return structuredClone(F.SERVICE_REVIEW);
    if(path==='/api/signaling/pairing-create')return {...structuredClone(F.DETAIL.pairing),id:'pr_'+'n'.repeat(22),state:'live'};
    return {};}};
- const browser={consumeSubmission:id=>submissions[id],focus:selector=>effects.push(['focus',selector]),restoreFocus:()=>effects.push(['restoreFocus']),captureFocus(){},setCaptchaAction(){},installCaptcha(){}};
+ const browser={consumeSubmission:id=>submissions[id],focus:selector=>effects.push(['focus',selector]),restoreFocus:()=>effects.push(['restoreFocus']),captureFocus(){},setCaptchaAction(){},installCaptcha(){},authenticatePasskey:async()=>({id:'test-passkey'})};
  const engine=new Engine({providers:{state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),portalContributions:Provider.fromSingleton({}),recoveryFile:Provider.fromSingleton({})}});
  engine.feed.addEventListener(sp.ROUTE_EVENT,event=>routes.push(event.detail));
  const write=patch=>engine.container.use({state:{write:true}},({state})=>state.transition(next=>Object.assign(next,patch))),read=()=>engine.container.use(['state'],({state})=>state.snapshot());
@@ -95,14 +95,14 @@ test('pairing creation page: nothing preselected (every choice required), the re
  let stepped=false;
  const f=await fixture({submissions,request:path=>{
   if(path==='/api/signaling/review'&&!stepped)throw Object.assign(Error('Confirm it is you to pair with another account.'),{status:403,code:'reauthentication_required'});
-  if(path==='/api/auth/step-up/begin')return {password:true,passkey:false};if(path==='/api/auth/step-up'){stepped=true;return {};}}});
+  if(path==='/api/auth/step-up/begin')return {passkey:true,authenticationOptions:{challenge:'c'}};if(path==='/api/auth/step-up'){stepped=true;return {};}}});
  try{
   await f.act(new sp.OpenSignalingPage({page:'pair',params:{}}));
   await f.act(new sp.ReviewSignalingChange({action:'pairing-create',operationId:'empty'}));assert.equal((await f.read()).error,sp.SIGNALING_INCOMPLETE);
   f.calls.length=0;const reviewing=f.engine.dispatch(new sp.ReviewSignalingChange({action:'pairing-create',operationId:'cross'})).next('complete');
   let s;for(let i=0;i<50&&!(s=await f.read()).stepUp;i++)await new Promise(r=>setTimeout(r,0));
-  assert.ok(s.stepUp?.password,'the console asks the owner to confirm it is them');
-  await f.act(new ConfirmOwner({id:s.stepUp.id,method:'password',values:{password:'pw'}}));await within(reviewing,'review after step-up');
+  assert.ok(s.stepUp?.passkey,'the console asks the owner to confirm it is them');
+  await f.act(new ConfirmOwner({id:s.stepUp.id,method:'passkey'}));await within(reviewing,'review after step-up');
   const reviews=f.posts().filter(c=>c.path==='/api/signaling/review');assert.equal(reviews.length,2,'the same review is sent again once');
   const input=reviews[1].body.input;assert.deepEqual({...input,expiresAt:0},{kind:F.CHAT,local:{client_id:F.APP,client_session:null},peer:{handle:'river'},opens:'local',label:'Bob',expiresAt:0});
   assert.ok(Math.abs(input.expiresAt-(Date.now()+180*86400000))<60000);

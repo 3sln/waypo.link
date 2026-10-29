@@ -1,25 +1,28 @@
 // Engine-level identity fixture: the real IdentityService inside an ngin Engine,
-// with every pluggable resource replaced by an in-memory or fake one. Passwords
-// use a fast deterministic fake hasher (Argon2 itself is covered by identity.test.mjs).
+// with every pluggable resource replaced by an in-memory or fake one. Passkeys use
+// a deterministic fake WebAuthn adapter (`fakeWebAuthn`): a response is accepted
+// when it echoes the issued challenge and names a registered credential. Passwords
+// were dropped (owner approval 2026-10-28); `fakeHasher` remains for the operator
+// boot principal only.
 import { createIdentityEngine, IdentityAction, OwnerQuery } from '../../packages/identity/index.mjs';
 import { ShardedIdentityRepository, IdentityShardStorage, IDENTITY_LAYOUT } from '../../packages/runtime/identity-shards.mjs';
+import { indexedEmails } from '../../packages/identity/emails.mjs';
 import { createHash } from 'node:crypto';
 import { fakeClock } from './chaos.mjs';
 
 export const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11', linkedCodeKey: 'test-linked-code-key-0001' };
 export const context = { origin: config.origin, remoteIP: '192.0.2.1' };
-export const PASSWORD = 'correct horse battery staple';
-export const signupInput = (overrides = {}) => ({ handle: 'alice', method: 'password', password: PASSWORD, ageConfirmed: 18, termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified', ...overrides });
+export const signupInput = (overrides = {}) => ({ handle: 'alice', method: 'passkey', ageConfirmed: 18, termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified', ...overrides });
 
 /** Linearizable Map repository with the IdentityService repository contract. */
 export class MemoryAccounts {
   records = new Map();
   async get(id) { return structuredClone(this.records.get(id)); }
   async findByHandle(handle) { return structuredClone([...this.records.values()].find(a => a.handle === handle)); }
-  async findByEmail(email) { return structuredClone([...this.records.values()].find(a => a.verifiedEmail === email)); }
+  async findByEmail(email) { return structuredClone([...this.records.values()].find(a => indexedEmails(a).includes(email))); }
   async create(account) { if (this.records.has(account.id) || [...this.records.values()].some(a => a.handle === account.handle)) return false; this.records.set(account.id, structuredClone(account)); return true; }
   async compareAndSwap(id, revision, account) {
-    if (this.records.get(id)?.revision !== revision || (account.verifiedEmail && [...this.records.values()].some(a => a.id !== id && a.verifiedEmail === account.verifiedEmail))) return false;
+    if (this.records.get(id)?.revision !== revision || indexedEmails(account).some(email => [...this.records.values()].some(a => a.id !== id && indexedEmails(a).includes(email)))) return false;
     this.records.set(id, structuredClone(account)); return true;
   }
 }
@@ -55,12 +58,26 @@ export function memoryShards({ wrap = stub => stub } = {}) {
   return { shard, controllers, repository: clock => new ShardedIdentityRepository({ shard, layout: IDENTITY_LAYOUT, clock }) };
 }
 const digest = value => `fake:${createHash('sha256').update(value).digest('base64url')}`;
+/** Deterministic WebAuthn: options carry a fresh challenge; a response {id, challenge} verifies when it echoes the
+ * challenge (registration) or also names the stored credential (assertion). Counters increase on every assertion. */
+export function fakeWebAuthn() {
+  let next = 0;
+  const challenge = () => `challenge-${++next}`;
+  return {
+    registrationOptions: async () => ({ challenge: challenge() }),
+    authenticationOptions: async () => ({ challenge: challenge() }),
+    verifyRegistration: async ({ response, challenge: expected }) => { if (!response || response.challenge !== expected || typeof response.id !== 'string') throw new Error('invalid registration'); return { id: response.id, publicKey: 'fake-public-key', counter: 0, transports: [], deviceType: 'multiDevice', backedUp: true }; },
+    verifyAuthentication: async ({ response, challenge: expected, credential }) => { if (!response || response.challenge !== expected || response.id !== credential.id) throw new Error('invalid assertion'); return { counter: (credential.counter ?? 0) + 1, backedUp: credential.backedUp ?? true }; },
+  };
+}
+/** The response a fake authenticator gives for `options` with credential `id`. */
+export const passkeyResponse = (options, id = 'passkey-1') => ({ id, challenge: (options?.registrationOptions ?? options?.authenticationOptions ?? options)?.challenge });
 export const fakeHasher = { dummyHash: digest('dummy'), hash: async value => digest(value), verify: async (value, encoded) => encoded === digest(value) };
 
 export function identityEngine({ repository = new MemoryAccounts(), deviceRequests = new MemoryDevices(), clock = fakeClock(), mailer, rateLimiter = { check: async () => true }, ...overrides } = {}) {
   const mail = [];
   const resources = { repository, deviceRequests, clock: clock.now, config, turnstile: { verify: async ({ token }) => token === 'verified' }, rateLimiter,
-    passwordHasher: fakeHasher, webauthn: { registrationOptions: async () => ({ challenge: 'unused' }), authenticationOptions: async () => ({ challenge: 'unused' }) },
+    webauthn: fakeWebAuthn(),
     mailer: mailer ?? { sendVerification: async value => { mail.push(value); }, sendSetupCode: async value => { mail.push(value); } }, ...overrides };
   // The app's own engine wiring; `service` reaches methods that are not
   // dispatchable actions (owner reads, step-up) through the engine container.
@@ -71,12 +88,25 @@ export function identityEngine({ repository = new MemoryAccounts(), deviceReques
   const owner = ctx => engine.query(new OwnerQuery(ctx)).peek();
   return { engine, service, act, owner, repository, deviceRequests, clock, mail, resources };
 }
-/** Signup → recovery download → confirmation, all through engine dispatch. */
-export async function activate(act, input = signupInput()) {
+/** Signup (passkey) → passkey registration → recovery download → confirmation → passkey step-up, all through engine
+ * dispatch. The passkey id is `passkey-<handle>` unless `passkeyId` is given. */
+export async function activate(act, input = signupInput(), { passkeyId } = {}) {
   const pending = await act('signup', input);
-  const file = await act('downloadRecovery', pending);
-  const owner = await act('confirmRecovery', { ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true });
-  await act('stepUp',{method:'password',password:input.password},sessionContext(owner));
-  return { pending, file, owner, ownerContext: sessionContext(owner) };
+  const credentialId = passkeyId ?? `passkey-${input.handle ?? 'alice'}`;
+  await act('registerPasskey', { pendingToken: pending.pendingToken, response: passkeyResponse(pending, credentialId) });
+  const file = await act('downloadRecovery', { pendingToken: pending.pendingToken });
+  const owner = await act('confirmRecovery', { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true });
+  await stepUpPasskey(act, sessionContext(owner), credentialId);
+  return { pending, file, owner, ownerContext: sessionContext(owner), credentialId };
+}
+/** A passkey step-up for `ctx` with credential `id` (stepUpBegin is a dispatchable action). */
+export async function stepUpPasskey(act, ctx, id) {
+  const begin = await act('stepUpBegin', {}, ctx);
+  return act('stepUp', { method: 'passkey', response: passkeyResponse(begin, id) }, ctx);
+}
+/** A passkey sign-in for `handle` with credential `id`; resolves the session result. */
+export async function signInPasskey(act, handle, id, ctx = context) {
+  const begin = await act('beginPasskeyLogin', { handle, turnstileToken: 'verified' }, ctx);
+  return act('finishPasskeyLogin', { challengeToken: begin.challengeToken, response: passkeyResponse(begin, id) }, ctx);
 }
 export const sessionContext = (result, base = context) => ({ ...base, sessionToken: result.sessionToken, csrfToken: result.csrfToken });

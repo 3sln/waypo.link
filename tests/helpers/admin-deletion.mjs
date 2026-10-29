@@ -20,7 +20,7 @@ export async function adminDeletionFixture({wrap={},config:extra={}}={}){
  await account();await account(ADMIN);const row=await repository.get(ADMIN);
  const admin=new AdminService({store,identity,webauthn,passwordHasher,rateLimiter,clock:clock.now,config,connectionsSeverAccount:async(owner,input)=>effects.push({kind:'sever',owner,...input})});
  await store.commit({writes:{['principal/'+ADMIN]:{owner:ADMIN,assignmentId:row.assignmentId,roles:['admin'],hold:null}}});
- const active=await repository.get(ADMIN),session=await identity.session(active);await identity.save(active,active.revision);
+ const active=await repository.get(ADMIN),session=await identity.session(active,{credentialId:'passkey'});await identity.save(active,active.revision);
  const context={actor:'admin',origin,sessionToken:session.sessionToken,csrfToken:session.csrfToken,remoteIP:'192.0.2.1'};
  await identity.stepUpBegin({},context);await identity.stepUp({method:'passkey',response:{id:'passkey',ok:true}},context);
  await metadata.put('owner',OWNER);

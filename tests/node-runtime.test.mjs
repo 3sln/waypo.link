@@ -4,12 +4,16 @@ import { mkdtemp,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
+import { softAuthenticator } from './helpers/soft-passkey.mjs';
+// Passwords were dropped (owner approval 2026-10-28): sign-up registers a soft passkey before the recovery file.
 test('same HTTP application supports durable unbranded Node signup/recovery/session and restart',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'bindle-node-'));const origin='http://localhost:8788';let app;
  try{
   app=await createNodeServer({directory});
   const post=(path,value,headers={})=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(value)}));
-  const signup=await post('/api/auth/signup',{method:'password',password:'Self hosted test long password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(signup.status,200);const pending=await signup.json();
+  const signup=await post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(signup.status,200);const pending=await signup.json();assert.equal(pending.readyForRecovery,false);
+  assert.equal((await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json()).error,'credential_required','no file before the passkey');
+  assert.equal((await post('/api/auth/passkey/register',{pendingToken:pending.pendingToken,response:await softAuthenticator({origin}).register(pending.registrationOptions)})).status,200);
   assert.match(pending.account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);assert.match(pending.account.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
   const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
   const activation=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activation.status,200);const session=await activation.json();const cookie=activation.headers.get('Set-Cookie').split(';')[0];assert.equal(session.account.handle,pending.account.handle);assert.equal(session.account.id,pending.account.id);assert.equal(session.sessionToken,undefined);

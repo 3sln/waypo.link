@@ -10,6 +10,7 @@ import { interactiveIdentity } from './organizations.mjs';
 import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './authority-epoch.mjs';
 import {createRecoveryPayload,RECOVERY_FILE_ID} from '../recovery/index.mjs';
 import {recoveryReminder} from './recovery-reminder.mjs';
+import {accountEmails,confirmedEmails,signInEmails,noticeEntry,noticeEmail,emailEntry,emailProjection,migrateEmails,MAX_CONFIRMED_EMAILS,MAX_UNVERIFIED_EMAILS,UNVERIFIED_EMAIL_TTL_MS,ESTABLISHED_METHOD_AGE_MS} from './emails.mjs';
 
 /**
  * DX-6 identity security state (docs/architecture/account-deletion-export.md §2.1, §3, §6, R1-H1).
@@ -25,15 +26,16 @@ import {recoveryReminder} from './recovery-reminder.mjs';
  *   The lifecycle tombstone discards it (not RETAINED; DX-3).
  *
  * Bumped by exactly these writes (one bump per CAS):
- *   verified email added or changed (setupEmailConfirm, emailConfirm, only when the address differs),
- *   verified email removed and the email-notice waiver (emailRemove), email sign-in enabled (configureEmailLogin
- *   false→true), credential added (registerPasskey, credentialFinish) or removed (removePasskey), password set
- *   (setPendingPassword; there is no other password-change path), recovery-file recovery (recover: start and resume)
+ *   an address verified (setupEmailConfirm, emailConfirm), a verified address removed and the email-notice waiver
+ *   (emailRemove), a sign-in email turned on (configureEmailLogin verified→sign-in) or removed or turned off (the
+ *   removal process, emailRemove / configureEmailLogin sign-in→verified), credential added (registerPasskey,
+ *   credentialFinish) or removed (removePasskey), recovery-file recovery (recover: start and resume)
  *   and recovery-file issuance (downloadRecovery, which every setup and recovery completion requires), an active-account
  *   reissue commit (reissueRecoveryConfirm) and its cancellation (reissueRecoveryCancel*, which also raises
  *   `federationGeneration` so no OAuth grant survives the restored credential).
  * Never bumped by: sessions (create, use, close, revoke), step-up, terms acceptance, renames, passkey counter
- *   updates, email-link or email-login requests, disabling email sign-in, handle claims. These are the cheap,
+ *   updates, email-link or email-login requests, adding or deleting an unverified address, choosing the notice
+ *   address, handle claims. These are the cheap,
  *   repeatable events that would otherwise let an attacker flush the change out of a rolling window.
  *
  * Trusted read-only port (never routed; adapters pass it to deletion and export):
@@ -65,8 +67,8 @@ import {recoveryReminder} from './recovery-reminder.mjs';
  *   recoveryReminder       {fileId, slot, at}: the last annual reminder slot sent for that file (recovery-reminder.mjs).
  *   downloadRecovery       issues a new v3 file during setup or after a recovery (budgeted: 5 per setup token).
  *   reissueRecoveryBegin / reissueRecoveryConfirm   the active-account reissue (recovery-identity "Active-account
- *                          reissue", provisional). Begin needs a fresh step-up with a credential enrolled >= 7 days
- *                          earlier (`session.stepUpCredential`, `passwordSetAt`), or an armed forced marker
+ *                          reissue", provisional). Begin needs a fresh passkey step-up with a passkey enrolled >= 7
+ *                          days earlier (`session.stepUpCredential`), or an armed forced marker
  *                          `recoveryReissue` = {reason:'elevated-abort'|'transfer-in', at}; it passes the account gate
  *                          (identityBackup.reissue) and stages `recoveryStaged` = {hash, fileId, sessionId, preparedAt,
  *                          expiresAt, base, forced?}. The current file is never cancelled before the owner
@@ -82,6 +84,21 @@ import {recoveryReminder} from './recovery-reminder.mjs';
  *                          began, the emailed link, or the previous file (cancelReissue).
  *   sendRecoveryReminder   the annual reissue offer (a reminder only; it changes no credential): 30 days before the
  *                          file's anniversary, on it, then every 30 days, by email and push; acceptance, not delivery.
+ *
+ * Passwords (owner approval 2026-10-28, "drop passwords"; sign-in and intents spike §6.3, plan provisional): there is no
+ *   password sign-up, sign-in, step-up or storage. A record written earlier may still carry `passwordHash` /
+ *   `passwordSetAt`; nothing reads them, a session that a password created or stepped up is refused (`authorized`),
+ *   and `retirePasswords` (password-retirement.mjs) strips or resets such records. The operator boot principal keeps
+ *   its own password option until the owner answers N5 (packages/identity/admin.mjs).
+ *
+ * Email addresses (sign-in and intents spike §3, owner approval 2026-10-28; packages/identity/emails.mjs): up to three
+ *   verified addresses, one of them the notice address, plus one unverified address awaiting its link (24 h, holds no
+ *   uniqueness claim). Only a verified address becomes a sign-in email (configureEmailLogin, passkey step-up or the
+ *   SI-4 email step-up). Turning a sign-in email off or removing it is the removal process (spike §6.4, provisional):
+ *   RM-1 floor, RM-2 Tier A (a recent sign-in email undone with a fresh assertion from an established passkey) and
+ *   RM-3 (a recent sign-in email that an email session added, undone from an established sign-in email). Tier B (an
+ *   established sign-in email) needs the recovery spike's proof-only file presentation, which does not exist yet, so
+ *   it is refused with `removal_unavailable` (N6).
  *
  * Email removal resources (constructor, both optional, both fail closed):
  *   flags            flags port {for(ctx)} or a thunk returning the current one; EMAIL_REMOVAL_ENABLED is read with
@@ -119,15 +136,17 @@ export const SECURITY_NOTICE_COALESCE_MS = 600000;
 /** The live cooling-off record `account.recoveryPrevious` = {hash, issuedAt, fileId, version, marker, reissuedAt,
  * preparedAt, until, newFileId, cancelHash, credential}, or null when no reissue is pending at `now`. Pure. */
 export function pendingReissue(account, now){const p=account?.recoveryPrevious;return p&&typeof p==='object'&&Number.isSafeInteger(p.until)&&p.until>now&&Number.isSafeInteger(p.reissuedAt)&&Number.isSafeInteger(p.preparedAt)&&typeof p.newFileId==='string'?p:null;}
-/** The step-up credential as the P17 contest window compares it: a passkey id, 'password', or null. */
-export const stepUpCredentialId = session => session?.stepUpCredential?.kind==='passkey'&&typeof session.stepUpCredential.id==='string'?session.stepUpCredential.id:session?.stepUpCredential?.kind==='password'?'password':null;
+/** The step-up credential as the P17 contest window compares it: a passkey id, or null. */
+export const stepUpCredentialId = session => session?.stepUpCredential?.kind==='passkey'&&typeof session.stepUpCredential.id==='string'?session.stepUpCredential.id:null;
+/** A session that a password created or stepped up (records from before password removal): refused everywhere. */
+export const passwordSession = session => (session?.source??'credential')==='credential'&&typeof session?.credentialId!=='string'||session?.stepUpCredential?.kind==='password';
 const LOGIN_TOKEN=/^pl1\.([A-Za-z0-9_-]{1,800})\.([A-Za-z0-9_-]{43})$/;
 /** The armed forced-reissue marker `account.recoveryReissue` = {reason, at}, or null. Pure. */
 export function reissueMarker(account){const marker=account?.recoveryReissue;return marker&&typeof marker==='object'&&RECOVERY_REISSUE_REASONS.includes(marker.reason)&&Number.isSafeInteger(marker.at)&&marker.at>=0?marker:null;}
 const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.fileId==='string'&&RECOVERY_FILE_ID.test(value.fileId)&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
 /** Account security notices sent to every channel (review 2026-10-23 R1(ii)). */
-export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','password-changed']);
-export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','recovery-file-reissued','recovery-reissue-cancelled','account-recovery-started','recovery-setup-resumed']);
+export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','email-sign-in-enabled','email-sign-in-removed','sessions-revoked','sessions-evicted']);
+export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','email-login-disabled','passkey-registered','passkey-added','passkey-removed','recovery-file-issued','recovery-file-reissued','recovery-reissue-cancelled','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
 }
@@ -154,9 +173,9 @@ export function identitySecurityPort(repository) {
   if (typeof repository?.get !== 'function') throw new TypeError('An identity repository is required.');
   return async owner => { const account = await repository.get(owner); return account && account.id === owner && account.status !== 'deleted' ? securityState(account) : null; };
 }
-const publicAccount = (a,badges=[]) => ({ id: a.id, handle: a.handle, status: a.status, createdAt: a.createdAt,
-  badges,termsVersion: a.termsVersion, hasPassword: Boolean(a.passwordHash), passkeyCount: a.credentials.length,
-  recoveryConfigured: Boolean(a.recoveryHash), paidHandle:a.paidHandle||null, aliases:[a.handle,...onboardingAlias(a)?[onboardingAlias(a)]:[],...a.paidHandle?[a.paidHandle]:[],...systemBadge(a)?[a.systemIdentity.handle]:[]],...systemBadge(a)?{systemBadge:systemBadge(a)}:{}, verifiedEmail: a.verifiedEmail || null, emailLoginEnabled: a.emailLoginEnabled === true, lastActiveAt: a.lastActiveAt });
+const publicAccount = (a,badges=[],now) => ({ id: a.id, handle: a.handle, status: a.status, createdAt: a.createdAt,
+  badges,termsVersion: a.termsVersion, passkeyCount: a.credentials.length,
+  recoveryConfigured: Boolean(a.recoveryHash), paidHandle:a.paidHandle||null, aliases:[a.handle,...onboardingAlias(a)?[onboardingAlias(a)]:[],...a.paidHandle?[a.paidHandle]:[],...systemBadge(a)?[a.systemIdentity.handle]:[]],...systemBadge(a)?{systemBadge:systemBadge(a)}:{}, emails: emailProjection(a,now), noticeEmail: noticeEmail(a), signInEmail: signInEmails(a).length>0, lastActiveAt: a.lastActiveAt });
 function emailAddress(value) {
   if (typeof value !== 'string' || value.length > 254 || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(value)) fail('invalid_email', 'Enter an ordinary email address.');
   const [local, domain] = value.split('@');
@@ -165,10 +184,6 @@ function emailAddress(value) {
 }
 function handle(value){try{return normalizeHandle(value);}catch{fail('invalid_handle','Enter your complete account handle.');}}
 
-function password(value) {
-  if (typeof value !== 'string' || [...value].length < 15 || [...value].length > 128 || new TextEncoder().encode(value).length > 512) fail('invalid_password', 'Use a password of 15–128 characters.');
-  return value;
-}
 function tokenParts(value) {
   if (typeof value !== 'string' || value.length > 150 || !/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(value)) fail('unauthorized', 'Authentication failed.');
   return value.split('.');
@@ -183,12 +198,12 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, organizationSignals, config }) {
-    if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, organizationSignals, config }) {
+    if (!repository || !turnstile || !rateLimiter || !webauthn || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
     this.repository = repository; this.crypto = new IdentityCrypto(crypto); this.clock = clock;
-    this.turnstile = turnstile; this.rateLimiter = rateLimiter; this.webauthn = webauthn; this.passwordHasher = passwordHasher;
+    this.turnstile = turnstile; this.rateLimiter = rateLimiter; this.webauthn = webauthn;
     this.pushTransport=pushTransport;this.mailer = mailer; this.identityBackup = identityBackup; this.paidHandleEligibility=paidHandleEligibility;
     // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
     // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
@@ -198,19 +213,19 @@ export class IdentityService {
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
   }
   origin(context) { if (context?.origin !== this.config.origin) fail('csrf', 'Use the account website to complete this request.'); }
-  /** ORG-12b break-glass liveness (organizations design §12d.3): an interactive sign-in (password, passkey, email) or a
+  /** ORG-12b break-glass liveness (organizations design §12d.3): an interactive sign-in (passkey, email) or a
    * step-up. `lastInteractiveAt` rides the caller's own CAS (no extra write); the owner hook `organizationSignals.liveness`
    * runs fire-and-forget and returns nothing to identity. Background session refreshes never call this. */
   interactive(account,kind,context){const at=this.clock();account.lastInteractiveAt=at;if(account.status==='active'&&typeof this.organizationSignals?.liveness==='function'){const owner=account.id;this.background(context,()=>this.organizationSignals.liveness(owner,{kind,at}));}}
   async projectAccount(account){
     const aliases=[account.handle,...onboardingAlias(account)?[onboardingAlias(account)]:[],...account.paidHandle?[account.paidHandle]:[],...systemBadge(account)?[account.systemIdentity.handle]:[]],identity=Object.freeze({id:account.id,handle:account.handle,status:account.status,aliases:Object.freeze(aliases),badgeIds:Object.freeze(Array.isArray(account.badgeIds)?[...account.badgeIds]:[])});let ids,timer;
     try{ids=await Promise.race([Promise.resolve().then(()=>this.resolveIdentityBadges(identity)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Badge resolution timed out')),500);})]);}catch{ids=[];}finally{clearTimeout(timer);}
-    return publicAccount(account,projectAccountBadges(account,this.config,ids));
+    return publicAccount(account,projectAccountBadges(account,this.config,ids),this.clock());
   }
   async guard(operation, input, context) {
     this.origin(context);
     // Wargame 2026-10-23 #3: only per-network windows run before Turnstile. Handle-keyed windows never see CAPTCHA-less
-    // traffic; sign-in consults them after this check (loginPassword) and charges only completed, failed checks.
+    // traffic.
     if (!await this.rateLimiter.check({ phase: 'attempt', operation, remoteIP: context.remoteIP, region:context.region })) fail('rate_limited', 'Please wait before trying again.');
     if (typeof input.turnstileToken !== 'string' || input.turnstileToken.length > 4096 || !await this.turnstile.verify({ token: input.turnstileToken, remoteIP: context.remoteIP, action: operation, hostname: new URL(this.config.origin).hostname })) fail('challenge_failed', 'Complete the security check and try again.');
   }
@@ -232,7 +247,7 @@ export class IdentityService {
   /** Trusted read-only port (DX-6); see the header JSDoc for the contract. Never routed. */
   async identitySecurity(owner) { return identitySecurityPort(this.repository)(owner); }
   async save(account, revision) {
-    this.collectDueNotices(account);
+    this.collectDueNotices(account);migrateEmails(account,this.clock());
     account.revision = revision + 1;
     if (!await this.repository.compareAndSwap(account.id, revision, account)) { this.queuedNotices?.delete(account); fail('conflict', 'The account changed; start this step again.'); }
     await this.flushNotices(account);
@@ -264,12 +279,12 @@ export class IdentityService {
   }
   async newPending(account,context) {
     if((this.config.requireReachability===true||account.systemIdentity||account.onboardingIdentity)&&context){if(!context.setupBinding)fail('unauthorized');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
-    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;delete account.pendingCredentialAt;delete account.pendingPasswordSets;delete account.recoveryDownloads;
+    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;delete account.pendingCredentialAt;delete account.pendingPasswordSets;delete account.recoveryDownloads;delete account.passwordHash;delete account.passwordSetAt;
     const value = `${account.id}.${this.crypto.random()}`;
     account.pendingHash = await this.crypto.hash('pending', value); account.pendingExpiresAt = this.clock() + this.config.pendingTtlMs;
     return value;
   }
-  async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity, scope } = {}) {
+  async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity, scope, emailAddress } = {}) {
     // ORG-1: nobody signs in as an organization (spec organizations §3); every session path ends here.
     if (!interactiveIdentity(account)) fail('unauthorized', 'Authentication failed.');
     const sessionToken = `${account.id}.${this.crypto.random()}`; const csrfToken = this.crypto.random();
@@ -286,6 +301,8 @@ export class IdentityService {
       id: this.crypto.id(), label: safeLabel(label), credentialId, source, parentSessionId, ...source==='activation'&&Number.isSafeInteger(activationCredentialAt)?{activationCredentialAt}:{},
       // DX-7 closure-export: the credential was verified just now, so the session starts stepped up.
       ...scope==='closure-export'?{scope,stepUpAt:this.clock()}:{},
+      // The sign-in email an email session proved (RM-3 needs it: an established sign-in email may undo what an email session added).
+      ...source==='email'&&typeof emailAddress==='string'?{emailAddress}:{},
       hash: await this.crypto.hash('session', sessionToken), csrfToken, expiresAt, createdAt: this.clock(), lastUsedAt: this.clock() }];
     account.lastActiveAt = this.clock(); this.audit(account, 'session-created');
     return { account: await this.projectAccount(account), sessionToken, csrfToken, expiresAt, sessionContext:account.sessions.at(-1).id };
@@ -295,7 +312,8 @@ export class IdentityService {
     const [id] = tokenParts(context?.sessionToken); const account = await this.repository.get(id);
     const hash = await this.crypto.hash('session', context.sessionToken);
     const session = account?.sessions.find(s => secureEqual(s.hash, hash) && s.expiresAt > this.clock());
-    if (!account || !session || !interactiveIdentity(account)) fail('unauthorized', 'Sign in to continue.');
+    // Password removal (spike §6.3): a session a password created or stepped up is no longer an authority.
+    if (!account || !session || !interactiveIdentity(account) || passwordSession(session)) fail('unauthorized', 'Sign in to continue.');
     // DX-7: a closure-export session is accepted only where the caller opted in (export, status, step-up and
     // sign-out), only for a suspended account whose applied closure still offers an export window.
     if (session.scope === 'closure-export') { if (!closure || !['suspended', 'moved'].includes(account.status) || !await this.closureWindow(account)) fail('unauthorized', 'Sign in to continue.'); }
@@ -327,19 +345,22 @@ export class IdentityService {
   }
   async recent(context) {
     const result = await this.authorized(context, true);
-    if (this.authAt(result.session) + 900000 <= this.clock()) fail('reauthentication_required', 'Confirm your password or passkey before changing account access.');
+    if (this.authAt(result.session) + 900000 <= this.clock()) fail('reauthentication_required', 'Confirm with your passkey before changing account access.');
     return result;
   }
   async sessionID(session) { return session.id || this.crypto.hash('session-public-id', session.hash); }
   // Privileged consoles need a per-session step-up, not merely a young session.
   async privileged(context,windowMs=300000){const {account,session}=await this.authorized(context,true,{closure:context?.allowClosure===true});this.requireStepUp(session,windowMs);return {account,session,sessionId:await this.sessionID(session)};}
-  requireStepUp(session,windowMs=300000){if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>this.clock()||session.stepUpAt+windowMs<=this.clock())fail('step_up_required','Confirm your password or passkey to continue.');}
-  async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!account.credentials.length)return {password:Boolean(account.passwordHash),passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {password:Boolean(account.passwordHash),passkey:true,authenticationOptions};}
+  requireStepUp(session,windowMs=300000){if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>this.clock()||session.stepUpAt+windowMs<=this.clock())fail('step_up_required','Confirm with your passkey to continue.');}
+  /** SI-4 email step-up (spike §3.5): a session created by an email sign-in within the last 5 minutes, on an account
+   * with no passkey. It counts only for the narrow list (adding a passkey, verifying an extra address, turning sign-in
+   * on for another address); it never sets `stepUpAt`, so nothing else (LA-7, reissue, removals, deletion) sees it. */
+  emailStepUp(account,session){return account.credentials.length===0&&session.source==='email'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()&&session.createdAt+300000>this.clock()&&signInEmails(account).some(entry=>entry.address===session.emailAddress);}
+  async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!account.credentials.length)return {passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {passkey:true,authenticationOptions};}
   async stepUp(input,context){
     const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!await this.rateLimiter.check({operation:'step-up',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
     let used;
-    if(input.method==='password'){password(input.password);if(!account.passwordHash||!await this.passwordHasher.verify(input.password,account.passwordHash))fail('unauthorized','Authentication failed.');used={kind:'password'};}
-    else if(input.method==='passkey'){const challenge=account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>this.clock()),credential=account.credentials.find(c=>c.id===input.response?.id);if(!challenge||!credential)fail('unauthorized','Authentication failed.');let verified;try{verified=await this.webauthn.verifyAuthentication({response:input.response,challenge:challenge.value,credential,account,config:this.config});}catch{fail('unauthorized','Authentication failed.');}credential.counter=verified.counter;credential.backedUp=verified.backedUp;account.challenges=account.challenges.filter(c=>c!==challenge);used={kind:'passkey',id:credential.id};}
+    if(input.method==='passkey'){const challenge=account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>this.clock()),credential=account.credentials.find(c=>c.id===input.response?.id);if(!challenge||!credential)fail('unauthorized','Authentication failed.');let verified;try{verified=await this.webauthn.verifyAuthentication({response:input.response,challenge:challenge.value,credential,account,config:this.config});}catch{fail('unauthorized','Authentication failed.');}credential.counter=verified.counter;credential.backedUp=verified.backedUp;account.challenges=account.challenges.filter(c=>c!==challenge);used={kind:'passkey',id:credential.id};}
     else fail('invalid_method');
     // Which credential confirmed it (reissue authority: a credential enrolled >= 7 days earlier, P18).
     session.stepUpAt=this.clock();session.stepUpCredential=used;this.audit(account,'step-up');this.interactive(account,'step-up',context);await this.save(account,revision);return {stepUpUntil:session.stepUpAt+300000};
@@ -356,8 +377,8 @@ export class IdentityService {
     // case/confusable variants cannot register twice or strand a login.
     const requestedHandle=this.repository.allocateFreeHandle?input.handle:handle(input.handle);
     if (input.termsAccepted !== true || input.termsVersion !== this.config.termsVersion) fail('terms_required', 'Agree to the current account terms.');
-    if (!['passkey', 'password'].includes(input.method)) fail('invalid_method');
-    const selectedPassword = input.method === 'password' ? password(input.password) : null;
+    // Passwords were dropped (owner approval 2026-10-28): sign-up is passkey (email sign-up arrives with the email flow, P3).
+    if (input.method !== 'passkey' || input.password !== undefined) fail('invalid_method', 'Create your account with a passkey.');
     const signupPlan=input.signupPlan??'free';if(!['free','paid','plus','ultra'].includes(signupPlan))fail('invalid_plan','Choose a supported signup plan.');const age=this.ageAttestation(input,context,{paid:signupPlan!=='free'});
     if(signupPlan!=='free'&&(this.config.paidSignupEnabled!==true||!this.setupBilling))throw Object.assign(new IdentityFault('paid_signup_unavailable','Paid signup is not available.'),{status:503});
     if (!this.repository.allocateFreeHandle&&await this.repository.findByHandle(requestedHandle)) fail('handle_unavailable', 'Choose another account handle.');
@@ -371,48 +392,44 @@ export class IdentityService {
     const account = { id, assignmentId, nameAssignmentId:assignmentId, revision: 0, handle: allocatedHandle, status: 'pending',
       admission:{version:1,kind:signupPlan==='free'?'free':'paid',plan:signupPlan,...signupPlan==='free'?{}:{incarnation:this.crypto.id(),checkoutStartUntil:this.clock()+86400000,initialPaymentRequired:true}},
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
-      termsAcceptedAt: this.clock(), ...age, security: { epoch: 0, changedAt: this.clock() }, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
-      passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null, ...selectedPassword ? { passwordSetAt: this.clock() } : {} };
+      termsAcceptedAt: this.clock(), ...age, security: { epoch: 0, changedAt: this.clock() }, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null };
     if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
-    const pendingToken = await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);
-    let registrationOptions;
-    if (input.method === 'passkey') {
-      registrationOptions = await this.webauthn.registrationOptions({ account, config: this.config });
-      account.challenges.push({ purpose: 'register', value: registrationOptions.challenge, expiresAt: this.clock() + this.config.challengeTtlMs });
-    }
+    const pendingToken = await this.newPending(account,context);
+    const registrationOptions = await this.webauthn.registrationOptions({ account, config: this.config });
+    account.challenges.push({ purpose: 'register', value: registrationOptions.challenge, expiresAt: this.clock() + this.config.challengeTtlMs });
     this.audit(account, 'signup-pending');
     if (!await this.repository.create(account)) fail('handle_unavailable', 'Choose another account handle.');
-    return { pendingToken, account: await this.projectAccount(account), registrationOptions, readyForRecovery: input.method === 'password',signupPlan,paymentRequired:signupPlan!=='free' };
+    return { pendingToken, account: await this.projectAccount(account), registrationOptions, readyForRecovery: false,signupPlan,paymentRequired:signupPlan!=='free' };
   }
   async inspectOnboarding(input,context){this.origin(context);if(Object.keys(input).length!==1||typeof input.onboardingToken!=='string')fail('invalid_onboarding_invitation');if(!this.onboarding)fail('onboarding_unavailable');return this.onboarding.inspect(input.onboardingToken);}
   async issueOnboarding(input,context){this.origin(context);if(Object.keys(input).length!==2||typeof input.onboardingToken!=='string'||typeof input.issuanceProof!=='string')fail('invalid_onboarding_issuance');if(!this.onboarding)fail('onboarding_unavailable');return this.onboarding.issue(input.onboardingToken,input.issuanceProof);}
   async claimOnboarding(input,context){
     const age=this.ageAttestation(input,context);await this.guard('onboarding',input,context);if(!this.onboarding)fail('onboarding_unavailable','Account onboarding is not configured.');if(!context.setupBinding)fail('setup_binding_required','Prepare account onboarding in this browser before continuing.');
-    if(Object.keys(input).some(name=>!['onboardingToken','name','method','password','termsAccepted','termsVersion','ageConfirmed','turnstileToken'].includes(name)))fail('invalid_onboarding_request');
-    if(input.termsAccepted!==true||input.termsVersion!==this.config.termsVersion)fail('terms_required','Agree to the current account terms.');if(!['passkey','password'].includes(input.method))fail('invalid_method');const selectedPassword=input.method==='password'?password(input.password):null;
+    if(Object.keys(input).some(name=>!['onboardingToken','name','method','termsAccepted','termsVersion','ageConfirmed','turnstileToken'].includes(name)))fail('invalid_onboarding_request');
+    if(input.termsAccepted!==true||input.termsVersion!==this.config.termsVersion)fail('terms_required','Agree to the current account terms.');if(input.method!=='passkey')fail('invalid_method','Create your account with a passkey.');
     const binding=await this.crypto.hash('onboarding-setup-browser',context.setupBinding),prepared=await this.onboarding.prepare(input.onboardingToken,input.name,binding),{claims,digest,item,marker}=prepared,previous=await this.repository.get(item.owner);
     if(previous){if(previous.assignmentId!==item.assignmentId||!sameOnboardingIdentity(previous.onboardingIdentity,marker))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');await this.onboarding.finish(item,digest,binding);fail('onboarding_invitation_consumed','Setup already started for this name. Sign in with its credential, or ask the host operator for help.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,item.owner,item.assignmentId),reservation=await this.onboarding.canonical(item,digest,binding,allocated);if(!reservation?.canonical)fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');canonical=reservation.canonical;}
-    const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,security:{epoch:0,changedAt:this.clock()},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
-    const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
-    if(claims.expiresAt<=this.clock())fail('invalid_onboarding_invitation','This onboarding invitation expired before account creation.');this.audit(account,'operator-onboarding-pending');if(!await this.repository.create(account))fail('onboarding_conflict','Setup already started for this name. Sign in with its credential or ask the operator to reconcile it.');if(!await this.onboarding.finish(item,digest,binding))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:input.method==='password',signupPlan:'free',paymentRequired:false};
+    const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,security:{epoch:0,changedAt:this.clock()},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null};
+    const pendingToken=await this.newPending(account,context);const registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});
+    if(claims.expiresAt<=this.clock())fail('invalid_onboarding_invitation','This onboarding invitation expired before account creation.');this.audit(account,'operator-onboarding-pending');if(!await this.repository.create(account))fail('onboarding_conflict','Setup already started for this name. Sign in with its credential or ask the operator to reconcile it.');if(!await this.onboarding.finish(item,digest,binding))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:false,signupPlan:'free',paymentRequired:false};
   }
   async bootstrapSystem(input,context){
     const age=this.ageAttestation(input,context,{bootstrap:true});await this.guard('system-bootstrap',input,context);
     if(!this.systemBootstrap||!this.repository.reserveSystemIdentity)fail('system_bootstrap_unavailable','System setup is not configured.');
     if(!context.setupBinding)fail('setup_binding_required','Prepare system setup in this browser before continuing.');
     if(input.termsAccepted!==true||input.termsVersion!==this.config.termsVersion)fail('terms_required','Agree to the current account terms.');
-    if(!['passkey','password'].includes(input.method))fail('invalid_method');const selectedPassword=input.method==='password'?password(input.password):null;
+    if(input.method!=='passkey'||input.password!==undefined)fail('invalid_method','Set up the system account with a passkey.');
     const binding=await this.crypto.hash('system-setup-browser',context.setupBinding),prepared=await this.systemBootstrap.prepare(input.bootstrapToken,binding),{claims,digest}=prepared,marker=systemMarker(claims,digest);
     const previous=await this.repository.get(claims.owner);
     if(previous){if(previous.assignmentId!==claims.assignmentId||!sameSystemIdentity(previous.systemIdentity,marker))fail('system_bootstrap_conflict','System setup needs operator reconciliation.');await this.systemBootstrap.finish(claims,digest,binding);fail('system_invitation_consumed','This invitation was already used. Sign in with the configured credential, or ask the operator to repair incomplete setup.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,claims.owner,claims.assignmentId),reservation=await this.systemBootstrap.canonical(claims,digest,binding,allocated);if(!reservation?.canonical)fail('system_bootstrap_conflict','System setup needs operator reconciliation.');canonical=reservation.canonical;}
-    const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,security:{epoch:0,changedAt:this.clock()},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
-    const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
+    const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,security:{epoch:0,changedAt:this.clock()},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null};
+    const pendingToken=await this.newPending(account,context);const registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});
     if(claims.expiresAt<=this.clock())fail('invalid_system_invitation','This system invitation expired before account creation.');
     this.audit(account,'system-bootstrap-pending');if(!await this.repository.create(account))fail('system_bootstrap_conflict','System setup was already started. Sign in with the configured credential or ask the operator to reconcile it.');
     if(!await this.systemBootstrap.finish(claims,digest,binding))fail('system_bootstrap_conflict','System setup needs operator reconciliation.');
-    return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:input.method==='password',signupPlan:'free',paymentRequired:false};
+    return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:false,signupPlan:'free',paymentRequired:false};
   }
   async beginPasskeyRegistration(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
@@ -428,20 +445,9 @@ export class IdentityService {
     try { credential = await this.webauthn.verifyRegistration({ response: input.response, challenge: challenge.value, config: this.config }); } catch { fail('invalid_passkey', 'Passkey verification failed.'); }
     if (!credential?.id || !credential.publicKey || account.credentials.length >= 5 || account.credentials.some(c => c.id === credential.id)) fail('invalid_passkey');
     account.pendingCredentialAt=this.clock();account.credentials.push({ ...credential, label: safeLabel(input.label, 'Passkey'), createdAt: this.clock() }); account.challenges = []; this.audit(account, 'passkey-registered'); this.securityChanged(account);
+    // R1(ii): a recovery's replacement credential is announced to every channel (it was the 'password-changed' notice before passwords were dropped).
+    if (account.status === 'recovering') this.queueNotice(account, 'passkey-added', 'recovery');
     await this.save(account, revision); return { readyForRecovery: true };
-  }
-  // The hash was computed from this very value a moment earlier; re-verifying it bought only KDF work (wargame #11).
-  async verifyPendingPassword(account){account.pendingCredentialAt=this.clock();}
-  async setPendingPassword(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision; password(input.password);
-    // Wargame 2026-10-23 #11: a pending token buys at most 5 password sets, each behind the network and per-account
-    // windows, all checked before the KDF runs.
-    if(!Number.isSafeInteger(account.pendingPasswordSets??0)||(account.pendingPasswordSets??0)>=5)fail('rate_limited','Please wait before trying again.');
-    if(!await this.rateLimiter.check({operation:'pending-password',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
-    account.pendingPasswordSets=(account.pendingPasswordSets??0)+1;
-    account.passwordHash = await this.passwordHasher.hash(input.password);account.passwordSetAt=this.clock();await this.verifyPendingPassword(account);
-    this.audit(account, 'password-configured'); this.securityChanged(account); if (account.status === 'recovering') this.queueNotice(account, 'password-changed', 'recovery'); await this.save(account, revision);
-    return { readyForRecovery: true };
   }
   /** A fresh v3 payload for `account` and the hash that binds its credential. The token is `<id>.<32 random bytes>` and
    * the file id 16 random bytes; neither derives from anything else. */
@@ -452,7 +458,7 @@ export class IdentityService {
   }
   async downloadRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
-    if (!account.passwordHash && !account.credentials.length) fail('credential_required', 'Set up your passkey or password first.');
+    if (!account.credentials.length) fail('credential_required', 'Set up your passkey first.');
     // Downloads are budgeted: at most 5 per setup token and the network/per-account windows (wargame 2026-10-23).
     if(!Number.isSafeInteger(account.recoveryDownloads??0)||(account.recoveryDownloads??0)>=5)fail('rate_limited','Please wait before trying again.');
     if(!await this.rateLimiter.check({operation:'recovery-download',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
@@ -510,13 +516,15 @@ export class IdentityService {
    * Best effort after commit; acceptance is not delivery. */
   /** Whether a reissue authorized by `credential` is file-proof (review 2026-10-23 R1(i), V1, provisional): a passkey
    * step-up whose passkey was enrolled before the previous file was issued, with no channel-removing authority event in
-   * the 30 days before the begin. Otherwise the password branch applies and the previous file can cancel.
-   * Password removal (owner approval 2026-10-28, a later change): this is the single place the "password-authorized
-   * reissue stays cancellable by the previous file" rule lives (the `fileLocked` flag it computes); with passwords gone
-   * every reissue is passkey-authorized, so the non-passkey branch and the `fileLocked` distinction can be dropped here
-   * and in reissueRecoveryCancelFile / recover without touching anything else. */
+   * the 30 days before the begin. Then the previous file cannot cancel it (`fileLocked`); otherwise (the passkey is
+   * younger than the previous file, or a channel was removed recently) the previous file can still cancel it.
+   * Password removal (owner approval 2026-10-28; sign-in and intents spike §6.3, recovery and transfer spike §9.3(b),
+   * provisional restatement): every reissue is passkey-authorized now, so the former password branch ("a
+   * password-authorized reissue stays cancellable by the previous file") is gone. The rule reads "a reissue confirmed
+   * with a passkey that is not file-proof stays cancellable by the previous file". An account with no passkey cannot
+   * reissue at all (it must add a passkey and wait 7 days, `reissueAuthority`). */
   fileProofReissue(account,credential,at=this.clock()){
-    if(credential?.kind!=='passkey'||typeof account.recoveryHash!=='string'||!account.recoveryHash)return false;
+    if(typeof credential?.id!=='string'||typeof account.recoveryHash!=='string'||!account.recoveryHash)return false;
     const passkey=account.credentials.find(c=>c.id===credential.id);
     if(!passkey||!nonNegative(passkey.createdAt)||!nonNegative(account.recoveryIssuedAt)||passkey.createdAt>=account.recoveryIssuedAt)return false;
     // Review 2026-10-23 V1: ANY channel-removing event (email change or removal, other-session revocation, session-cap
@@ -524,17 +532,21 @@ export class IdentityService {
     const latest=Math.max(nonNegative(account.lastChannelRemovalAt)?account.lastChannelRemovalAt:0,...(Array.isArray(account.authorityEvents)?account.authorityEvents:[]).map(entry=>nonNegative(entry?.at)?entry.at:0));
     return !(latest>at-SECURITY_LOOKBACK_MS);
   }
-  rememberPreviousEmail(account){
+  /** Remembers confirmed addresses that are being removed (`account.previousEmails`, up to 8 within retention; further
+   * removals are refused rather than dropping one), so a reissue begun shortly after an email change still notifies,
+   * and can be cancelled from, the addresses the owner had before (coordinator decision 2026-10-23, provisional). Call
+   * with the entries about to be removed, before removing them. */
+  rememberPreviousEmail(account,removed=[]){
     const now=this.clock(),kept=(Array.isArray(account.previousEmails)?account.previousEmails:[]).filter(entry=>typeof entry?.email==='string'&&nonNegative(entry.verifiedAt)&&nonNegative(entry.replacedAt)&&entry.replacedAt>now-SECURITY_RETENTION_MS);
     // V2 audit: never drop a retained channel to make room (earliest- or newest-wins could both be gamed); refuse more
     // email changes instead until one ages out.
-    if(typeof account.verifiedEmail==='string'&&nonNegative(account.emailVerifiedAt)&&!kept.some(entry=>entry.email===account.verifiedEmail)){if(kept.length>=8)throw Object.assign(new IdentityFault('email_change_limited','This account changed its email too many times recently. Try again later.'),{status:429});kept.push({email:account.verifiedEmail,verifiedAt:account.emailVerifiedAt,replacedAt:now});}
+    for(const entry of removed)if(entry&&entry.state!=='unverified'&&typeof entry.address==='string'&&nonNegative(entry.verifiedAt)&&!kept.some(item=>item.email===entry.address)){if(kept.length>=8)throw Object.assign(new IdentityFault('email_change_limited','This account changed its email too many times recently. Try again later.'),{status:429});kept.push({email:entry.address,verifiedAt:entry.verifiedAt,replacedAt:now});}
     if(kept.length)account.previousEmails=kept;else delete account.previousEmails;
   }
-  /** Email recipients for reissue notices: the current verified email and any replaced in the last 7 days. */
+  /** Email recipients for security notices: every verified or sign-in address, and any removed in the last 30 days. */
   reissueRecipients(account,at=this.clock()){
     const now=at,list=[];
-    if(typeof account.verifiedEmail==='string'&&nonNegative(account.emailVerifiedAt))list.push({email:account.verifiedEmail,verifiedAt:account.emailVerifiedAt,current:true});
+    for(const entry of confirmedEmails(account))if(!list.some(item=>item.email===entry.address))list.push({email:entry.address,verifiedAt:entry.verifiedAt,current:true});
     for(const entry of Array.isArray(account.previousEmails)?account.previousEmails:[])if(typeof entry?.email==='string'&&nonNegative(entry.verifiedAt)&&nonNegative(entry.replacedAt)&&entry.replacedAt>now-SECURITY_LOOKBACK_MS&&!list.some(item=>item.email===entry.email))list.push({email:entry.email,verifiedAt:entry.verifiedAt});
     return list;
   }
@@ -550,24 +562,25 @@ export class IdentityService {
   /** Hook for a later change (coordinator 2026-10-28): reissue will be refused while a sign-in-method removal is
    * pending. Returns a refusal {code, message, status} or null; nothing is pending yet, so it always returns null. */
   reissueRefusal(account){return null;}
-  /** Who may reissue (recovery-identity spec "Active-account reissue"): a step-up within 5 minutes, made with a passkey
-   * or password enrolled at least 7 days earlier (P18), or any fresh step-up while a forced path is armed (an elevated
-   * abort, PORT-4 activation). `reauthentication_required` makes the console prompt again; `credential_too_new` means
-   * no credential is old enough yet. */
+  /** Who may reissue (recovery-identity spec "Active-account reissue"; restated without passwords, owner approval
+   * 2026-10-28, provisional): a passkey step-up within 5 minutes with a passkey enrolled at least 7 days earlier (P18),
+   * or any fresh passkey step-up while a forced path is armed (an elevated abort, PORT-4 activation). An account with no
+   * passkey (one that signs in only by email) must add a passkey first (`passkey_required`); an email session never
+   * reissues (SI-4). `reauthentication_required` makes the console prompt again; `credential_too_new` means no passkey
+   * is old enough yet. */
   reissueAuthority(account,session){
     const now=this.clock();
-    if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>now||session.stepUpAt+300000<=now)fail('reauthentication_required','Confirm your password or passkey to replace your recovery file.');
+    if(!account.credentials.length)fail('passkey_required','Add a passkey to replace your recovery file. It can replace the file once you have had it for 7 days.',409);
+    if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>now||session.stepUpAt+300000<=now)fail('reauthentication_required','Confirm with your passkey to replace your recovery file.');
     const aged=at=>nonNegative(at)&&at<=now&&now-at>=RECOVERY_CREDENTIAL_AGE_MS,used=session.stepUpCredential;
-    // Wargame 2026-10-23 #1(a): an account with a passkey reissues only after a passkey step-up. A password alone (the
-    // credential most often stolen) never replaces the recovery file of an account that has a passkey.
-    if(account.credentials.length&&used?.kind!=='passkey')fail('reauthentication_required','Confirm with one of your passkeys to replace your recovery file.');
-    const enrolled=used?.kind==='passkey'?account.credentials.find(c=>c.id===used.id)?.createdAt:used?.kind==='password'&&account.passwordHash?account.passwordSetAt:undefined;
+    if(used?.kind!=='passkey')fail('reauthentication_required','Confirm with one of your passkeys to replace your recovery file.');
+    const enrolled=account.credentials.find(c=>c.id===used.id)?.createdAt;
     // A forced marker waives the age only for a credential enrolled no later than the marker was armed, so a
     // credential added afterwards (perhaps by whoever took over the session) still waits 7 days (P18).
     const marker=reissueMarker(account);if(marker&&nonNegative(enrolled)&&enrolled<=marker.at)return {forced:marker.reason,credential:used};
     if(aged(enrolled))return {forced:null,credential:used};
-    if(account.credentials.length?account.credentials.some(c=>aged(c.createdAt)):account.passwordHash&&aged(account.passwordSetAt))fail('reauthentication_required',account.credentials.length?'Confirm with a passkey you have had for at least 7 days.':'Confirm with a password you have had for at least 7 days.');
-    fail('credential_too_new','Replacing your recovery file needs a passkey or password you have had for at least 7 days.',409);
+    if(account.credentials.some(c=>aged(c.createdAt)))fail('reauthentication_required','Confirm with a passkey you have had for at least 7 days.');
+    fail('credential_too_new','Replacing your recovery file needs a passkey you have had for at least 7 days.',409);
   }
   /** Active-account reissue, phase 1 (recovery-identity "Active-account reissue"; identity portability P14, P17).
    * Authority as `reissueAuthority`. The account single writer refuses during a deletion, a move or a contest; the new
@@ -610,8 +623,8 @@ export class IdentityService {
     if(typeof this.identityBackup?.reissueCommit!=='function')fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
     const hash=await this.crypto.hash('recovery',input.recoveryToken),sessionId=await this.sessionID(session);
     const check=a=>{const staged=stagedReissue(a.recoveryStaged);if(!staged||staged.sessionId!==sessionId||!secureEqual(staged.hash,hash)||staged.fileId!==input.fileId||staged.expiresAt<=this.clock())fail('recovery_reissue_expired','Start replacing your recovery file again.',409);if((a.recoveryHash||null)!==staged.base)fail('recovery_changed','Your recovery file changed. Start again.',409);
-      // The credential that authorized phase 1 must still exist (removing it revokes its sessions, but a password can be reset by recovery only).
-      const used=staged.credential;if(used?.kind==='passkey'?!a.credentials.some(c=>c.id===used.id):used?.kind==='password'?!a.passwordHash:true)fail('recovery_reissue_expired','Start replacing your recovery file again.',409);return staged;};
+      // The passkey that authorized phase 1 must still exist (removing it revokes its sessions).
+      const used=staged.credential;if(used?.kind!=='passkey'||!a.credentials.some(c=>c.id===used.id))fail('recovery_reissue_expired','Start replacing your recovery file again.',409);return staged;};
     const first=check(account);
     const gate=await this.identityBackup.reissueCommit(account.id,{actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId}});
     for(let attempt=0;attempt<4;attempt++){
@@ -732,10 +745,11 @@ export class IdentityService {
     const [id]=tokenParts(input.recoveryToken),proof=await this.crypto.hash('recovery',input.recoveryToken);
     const result=await this.cancelReissue(id,'file',async(current,previous)=>{
       if(previous.version!==3||typeof previous.hash!=='string'||!secureEqual(previous.hash,proof))return false;
-      // Coordinator decision 2026-10-23 (provisional): a passkey-authorized reissue may be retiring a leaked file, so that
-      // file cannot undo it; only earlier sessions and the pre-reissue email can. A password-authorized one (no passkey
-      // on the account) stays cancellable by the file, or a password thief could lock a password-only owner out.
-      if(previous.fileLocked===true)throw Object.assign(new IdentityFault('reissue_cancel_not_allowed','This replacement was confirmed with a passkey, so your previous recovery file cannot cancel it. Cancel it from a device that was signed in before it started, or from the link in the email notice.'),{status:403});
+      // Coordinator decision 2026-10-23 (provisional), restated without passwords (2026-10-28): a file-proof passkey
+      // reissue may be retiring a leaked file, so that file cannot undo it; only earlier sessions and the pre-reissue
+      // email can. One confirmed with a passkey that is not file-proof (younger than the previous file, or after a recent
+      // channel change) stays cancellable by the file (`fileProofReissue`).
+      if(previous.fileLocked===true)throw Object.assign(new IdentityFault('reissue_cancel_not_allowed','This replacement was confirmed with a passkey you had before your previous file, so that file cannot cancel it. Cancel it from a device that was signed in before it started, or from the link in the email notice.'),{status:403});
       return true;});
     return {cancelled:result.cancelled,restored:result.restored};
   }
@@ -759,20 +773,32 @@ export class IdentityService {
     const certificate=await this.identityBackup.certificate(account,selected,this.clock());
     return {fileName:`handle-claim-${selected}.json`,content:JSON.stringify(certificate,null,2)};
   }
-  setupProjection(account){const push=typeof this.pushTransport?.send==='function'&&typeof this.pushTransport?.register==='function'&&account.setupPushVerified?.expiresAt>this.clock();return {accountId:account.id,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,channelRequired:this.config.requireReachability===true||Boolean(account.systemIdentity),channelVerified:Boolean(account.verifiedEmail&&Number.isFinite(account.emailVerifiedAt)||push),verifiedEmail:account.verifiedEmail??null,pushVerified:Boolean(push),emailAvailable:typeof this.mailer?.sendSetupCode==='function',pushAvailable:typeof this.pushTransport?.send==='function'&&typeof this.pushTransport?.register==='function'};}
+  setupProjection(account){const push=typeof this.pushTransport?.send==='function'&&typeof this.pushTransport?.register==='function'&&account.setupPushVerified?.expiresAt>this.clock(),notice=noticeEntry(account);return {accountId:account.id,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,channelRequired:this.config.requireReachability===true||Boolean(account.systemIdentity),channelVerified:Boolean(notice||push),verifiedEmail:notice?.address??null,signInEmail:notice?.state==='sign-in',pushVerified:Boolean(push),emailAvailable:typeof this.mailer?.sendSetupCode==='function',pushAvailable:typeof this.pushTransport?.send==='function'&&typeof this.pushTransport?.register==='function'};}
   async setupSendAdmission(account,kind,context,target){const now=this.clock(),windowKey='setup'+kind+'WindowAt',countKey='setup'+kind+'Sends',sentKey='setup'+kind+'SentAt';const window=account[windowKey];if(window!==undefined&&(!Number.isSafeInteger(window)||window>now))fail('rate_limited');if(window===undefined||now-window>=600000){account[windowKey]=now;account[countKey]=0;}if(!Number.isInteger(account[countKey])||account[countKey]<0||account[countKey]>=3||account[sentKey]&&now-account[sentKey]<60000||!await this.rateLimiter.check({operation:'email',remoteIP:context.remoteIP,handle:target}))fail('rate_limited','Wait before requesting another verification check.');account[countKey]++;account[sentKey]=now;}
   async setupStatus(input,context){this.origin(context);return this.setupProjection(await this.pending(input.pendingToken,context));}
   async setupBillingCheckout(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context);if(!['pending','recovering'].includes(account.status)||account.admission?.kind!=='paid'||account.admission.initialPaymentRequired===false||!this.setupBilling)fail('invalid_paid_setup');await this.requireSetupChannel(account);if(!await this.rateLimiter.check({operation:'paid-setup',remoteIP:context.remoteIP,handle:account.id}))fail('rate_limited');const result=await this.setupBilling.checkout(account.id,account.admission,{requestId:input.requestId,currency:input.currency,priceDigest:input.priceDigest});await this.pending(input.pendingToken,context);return result;}
   async setupBillingStatus(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context);if(!['pending','recovering'].includes(account.status)||account.admission?.kind!=='paid'||account.admission.initialPaymentRequired===false||!this.setupBilling)fail('invalid_paid_setup');if(!await this.rateLimiter.check({operation:'paid-setup',remoteIP:context.remoteIP,handle:account.id}))fail('rate_limited');const result=await this.setupBilling.status(account.id,account.admission);await this.pending(input.pendingToken,context);return result;}
   async setupEmailStart(input,context){this.origin(context);if(input.locale!==undefined&&!['en','es'].includes(input.locale))fail('invalid_locale','Choose English or Spanish.');const account=await this.pending(input.pendingToken,context),revision=account.revision;if(typeof this.mailer?.sendSetupCode!=='function')fail('email_unavailable','Email delivery is not configured.');const email=emailAddress(input.email),now=this.clock();if(account.systemIdentity?.requiredEmail&&account.admission?.initialSystemActivationRequired!==false&&email!==emailAddress(account.systemIdentity.requiredEmail))fail('contact_required','Use the contact address assigned by the system invitation.');await this.setupSendAdmission(account,'Email',context,email);let number;do{number=globalThis.crypto.getRandomValues(new Uint32Array(1))[0];}while(number>=4200000000);const code=String(number%100000000).padStart(8,'0');account.setupEmailChallenge={email,hash:await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+email+'|'+code),pendingHash:account.pendingHash,expiresAt:now+600000,attempts:0};await this.save(account,revision);await this.mailer.sendSetupCode({email,code,issuer:this.config.origin,locale:input.locale??'en'});return {sent:true,...this.setupProjection(account)};}
-  async setupEmailConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupEmailChallenge;if(!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||challenge.attempts>=5||typeof input.code!=='string'||!/^\d{8}$/.test(input.code))fail('invalid_challenge','Request a fresh email code.');challenge.attempts++;if(!secureEqual(challenge.hash,await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+challenge.email+'|'+input.code))){await this.save(account,revision);fail('invalid_challenge','That email code is incorrect.');}const existing=await this.repository.findByEmail(challenge.email);if(existing&&existing.id!==account.id)fail('email_already_linked','This verified email belongs to another account. Sign in to that account.');if(account.verifiedEmail!==challenge.email){this.securityChanged(account);delete account.noticeWaiver;}account.verifiedEmail=challenge.email;account.emailVerifiedAt=this.clock();account.emailLoginEnabled=false;delete account.setupEmailChallenge;this.audit(account,'setup-email-verified');await this.save(account,revision);return this.setupProjection(account);}
+  /** The setup code verifies the address (`verified`, the notice address). Sign-in is an explicit, never preselected
+   * choice on the same screen (`signIn: true`, spike §3.3 and Q3, owner-approved 2026-10-28): the address is verified at
+   * that instant, so the "only a verified address becomes a sign-in email" rule holds. During sign-up a new setup
+   * address replaces the previous setup address; during recovery setup it is added beside the account's addresses. */
+  async setupEmailConfirm(input,context){this.origin(context);if(input.signIn!==undefined&&typeof input.signIn!=='boolean')fail('invalid_request','Choose whether this email can sign in.');const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupEmailChallenge;if(!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||challenge.attempts>=5||typeof input.code!=='string'||!/^\d{8}$/.test(input.code))fail('invalid_challenge','Request a fresh email code.');challenge.attempts++;if(!secureEqual(challenge.hash,await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+challenge.email+'|'+input.code))){await this.save(account,revision);fail('invalid_challenge','That email code is incorrect.');}const existing=await this.repository.findByEmail(challenge.email);if(existing&&existing.id!==account.id)fail('email_already_linked','This verified email belongs to another account. Sign in to that account.');
+    const now=this.clock();migrateEmails(account,now);let entries=account.emails??[];const same=entries.find(entry=>entry.address===challenge.email&&entry.state!=='unverified');
+    if(!same&&account.status==='pending')entries=entries.filter(entry=>entry.source!=='setup-code');
+    entries=entries.filter(entry=>entry.state!=='unverified'||entry.address!==challenge.email);
+    if(!same&&entries.filter(entry=>entry.state!=='unverified').length>=MAX_CONFIRMED_EMAILS)fail('email_limit','This account already has three verified email addresses.',409);
+    const signIn=input.signIn===true,entry=same??{address:challenge.email,state:'verified',source:'setup-code',addedBy:{session:account.status==='recovering'?'recovery':'setup',at:now}};
+    if(entry!==same){this.securityChanged(account);delete account.noticeWaiver;entries.push(entry);}
+    entry.verifiedAt=now;if(signIn&&entry.state!=='sign-in'){entry.state='sign-in';entry.signInSince=now;entry.addedBy={session:account.status==='recovering'?'recovery':'setup',at:now};if(entry===same)this.securityChanged(account);}
+    for(const item of entries)item.notices=item===entry;account.emails=entries;delete account.setupEmailChallenge;this.audit(account,'setup-email-verified');await this.save(account,revision);return this.setupProjection(account);}
   async setupPushStart(input,context){this.origin(context);if(input.locale!==undefined&&!['en','es'].includes(input.locale))fail('invalid_locale','Choose English or Spanish.');const account=await this.pending(input.pendingToken,context),revision=account.revision;if(typeof this.pushTransport?.send!=='function')fail('push_unavailable','Push delivery is not configured.');const subscription=input.subscription;if(!subscription||typeof subscription.endpoint!=='string'||subscription.endpoint.length>4096||!subscription.keys||typeof subscription.keys.p256dh!=='string'||typeof subscription.keys.auth!=='string'||JSON.stringify(subscription).length>8192)fail('invalid_subscription','Use a browser-created push subscription.');await this.setupSendAdmission(account,'Push',context,account.handle);const proof=account.id+'.'+this.crypto.random();account.setupPushChallenge={subscription:structuredClone(subscription),hash:await this.crypto.hash('setup-push',proof),pendingHash:account.pendingHash,expiresAt:this.clock()+300000};delete account.setupPushVerified;await this.save(account,revision);await this.pushTransport.send(subscription,{type:'bindle-setup-challenge',proof,owner:account.id,locale:input.locale??'en'});return {sent:true,...this.setupProjection(account)};}
   async setupPushConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupPushChallenge;if(typeof this.pushTransport?.send!=='function'||!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||typeof input.proof!=='string'||!secureEqual(challenge.hash,await this.crypto.hash('setup-push',input.proof)))fail('invalid_challenge','Enable notifications and request a fresh push check.');account.setupPushVerified={subscription:challenge.subscription,verifiedAt:this.clock(),expiresAt:account.pendingExpiresAt};delete account.setupPushChallenge;this.audit(account,'setup-push-verified');await this.save(account,revision);return this.setupProjection(account);}
-  async requireSetupChannel(account){if(this.config.requireReachability!==true&&!account.systemIdentity)return;if(account.systemIdentity?.requiredEmail&&account.admission?.initialSystemActivationRequired!==false&&account.verifiedEmail!==emailAddress(account.systemIdentity.requiredEmail))fail('contact_required','Verify the contact address assigned by the system invitation.');if(account.verifiedEmail&&Number.isFinite(account.emailVerifiedAt)){const owner=await this.repository.findByEmail(account.verifiedEmail);if(owner?.id===account.id)return;}if(typeof this.pushTransport?.send==='function'&&account.setupPushVerified?.expiresAt>this.clock()){if(typeof this.pushTransport.register!=='function')fail('push_unavailable','Push registration is not configured.');await this.pushTransport.register({owner:account.id,subscription:account.setupPushVerified.subscription});if(account.pendingExpiresAt<=this.clock()||account.setupPushVerified.expiresAt<=this.clock())fail('unauthorized','This setup proof expired. Start another check.');return;}fail('contact_required','Verify an email address or enable and verify push notifications before activating your account.');}
+  async requireSetupChannel(account){if(this.config.requireReachability!==true&&!account.systemIdentity)return;if(account.systemIdentity?.requiredEmail&&account.admission?.initialSystemActivationRequired!==false&&!confirmedEmails(account).some(entry=>entry.address===emailAddress(account.systemIdentity.requiredEmail)))fail('contact_required','Verify the contact address assigned by the system invitation.');for(const entry of confirmedEmails(account)){const owner=await this.repository.findByEmail(entry.address);if(owner?.id===account.id)return;}if(typeof this.pushTransport?.send==='function'&&account.setupPushVerified?.expiresAt>this.clock()){if(typeof this.pushTransport.register!=='function')fail('push_unavailable','Push registration is not configured.');await this.pushTransport.register({owner:account.id,subscription:account.setupPushVerified.subscription});if(account.pendingExpiresAt<=this.clock()||account.setupPushVerified.expiresAt<=this.clock())fail('unauthorized','This setup proof expired. Start another check.');return;}fail('contact_required','Verify an email address or enable and verify push notifications before activating your account.');}
   async confirmRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision,activationDeadline=account.pendingExpiresAt;
     if (input.downloadConfirmed !== true || !account.recoveryHash || typeof input.recoveryToken !== 'string' || !secureEqual(account.recoveryHash, await this.crypto.hash('recovery', input.recoveryToken))) fail('recovery_confirmation_required', 'Download and confirm your recovery file before continuing.');
-    if (!account.passwordHash && !account.credentials.length) fail('credential_required');
+    if (!account.credentials.length) fail('credential_required');
     await this.requireSetupChannel(account);
     if(account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false){if(!this.setupBilling)fail('payment_required','Verify your paid subscription before activating this account.');const payment=await this.setupBilling.status(account.id,account.admission);if(payment?.paymentVerified!==true||payment.signupPlan!==account.admission.plan||payment.validUntil<=this.clock())fail('payment_required','Payment is still being verified. Recheck before activating your account.');account.admission.initialPaymentRequired=false;}
     if(account.systemIdentity)account.admission={...account.admission,initialSystemActivationRequired:false};
@@ -780,28 +806,12 @@ export class IdentityService {
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
     delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid; delete account.recoveryResumeFileId;
     this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
-    await this.save(account, revision); if (account.pendingSever) await this.flushSever(account.id); return result;
+    await this.save(account, revision); if (account.pendingSever) await this.flushSever(account.id);
+    // SI-8 (c): the console discards a held sign-in continuation after a recovery and resumes it after a sign-up.
+    return { ...result, recovered: source === 'recovery' };
   }
-  async resumeSetupCredential(account,context,revision=account.revision){const pendingToken=await this.newPending(account,context);account.pendingCredentialAt=this.clock();account.challenges=[];this.audit(account,'setup-credential-resumed');await this.save(account,revision);return {pendingToken,account:await this.projectAccount(account),readyForRecovery:Boolean(account.passwordHash||account.credentials.length),credentialRequired:false,resumed:true,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,setup:this.setupProjection(account)};}
-  async loginPassword(input, context) {
-    this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context); password(input.password);
-    // Wargame 2026-10-23 #3: the per-handle window is only consulted here (after Turnstile, before the KDF) and is
-    // charged below only by a completed check that failed, so neither CAPTCHA-less traffic nor the owner's successful
-    // sign-ins consume it.
-    const budget=phase=>this.rateLimiter.check({phase,operation:'login',remoteIP:context.remoteIP,region:context.region,handle:input.handle});
-    if(!await budget('credential'))fail('rate_limited','Please wait before trying again.');
-    const account = await this.repository.findByHandle(input.handle);
-    // The dummy hash performs equivalent KDF work for unknown accounts.
-    this.dummyPasswordHash ??= this.passwordHasher.dummyHash || this.passwordHasher.hash(this.crypto.random());
-    const dummyHash = await this.dummyPasswordHash;
-    const hash = account?.passwordHash || dummyHash;
-    const verified = await this.passwordHasher.verify(input.password, hash);
-    if(!verified){try{await budget('failure');}catch{}fail('unauthorized','Authentication failed.');}
-    if (['suspended','moved'].includes(account?.status) && account.passwordHash && verified && await this.closureWindow(account)) return this.closureSession(account, account.revision, { label: input.label });
-    if (!account || !['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status) || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
-    if(account.status!=='active')return this.resumeSetupCredential(account,context);
-    const revision = account.revision; this.interactive(account,'sign-in',context); const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
-  }
+  async resumeSetupCredential(account,context,revision=account.revision){const pendingToken=await this.newPending(account,context);account.pendingCredentialAt=this.clock();account.challenges=[];this.audit(account,'setup-credential-resumed');await this.save(account,revision);return {pendingToken,account:await this.projectAccount(account),readyForRecovery:account.credentials.length>0,credentialRequired:false,resumed:true,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,setup:this.setupProjection(account)};}
+
   /** Passkey sign-in, phase 1 (wargame 2026-10-23 #3, #9 and challenge eviction). The challenge is not stored: the
    * token is `pl1.<payload>.<mac>`, a keyed MAC over {handle, challenge, nonce, expiry}. Begin therefore reads no
    * account and writes nothing, so it cannot reveal whether or in what state a handle exists, cannot evict another
@@ -869,7 +879,10 @@ export class IdentityService {
       account.recoveryResumeBackupVersion=3;account.recoveryResumeFileId=account.recoveryFileId;
       delete account.recoveryKeyKid;delete account.recoveryResumeKeyKid;delete account.recoveryFileId;delete account.recoveryBackupVersion;delete account.recoveryReminder;
       this.queuePushEnds(account, await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(s => this.sessionID(s))));
-      account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; delete account.passwordSetAt; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
+      account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; delete account.passwordHash; delete account.passwordSetAt; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
+      // Spike §3.7 (owner-approved 2026-10-28): a recovery sets every sign-in email to verified and drops an unverified
+      // address; recovery setup can turn sign-in back on with a fresh mailbox proof (the setup code).
+      migrateEmails(account, this.clock()); if (Array.isArray(account.emails)) account.emails = account.emails.filter(entry => entry.state !== 'unverified').map(entry => { if (entry.state !== 'sign-in') return entry; const { signInSince, ...rest } = entry; return { ...rest, state: 'verified' }; });
       // The replacement file of the recovery supersedes any staged reissue and any forced-reissue marker.
       delete account.recoveryStaged; delete account.recoveryReissue; delete account.recoveryPrevious;
       account.pendingSever = { reason: 'recovery', at: this.clock() };
@@ -882,7 +895,7 @@ export class IdentityService {
     // OAuth app authorizations do not survive a recovery (recovery-identity spec): connections end too. The durable
     // `pendingSever` row written in the same CAS makes a transient failure retry (flushSever).
     if (!resumed) await this.flushSever(account.id);
-    const credentialRequired = !account.passwordHash && !account.credentials.length;
+    const credentialRequired = !account.credentials.length;
     return { pendingToken, account: await this.projectAccount(account), credentialRequired, readyForRecovery: !credentialRequired, resumed };
   }
   async owner(input, context) {
@@ -937,7 +950,9 @@ export class IdentityService {
   async removePasskey(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;
     if (!account.credentials.some(c => c.id === input.credentialId)) fail('not_found', 'Passkey not found.');
-    if (!account.recoveryHash || (account.credentials.length === 1 && !account.passwordHash)) fail('credential_required', 'Keep a working login method and your recovery file before removing this passkey.');
+    // SI-12 floor (RM-1): the recovery file plus another working method (a passkey or a sign-in email) must remain. The
+    // removal tiers for passkeys (spike §6.4 RM-2, RM-4) are phase P4 and not applied here yet.
+    if (!account.recoveryHash || (account.credentials.length === 1 && !signInEmails(account).length)) fail('credential_required', 'Keep another passkey or a sign-in email, and your recovery file, before removing this passkey.');
     account.credentials = account.credentials.filter(c => c.id !== input.credentialId);
     await this.pruneSessions(account,s=>s.credentialId===input.credentialId);
     account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, 'passkey-removed'); this.securityChanged(account);
@@ -988,46 +1003,76 @@ export class IdentityService {
   async denyDeviceLogin(input, context) { return this.deviceFlow().deny(input, context); }
   async pollDeviceLogin(input, context) { return this.deviceFlow().poll(input, context); }
   async cancelDeviceLogin(input, context) { return this.deviceFlow().cancel(input, context); }
+  /** The kind of authority `session` holds right now, for `addedBy` (spike §3.2, §6.4): 'passkey' when a passkey
+   * signed it in or stepped it up, 'email' for an email-sign-in session, otherwise the session's own source. */
+  sessionKind(session){return session.stepUpCredential?.kind==='passkey'||typeof session.credentialId==='string'?'passkey':session.source==='email'?'email':session.source==='activation'?'setup':session.source??'unknown';}
+  /** Recent authentication for adding or verifying an address: a passkey sign-in or step-up within 15 minutes, or (SI-4)
+   * an email-sign-in session within 15 minutes on an account that has no passkey. */
+  recentForEmail(account,session){const now=this.clock();if(this.authAt(session)+900000>now)return;if(account.credentials.length===0&&session.source==='email'&&Number.isSafeInteger(session.createdAt)&&session.createdAt+900000>now)return;fail('reauthentication_required','Confirm with your passkey before changing your email addresses.');}
+  /** Adds an address as `unverified` (or re-sends the link for the unverified one) and mails a session-bound link.
+   * Uniform answer (no enumeration): an address another account already verified gets the same response and an entry
+   * that can never verify; no mail goes to it. The mail is sent in the background so latency does not depend on it. An
+   * unverified entry holds no uniqueness claim and expires after 24 hours. At most one unverified entry: a new address
+   * replaces it. */
   async emailStart(input, context) {
     if (!this.mailer) fail('email_unavailable', 'Email delivery is not configured.');
-    const { account, session } = await this.authorized(context, true); const revision = account.revision;
-    if (this.authAt(session) + 900000 <= this.clock()) fail('reauthentication_required', 'Sign in again before changing recovery email.');
+    const { account, session } = await this.authorized(context, true); const revision = account.revision, now = this.clock();
+    this.recentForEmail(account, session);
     const email = emailAddress(input.email);
+    const confirmed = confirmedEmails(account);
+    if (confirmed.some(entry => entry.address === email)) fail('email_already_added', 'This address is already on your account.', 409);
+    if (confirmed.length >= MAX_CONFIRMED_EMAILS) fail('email_limit', 'You can keep up to three verified email addresses. Remove one first.', 409);
     if (!await this.rateLimiter.check({ operation: 'email', remoteIP: context.remoteIP, handle: account.handle })) fail('rate_limited');
-    const token = `${account.id}.${this.crypto.random()}`;
-    account.emailChallenges = [{ purpose: 'link', email, hash: await this.crypto.hash('email', token), sessionHash: session.hash, expiresAt: this.clock() + 600000 }];
+    migrateEmails(account, now);
+    const token = `${account.id}.${this.crypto.random()}`, expiresAt = now + UNVERIFIED_EMAIL_TTL_MS;
+    account.emails = [...(account.emails ?? []).filter(entry => entry.state !== 'unverified'), { address: email, state: 'unverified', expiresAt, notices: false, source: 'linked', addedBy: { session: this.sessionKind(session), at: now } }].slice(0, MAX_CONFIRMED_EMAILS + MAX_UNVERIFIED_EMAILS);
+    account.emailChallenges = [...(account.emailChallenges ?? []).filter(c => c.purpose !== 'link' && c.expiresAt > now), { purpose: 'link', email, hash: await this.crypto.hash('email', token), sessionHash: session.hash, expiresAt }];
     this.audit(account, 'email-link-requested'); await this.save(account, revision);
     // Tokens only leave through the mail transport, never through API results.
-    await this.mailer.sendVerification({ email, token, purpose: 'link', issuer: this.config.origin });
-    return { sent: true };
+    const claimed = typeof this.repository.findByEmail === 'function' ? await this.repository.findByEmail(email) : null;
+    if (!claimed || claimed.id === account.id) this.background(context, () => this.mailer.sendVerification({ email, token, purpose: 'link', issuer: this.config.origin }));
+    return { sent: true, account: await this.projectAccount(account) };
   }
+  /** Verifies the unverified address with its session-bound link: `unverified → verified`. The first confirmed address
+   * becomes the notice address. Fails generically when the link is stale, belongs to another session, or another account
+   * verified the address first (the repository's email index refuses a concurrent claim in the same CAS). */
   async emailConfirm(input, context) {
-    const { account, session } = await this.authorized(context, true); const revision = account.revision;
+    const { account, session } = await this.authorized(context, true); const revision = account.revision, now = this.clock();
     if (input.confirmed !== true || typeof input.token !== 'string') fail('confirmation_required');
     const hash = await this.crypto.hash('email', input.token);
-    const challenge = account.emailChallenges?.find(c => c.purpose === 'link' && secureEqual(c.hash, hash) && secureEqual(c.sessionHash, session.hash) && c.expiresAt > this.clock());
-    if (!challenge) fail('invalid_challenge', 'This email confirmation is expired or belongs to another browser session.');
-    const changed = account.verifiedEmail !== challenge.email, replaced = changed && typeof account.verifiedEmail === 'string';
-    if (changed) { this.rememberPreviousEmail(account); account.emailLoginEnabled = false; this.securityChanged(account); delete account.noticeWaiver; if (replaced) { this.authorityEvent(account, 'email-changed'); this.queueNotice(account, 'email-changed', await this.sessionID(session)); } }
-    account.verifiedEmail = challenge.email; account.emailVerifiedAt = this.clock(); account.emailChallenges = [];
-    this.audit(account, 'email-linked'); await this.save(account, revision); return { linked: true, account: await this.projectAccount(account) };
+    const challenge = account.emailChallenges?.find(c => c.purpose === 'link' && secureEqual(c.hash, hash) && secureEqual(c.sessionHash, session.hash) && c.expiresAt > now);
+    const entry = challenge ? emailEntry(account, challenge.email, now) : null;
+    const invalid = () => fail('invalid_challenge', 'This email confirmation is expired, was replaced, or belongs to another browser session.');
+    if (!challenge || entry?.state !== 'unverified') invalid();
+    const claimed = typeof this.repository.findByEmail === 'function' ? await this.repository.findByEmail(entry.address) : null;
+    if (claimed && claimed.id !== account.id) invalid();
+    if (confirmedEmails(account).length >= MAX_CONFIRMED_EMAILS) fail('email_limit', 'You can keep up to three verified email addresses. Remove one first.', 409);
+    migrateEmails(account, now);
+    const hasNotice = account.emails.some(item => item.state !== 'unverified');
+    account.emails = account.emails.map(item => item.address === entry.address && item.state === 'unverified' ? (({ expiresAt, ...rest }) => ({ ...rest, state: 'verified', verifiedAt: now, notices: !hasNotice }))(item) : item);
+    account.emailChallenges = (account.emailChallenges ?? []).filter(c => c !== challenge);
+    this.securityChanged(account); delete account.noticeWaiver;
+    this.audit(account, 'email-linked');
+    try { await this.save(account, revision); } catch (error) { if (error?.code === 'conflict') { const fresh = await this.repository.findByEmail?.(entry.address); if (fresh && fresh.id !== account.id) invalid(); } throw error; }
+    return { linked: true, account: await this.projectAccount(account) };
   }
   /** Email sign-in, phase 1. The answer is `{sent:true}` for every address (wargame 2026-10-23 #7, #8): after Turnstile a
    * pseudonymized mailbox window and a global window are charged whether or not an account exists; both branches do
    * the same token work; the challenge write and the provider call run in the background on a hit, so latency does not
-   * depend on the address, and provider errors never reach the caller. */
+   * depend on the address, and provider errors never reach the caller. Only a sign-in email of an active account gets a
+   * link; the challenge binds (address, signInSince), so turning sign-in off and on again invalidates it. */
   async emailLoginStart(input, context) {
     if (!this.mailer || typeof this.repository.findByEmail !== 'function') fail('email_unavailable', 'Email delivery is not configured.');
     await this.guard('email', input, context); const email = emailAddress(input.email);
     if (!await this.rateLimiter.check({ phase: 'mailbox', operation: 'email-login', remoteIP: context.remoteIP, region: context.region, handle: `mailbox\0${email}` })) fail('rate_limited', 'Please wait before trying again.');
     const account = await this.repository.findByEmail(email);
-    const eligible = candidate => candidate?.status === 'active' && candidate.emailLoginEnabled === true && candidate.verifiedEmail === email;
+    const eligible = candidate => candidate?.status === 'active' && signInEmails(candidate).find(entry => entry.address === email);
     const token = `${account?.id ?? this.crypto.id()}.${this.crypto.random()}`, hash = await this.crypto.hash('email', token), expiresAt = this.clock() + 600000;
     if (eligible(account)) this.background(context, async () => {
       for (let attempt = 0; attempt < 3; attempt++) {
-        const current = attempt ? await this.repository.get(account.id) : account; if (!eligible(current)) return;
+        const current = attempt ? await this.repository.get(account.id) : account, entry = eligible(current); if (!entry) return;
         const revision = current.revision;
-        current.emailChallenges = [...(current.emailChallenges || []).filter(c => c.expiresAt > this.clock()).slice(-3), { purpose: 'login', email, emailRevision: current.emailVerifiedAt, hash, expiresAt }];
+        current.emailChallenges = [...(current.emailChallenges || []).filter(c => c.expiresAt > this.clock()).slice(-3), { purpose: 'login', email, signInSince: entry.signInSince, hash, expiresAt }];
         current.revision = revision + 1;
         if (await this.repository.compareAndSwap(current.id, revision, current)) { await this.mailer.sendVerification({ email, token, purpose: 'login', issuer: this.config.origin }); return; }
       }
@@ -1039,19 +1084,71 @@ export class IdentityService {
     if (input.confirmed !== true) fail('confirmation_required');
     const hash = await this.crypto.hash('email', input.token);
     const challenge = account?.emailChallenges?.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
-    if (!account || account.status !== 'active' || account.emailLoginEnabled !== true || !challenge || challenge.email !== account.verifiedEmail || challenge.emailRevision !== account.emailVerifiedAt) fail('unauthorized', 'Email login failed.');
+    const entry = challenge ? signInEmails(account).find(item => item.address === challenge.email) : null;
+    if (!account || account.status !== 'active' || !challenge || !entry || challenge.signInSince !== entry.signInSince) fail('unauthorized', 'Email login failed.');
     const revision = account.revision; account.emailChallenges = account.emailChallenges.filter(c => c !== challenge);
-    this.interactive(account,'sign-in',context); const result = await this.session(account,{source:'email'}); await this.save(account, revision); return result;
+    this.interactive(account,'sign-in',context); const result = await this.session(account,{source:'email',emailAddress:entry.address}); await this.save(account, revision); return result;
   }
+  /** The address an owner request names: `address` (or the legacy `expectedEmail`), else the notice address. */
+  requestedEmail(account,input,now){const named=input?.address??input?.expectedEmail;const address=named===undefined?noticeEmail(account):typeof named==='string'?named:null;const entry=address?emailEntry(account,address,now):null;if(!entry)fail('email_not_linked','This address is not on your account.',409);return entry;}
+  /** The removal process for a sign-in email (sign-in and intents spike §6.4, provisional; owner direction 2026-10-28).
+   * Implemented: RM-1 (never leave no working method), RM-2 Tier A (a recent sign-in email, under 7 days since sign-in
+   * was turned on, undone with a passkey step-up within 5 minutes from a passkey enrolled 7 days or more earlier) and
+   * RM-3 (a recent sign-in email whose sign-in an email session turned on, undone from an email-sign-in session under 10
+   * minutes old on another established sign-in email). Tier B (an established sign-in email) needs the recovery spike's
+   * proof-only file presentation, which does not exist yet: refused with `removal_unavailable` (N6). Returns the
+   * authority used ('passkey' or 'email'). */
+  signInRemovalAuthority(account,session,entry){
+    const now=this.clock(),established=at=>nonNegative(at)&&at<=now&&now-at>=ESTABLISHED_METHOD_AGE_MS;
+    if(account.credentials.length+signInEmails(account).filter(item=>item.address!==entry.address).length<1)fail('last_sign_in_method','Add a passkey or turn on another sign-in email first. Your account must keep a way to sign in.',409);
+    if(established(entry.signInSince))fail('removal_unavailable','Turning off an established sign-in email needs your recovery file and a waiting period. This is not available yet.',409);
+    const passkey=session.stepUpCredential?.kind==='passkey'&&Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=now&&session.stepUpAt+300000>now?account.credentials.find(c=>c.id===session.stepUpCredential.id):null;
+    if(passkey&&established(passkey.createdAt))return 'passkey';
+    if(entry.addedBy?.session==='email'&&session.source==='email'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=now&&session.createdAt+600000>now&&session.emailAddress!==entry.address&&signInEmails(account).some(item=>item.address===session.emailAddress&&established(item.signInSince)))return 'email';
+    fail('removal_proof_required','Confirm with a passkey you have had for at least 7 days to undo this recent change.',403);
+  }
+  /** RM-9 effects of removing a sign-in method that was `entry`, in the caller's CAS: email-login challenges for it end,
+   * sessions that signed in with it end, the security epoch rises (caller), and a notice goes to every channel. */
+  async endSignInEmail(account,session,entry){
+    account.emailChallenges=(account.emailChallenges??[]).filter(c=>!(c.purpose==='login'&&c.email===entry.address));
+    await this.pruneSessions(account,s=>s.source==='email'&&s.emailAddress===entry.address);
+    this.authorityEvent(account,'email-changed');this.queueNotice(account,'email-sign-in-removed',await this.sessionID(session));
+  }
+  /** Turns sign-in on for a verified address (`verified → sign-in`, SI-3) or off (`sign-in → verified`, the removal
+   * process). Turning on needs a passkey step-up within 5 minutes, or for an account with no passkey the SI-4 email
+   * step-up (an email-sign-in session under 5 minutes old from an existing sign-in email). Every change raises the
+   * security epoch and notifies every channel. `address` defaults to the notice address. */
   async configureEmailLogin(input, context) {
-    const { account } = await this.recent(context); const revision = account.revision;
-    if (typeof input.enabled !== 'boolean') fail('invalid_request', 'Choose whether email can sign in to this account.');
-    if (input.enabled && !account.verifiedEmail) fail('verified_email_required', 'Verify a contact email before enabling email sign-in.');
-    if (input.enabled && account.emailLoginEnabled !== true) this.securityChanged(account);
-    account.emailLoginEnabled = input.enabled;
-    account.emailChallenges = (account.emailChallenges || []).filter(challenge => challenge.purpose !== 'login');
+    const { account, session } = await this.authorized(context, true); const revision = account.revision, now = this.clock();
+    if (!input || typeof input !== 'object' || typeof input.enabled !== 'boolean' || input.address !== undefined && typeof input.address !== 'string') fail('invalid_request', 'Choose whether this email can sign in to this account.');
+    if (input.enabled && !confirmedEmails(account).length) fail('verified_email_required', 'Verify an email address before turning on email sign-in.');
+    const entry = this.requestedEmail(account, input, now);
+    if (entry.state === 'unverified') fail('verified_email_required', 'Verify this address before using it to sign in.', 409);
+    if (input.enabled === (entry.state === 'sign-in')) return { emailLoginEnabled: input.enabled, account: await this.projectAccount(account) };
+    migrateEmails(account, now);
+    const target = account.emails.find(item => item.address === entry.address && item.state !== 'unverified');
+    if (input.enabled) {
+      const passkey = session.stepUpCredential?.kind === 'passkey' && Number.isSafeInteger(session.stepUpAt) && session.stepUpAt <= now && session.stepUpAt + 300000 > now && account.credentials.some(c => c.id === session.stepUpCredential.id);
+      if (!passkey && !this.emailStepUp(account, session)) fail('step_up_required', account.credentials.length ? 'Confirm with your passkey to turn on email sign-in.' : 'Sign in again with one of your sign-in emails to turn on another one.');
+      target.state = 'sign-in'; target.signInSince = now; target.addedBy = { session: passkey ? 'passkey' : 'email', at: now };
+      this.queueNotice(account, 'email-sign-in-enabled', await this.sessionID(session));
+    } else {
+      this.signInRemovalAuthority(account, session, target);
+      target.state = 'verified'; delete target.signInSince;
+      await this.endSignInEmail(account, session, target);
+    }
+    this.securityChanged(account);
     this.audit(account, input.enabled ? 'email-login-enabled' : 'email-login-disabled');
-    await this.save(account, revision); return { emailLoginEnabled: account.emailLoginEnabled, account: await this.projectAccount(account) };
+    await this.save(account, revision); return { emailLoginEnabled: input.enabled, currentSessionRevoked: !account.sessions.includes(session), account: await this.projectAccount(account) };
+  }
+  /** Chooses the notice address among the verified and sign-in addresses (Q4: one notice address). */
+  async emailNotices(input, context) {
+    const { account } = await this.recent(context); const revision = account.revision, now = this.clock();
+    if (!input || typeof input !== 'object' || Object.keys(input).some(name => name !== 'address') || typeof input.address !== 'string') fail('invalid_request', 'Choose a verified address.');
+    const entry = this.requestedEmail(account, input, now);
+    if (entry.state === 'unverified') fail('verified_email_required', 'Verify this address before using it for notices.', 409);
+    migrateEmails(account, now); for (const item of account.emails) item.notices = item.state !== 'unverified' && item.address === entry.address;
+    this.audit(account, 'email-notices-changed'); await this.save(account, revision); return { account: await this.projectAccount(account) };
   }
   /** EMAIL_REMOVAL_ENABLED for this owner through the flags port; any failure (no port, unknown flag) is "off". */
   emailRemovalEnabled(owner) { try { const port = typeof this.flags === 'function' ? this.flags() : this.flags; return port?.for({ subject: { kind: 'account', owner } }).enabled('EMAIL_REMOVAL_ENABLED') === true; } catch { return false; } }
@@ -1062,31 +1159,47 @@ export class IdentityService {
     if (typeof state?.ready !== 'boolean' || !nonNegative(state.count) || state.ready && state.count < 1) fail('notice_channels_unavailable', 'Your notification devices could not be checked. Try again shortly.', 503);
     return { ready: state.ready, count: state.count };
   }
-  /** Wire identity.email-remove (account-deletion-export.md §3): one CAS removes the verified email, clears email
-   * sign-in and every email challenge, releases the email index (repository CAS), records the notice waiver when
-   * it is needed, and bumps `security`. Step-up (5 min) and CSRF; never removes credentials or recovery. */
+  /** Wire identity.email-remove (account-deletion-export.md §3), per address (`address`, or the legacy `expectedEmail`;
+   * default the notice address). An unverified address is simply dropped. A verified address keeps the DX-6 rules:
+   * EMAIL_REMOVAL_ENABLED, step-up (5 min) and CSRF; one CAS removes it, releases its index claim (repository CAS),
+   * moves the notice address to another confirmed address, records the notice waiver when no other channel remains,
+   * and bumps `security`. A sign-in email additionally goes through the removal process (`signInRemovalAuthority`).
+   * Never removes credentials or recovery. */
   async emailRemove(input, context) {
-    const { account, session } = await this.authorized(context, true); const revision = account.revision;
+    const { account, session } = await this.authorized(context, true); const revision = account.revision, now = this.clock();
+    if (!input || typeof input !== 'object' || Object.keys(input).some(name => !['confirmed', 'waiveNotice', 'expectedEmail', 'address'].includes(name)) || input.waiveNotice !== undefined && typeof input.waiveNotice !== 'boolean') fail('invalid_request', 'Unsupported email removal request.', 400);
+    if (input.confirmed !== true) fail('confirmation_required', 'Confirm that you want to remove your email.', 400);
+    if (input.address !== undefined && input.expectedEmail !== undefined && input.address !== input.expectedEmail) fail('email_changed', 'Your email changed. Reload and try again.', 409);
+    const named = input.address ?? input.expectedEmail;
+    if (named === undefined && !confirmedEmails(account).length) { if (!this.emailRemovalEnabled(account.id)) fail('email_removal_unavailable', 'Email removal is not available.', 404); fail('email_not_linked', 'This account has no verified email.', 409); }
+    let entry; try { entry = this.requestedEmail(account, input, now); } catch (error) { if (input.expectedEmail !== undefined && error?.code === 'email_not_linked' && this.emailRemovalEnabled(account.id)) fail('email_changed', 'Your email changed. Reload and try again.', 409); throw error; }
+    if (entry.state === 'unverified') {
+      migrateEmails(account, now); account.emails = account.emails.filter(item => !(item.address === entry.address && item.state === 'unverified'));
+      account.emailChallenges = (account.emailChallenges ?? []).filter(c => !(c.purpose === 'link' && c.email === entry.address));
+      this.audit(account, 'email-unverified-removed'); await this.save(account, revision);
+      return { removed: true, noticeWaived: false, notified: { email: false, push: false }, account: await this.projectAccount(account) };
+    }
     if (!this.emailRemovalEnabled(account.id)) fail('email_removal_unavailable', 'Email removal is not available.', 404);
     this.requireStepUp(session, 300000);
-    if (!input || typeof input !== 'object' || Object.keys(input).some(name => !['confirmed', 'waiveNotice', 'expectedEmail'].includes(name)) || input.waiveNotice !== undefined && typeof input.waiveNotice !== 'boolean') fail('invalid_request', 'Unsupported email removal request.', 400);
-    if (input.confirmed !== true) fail('confirmation_required', 'Confirm that you want to remove your email.', 400);
-    const removed = account.verifiedEmail;
-    if (!removed) fail('email_not_linked', 'This account has no verified email.', 409);
-    // A removal confirmed while looking at one address never removes a different, newer one.
-    if (input.expectedEmail !== undefined && input.expectedEmail !== removed) fail('email_changed', 'Your email changed. Reload and try again.', 409);
-    const channels = await this.noticeChannels(account.id), waived = !channels.ready;
+    if (entry.state === 'sign-in') this.signInRemovalAuthority(account, session, entry);
+    const others = confirmedEmails(account).filter(item => item.address !== entry.address);
+    const channels = others.length ? { ready: true, count: others.length } : await this.noticeChannels(account.id), waived = !channels.ready;
     if (waived && input.waiveNotice !== true) fail('last_notice_channel', 'Email is your only notice channel. Enable notifications on a device first, or confirm that you accept in-app notices only.', 409);
     // The waiver is consent under the current terms; it is recorded only when no other channel exists.
-    if (waived) { this.requireCurrentTerms(account); account.noticeWaiver = { at: this.clock(), termsVersion: this.config.termsVersion }; }
-    this.rememberPreviousEmail(account); this.authorityEvent(account, 'email-changed'); account.verifiedEmail = null; account.emailVerifiedAt = null; account.emailLoginEnabled = false; account.emailChallenges = [];
+    if (waived) { this.requireCurrentTerms(account); account.noticeWaiver = { at: now, termsVersion: this.config.termsVersion }; }
+    this.rememberPreviousEmail(account, [entry]); this.authorityEvent(account, 'email-changed');
+    migrateEmails(account, now); const wasNotice = account.emails.find(item => item.address === entry.address)?.notices === true;
+    account.emails = account.emails.filter(item => item.address !== entry.address);
+    if (wasNotice) { const next = account.emails.find(item => item.state !== 'unverified'); for (const item of account.emails) item.notices = item === next; }
+    account.emailChallenges = (account.emailChallenges ?? []).filter(c => c.email !== entry.address);
+    if (entry.state === 'sign-in') await this.endSignInEmail(account, session, entry);
     this.audit(account, 'email-removed'); this.securityChanged(account);
     await this.save(account, revision);
     // Notices are best effort after commit; acceptance is not delivery.
     const notified = { email: false, push: false };
-    try { if (typeof this.mailer?.sendSecurityAlert === 'function') { await this.mailer.sendSecurityAlert({ email: removed, type: 'email-removed', owner: account.id }); notified.email = true; } } catch {}
-    try { if (channels.ready && typeof this.accountChannels?.notify === 'function') notified.push = (await this.accountChannels.notify(account.id, 'email-removed'))?.accepted > 0; } catch {}
-    return { removed: true, noticeWaived: waived, notified, account: await this.projectAccount(account) };
+    try { if (typeof this.mailer?.sendSecurityAlert === 'function') { await this.mailer.sendSecurityAlert({ email: entry.address, type: 'email-removed', owner: account.id }); notified.email = true; } } catch {}
+    try { if (typeof this.accountChannels?.notify === 'function' && (channels.ready || others.length)) notified.push = (await this.accountChannels.notify(account.id, 'email-removed'))?.accepted > 0; } catch {}
+    return { removed: true, noticeWaived: waived, notified, currentSessionRevoked: !account.sessions.includes(session), account: await this.projectAccount(account) };
   }
   async logoutSaved(input,context){
     this.origin(context);const {account,session}=await this.authorized(context,false,{closure:true});const revision=account.revision;await this.pruneSessions(account,s=>s===session);this.audit(account,'session-closed');await this.save(account,revision);return {loggedOut:true};

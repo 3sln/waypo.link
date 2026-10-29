@@ -199,8 +199,8 @@ export class LinkedApproval {
     const userCodeHash = await this.mac('user-code', code), request = locator !== undefined ? await this.repository.get(locator) : await this.repository.findByUserCode(userCodeHash);
     return request && request.version === 2 && ['session', 'app'].includes(request.kind) && secureEqual(request.userCodeHash, userCodeHash) ? request : null;
   }
-  // One fresh credential confirmation at approval for both kinds (DEVLOG 2026-10-20): a passkey or password sign-in or
-  // step-up within 5 minutes. Linked-approval, email-link and recovery sessions count only after their own step-up.
+  // One fresh credential confirmation at approval for both kinds (DEVLOG 2026-10-20): a passkey sign-in or step-up within
+  // 5 minutes (passwords dropped, owner approval 2026-10-28). Linked-approval, email-link and recovery sessions count only after their own step-up.
   // An app approval's confirmation must also postdate the request, binding the step-up to this approval (review LA2-S7).
   fresh(session, request) { const at = this.identity.authAt(session); return at + LINKED.freshMs > this.now() && (request?.kind !== 'app' || at >= request.createdAt); }
   idleMs() { return appIdleMs(this.identity.config.appRefreshIdleMs); }
@@ -244,7 +244,7 @@ export class LinkedApproval {
     // consent path `app`); a mismatch is the uniform miss, so an app request is never approved without owner consent.
     if ((legacy && app) || (input.kind ?? 'session') !== request.kind) this.invalid();
     if(!legacy&&!this.allowed(account,request))this.fail('not_found','Linked approval is not enabled.');
-    if (!this.fresh(session, request)) this.fail('reauthentication_required', 'Confirm your password or passkey before approving this sign-in.');
+    if (!this.fresh(session, request)) this.fail('reauthentication_required', 'Confirm with your passkey before approving this sign-in.');
     const choice = legacy ? 'session' : input.choice ?? (app ? 'ongoing' : 'session'), lifetime = linkedLifetime({ kind: request.kind, choice, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() });
     if (!lifetime) this.fail('invalid_choice', 'Choose how long this sign-in lasts.');
     if (input.consent !== undefined && (!app || !plain(input.consent, 4096) || Array.isArray(input.consent))) this.fail('invalid_consent', 'Review the requested access again.');

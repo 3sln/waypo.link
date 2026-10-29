@@ -15,7 +15,7 @@ test('actual Worker alarms physically delete expired linked requests and code cl
 // client below is an operator-reviewed static client; hosts stay under reserved .example names.
 import {dpopKey} from '../authorization-entry-helpers.mjs';
 import {revokeAllLineage} from '../../packages/identity/linked-approval.mjs';
-const URN='urn:ietf:params:oauth:grant-type:device_code',PASSWORD='isolated test account password';
+const URN='urn:ietf:params:oauth:grant-type:device_code';
 const cli={id:'https://acme.example/cli',name:'Acme CLI',origin:'https://acme.example',redirectUris:['https://acme.example/callback'],grantTypes:[URN,'refresh_token']};
 const deviceBindings=(flag='true')=>({FEDERATION_ENABLED:'true',DEVICE_AUTHORIZATION_ENABLED:flag,FEDERATION_CLIENTS:JSON.stringify([cli])});
 const form=fields=>new URLSearchParams(fields).toString();
@@ -25,7 +25,7 @@ async function flows(t,flag='true'){
  const h=await createHarness({bindings:deviceBindings(flag)});t.after(()=>h.close());
  const call=async(path,{fields,json,headers={}}={})=>{const r=await h.mf.dispatchFetch(h.origin+path,{method:'POST',headers:{'Content-Type':fields?'application/x-www-form-urlencoded':'application/json',...headers},body:fields?form(fields):JSON.stringify(json??{})});const text=await r.text();let body;try{body=JSON.parse(text);}catch{body=text;}return {status:r.status,body,headers:r.headers};};
  const f={h,call,nonce:null,
-  async member(handle){const r=await call('/api/auth/login/password',{json:{handle,password:PASSWORD,turnstileToken:'local-browser-test-token'},headers:{Origin:h.origin}});assert.equal(r.status,200,JSON.stringify(r.body));return {handle,owner:r.body.account.id,sessionContext:r.body.sessionContext,headers:{Origin:h.origin,Cookie:r.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':r.body.csrfToken}};},
+  async member(handle){const login=await h.passkeyLogin(handle),text=await login.text();let body;try{body=JSON.parse(text);}catch{body=text;}const r={status:login.status,body,headers:login.headers};assert.equal(r.status,200,JSON.stringify(r.body));return {handle,owner:r.body.account.id,sessionContext:r.body.sessionContext,headers:{Origin:h.origin,Cookie:r.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':r.body.csrfToken}};},
   // Token-endpoint calls with a DPoP proof, answering one nonce challenge.
   async token(key,fields,path='/oauth/token'){for(let attempt=0;attempt<2;attempt++){const r=await call(path,{fields,headers:{DPoP:await key.sign({htu:h.origin+path,...f.nonce?{nonce:f.nonce}:{}})}});f.nonce=r.headers.get('DPoP-Nonce')??f.nonce;if(r.body?.error!=='use_dpop_nonce')return r;}throw new Error('nonce loop');},
   rpc:async(key,access)=>call('/bindle/rpc',{json:{version:'0',tx:crypto.randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}},headers:{Authorization:'DPoP '+access,DPoP:await key.sign({htu:h.origin+'/bindle/rpc',ath:access})}}),

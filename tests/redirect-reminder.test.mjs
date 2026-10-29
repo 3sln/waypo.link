@@ -23,11 +23,14 @@ function movedRow(clock, extra = {}) {
 
 test('transfer-out: the reminder opt-in keeps exactly the verified email at commit and indexes the reminder 30 days before expiry', async t => {
   const fx = await transferFixture(t);
+  // Read before any identity write: the fixture's legacy email fields migrate to `emails` on the next save.
+  const verifiedAt = (await fx.identityRecord()).emailVerifiedAt;
+  assert.ok(Number.isSafeInteger(verifiedAt));
   const draft = await fx.begin({ redirect: true, reminder: true });
   assert.equal(draft.reminder, true);
   assert.equal((await movedFlow(fx, { redirect: true, reminder: true })).status, 'attested');
   const record = await fx.get(), moved = (await fx.identityRecord()).moved;
-  assert.deepEqual(moved.reminderEmail, { address: EMAIL, verifiedAt: (await fx.identityRecord()).emailVerifiedAt });
+  assert.deepEqual(moved.reminderEmail, { address: EMAIL, verifiedAt });
   assert.equal(moved.reminder, undefined, 'the opt-in flag never reaches the tombstone');
   assert.deepEqual(moved.audit.map(entry => entry.event), ['reminder-email-kept']);
   const due = await fx.ports.due.due({ now: Infinity });

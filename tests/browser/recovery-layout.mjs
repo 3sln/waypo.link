@@ -2,13 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {launch,baseURL,screenshot} from '../e2e/browser.mjs';
+import {softAuthenticator,registerPending} from '../helpers/soft-passkey.mjs';
 
 test('recovery questions preserve native answers through reorder, fit mobile, and localize interface without changing public metadata',async()=>{
  assert.ok(['localhost','127.0.0.1'].includes(new URL(baseURL).hostname));
  const browser=await launch();try{
   const context=await browser.newContext({acceptDownloads:true,extraHTTPHeaders:{'CF-Connecting-IP':`198.51.100.${Math.floor(Math.random()*200)+20}`}});
-  const response=await context.request.post(`${baseURL}/api/auth/signup`,{headers:{Origin:baseURL},data:{method:'password',password:'Layout test password2026!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}});
-  assert.equal(response.status(),200);const {pendingToken,account}=await response.json();assert.match(account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);assert.match(account.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  const response=await context.request.post(`${baseURL}/api/auth/signup`,{headers:{Origin:baseURL},data:{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}});
+  assert.equal(response.status(),200);const pending=await response.json(),{pendingToken,account}=pending;assert.match(account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);assert.match(account.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  const send=async(path,data)=>{const r=await context.request.post(baseURL+path,{headers:{Origin:baseURL},data});assert.equal(r.status(),200,path);return r.json();};await registerPending(softAuthenticator({origin:baseURL}),send,pending);
   const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(({pendingToken})=>{sessionStorage.setItem('3sln-setup',JSON.stringify({token:pendingToken,stage:'recovery'}));},{pendingToken});
   await page.goto(`${baseURL}/recovery/setup`);await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();

@@ -2,8 +2,7 @@
 //
 // An organization is an ordinary identity record of `kind: 'organization'`: a stable UUID `id`, a permanently
 // allocated handle (its alias; the UUID is the identity), provider-custodied keys in its own account single writer, and
-// a recovery file issued at creation to its owner of record. It never has credentials, sessions, email login or a
-// password, and IdentityService refuses every interactive path for it (`interactiveIdentity`). Organization recovery
+// a recovery file issued at creation to its owner of record. It never has credentials, sessions or email sign-in, and IdentityService refuses every interactive path for it (`interactiveIdentity`). Organization recovery
 // (break-glass, ORG-12) is phase B: until then `recover` refuses an organization like an unknown file.
 //
 // Status: 'pending-organization' from create until the first recovery file is bound, then 'active'. Identity
@@ -54,7 +53,7 @@ export function organizationIdentityPort(repository,{clock=()=>Date.now(),crypto
    const assignmentId=webCrypto.randomUUID(),handle=await repository.allocateFreeHandle(null,id,assignmentId);
    const account={id,assignmentId,nameAssignmentId:assignmentId,revision:0,handle,status:'pending-organization',kind:'organization',
     organization:{v:1,request,creator:{iss:creator.iss??null,sub:creator.sub},createdAt:now},admission:{version:1,kind:'organization',plan:'organization'},
-    createdAt:now,lastActiveAt:now,security:{epoch:0,changedAt:now},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:null};
+    createdAt:now,lastActiveAt:now,security:{epoch:0,changedAt:now},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null};
    audit(account,'organization-created');
    if(await repository.create(account))return {ok:true,handle,status:account.status};
    const raced=await repository.get(id);

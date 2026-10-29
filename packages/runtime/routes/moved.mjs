@@ -149,7 +149,7 @@ export class TransferEvidence extends Query{
   const {account,session}=await identity.authorized({...this.context,requireCurrentTerms:false},true);
   const credential=account.credentials.find(entry=>entry.id===session.credentialId);
   // `stepUpCredentialId`: the credential that confirmed the step-up (P17 compares it), beside the sign-in credential.
-  const used=session.stepUpCredential,stepUpCredentialId=used?.kind==='passkey'&&typeof used.id==='string'?used.id:used?.kind==='password'?'password':null;
+  const used=session.stepUpCredential,stepUpCredentialId=used?.kind==='passkey'&&typeof used.id==='string'?used.id:null;
   return {owner:account.id,stepUpAt:Number.isSafeInteger(session.stepUpAt)?session.stepUpAt:null,sessionId:await identity.sessionID(session),sessionCreatedAt:session.createdAt,...credential?{credentialId:credential.id,credentialCreatedAt:credential.createdAt}:{},...stepUpCredentialId?{stepUpCredentialId}:{}};
  }
 }

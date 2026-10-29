@@ -51,10 +51,11 @@ test('the warning and its dialog strings are translated',async()=>{
  }
 });
 
-test('eligibility display: with a passkey, the password age never makes a reissue eligible',()=>{
+test('eligibility display: only a passkey age makes a reissue eligible; a legacy password never does',()=>{
  const now=40*DAY;
  assert.equal(recoveryReissueEligibility({passwordHash:'h',passwordSetAt:0,credentials:[{createdAt:now-DAY}]},now).reissueEligible,false);
- assert.equal(recoveryReissueEligibility({passwordHash:'h',passwordSetAt:0,credentials:[]},now).reissueEligible,true);
+ assert.deepEqual(recoveryReissueEligibility({passwordHash:'h',passwordSetAt:0,credentials:[]},now),{reissueEligible:false,reissueEligibleAt:null},'a passkey-less account has no eligibility date');
+ assert.equal(recoveryReissueEligibility({credentials:[{createdAt:now-7*DAY}]},now).reissueEligible,true);
 });
 
 test('cancel from an earlier device posts an explicit confirmation and refreshes the account',async()=>{

@@ -19,7 +19,7 @@ const OWNER='550e8400-e29b-41d4-a716-446655440001',REVISION='a'.repeat(32);
 async function fixture({get,request,submissions={}}={}){
  const calls=[],effects=[];
  const api={async get(path){calls.push({method:'GET',path});return get?get(path):{};},async request(path,body,method='POST'){calls.push({method,path,body});return request?request(path,body,method):{};}};
- const browser={consumeSubmission:id=>submissions[id],secret:()=>undefined,storeSecret(){},captureFocus:()=>effects.push(['captureFocus']),restoreFocus:()=>effects.push(['restoreFocus']),focus:selector=>effects.push(['focus',selector]),setCaptchaAction(){},installCaptcha(){}};
+ const browser={consumeSubmission:id=>submissions[id],secret:()=>undefined,storeSecret(){},captureFocus:()=>effects.push(['captureFocus']),restoreFocus:()=>effects.push(['restoreFocus']),focus:selector=>effects.push(['focus',selector]),setCaptchaAction(){},installCaptcha(){},authenticatePasskey:async options=>({id:'test-passkey',challenge:options.challenge})};
  const engine=new Engine({providers:{state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),portalContributions:Provider.fromSingleton({}),recoveryFile:Provider.fromSingleton({})}});
  const write=patch=>engine.container.use({state:{write:true}},({state})=>state.transition(next=>Object.assign(next,patch))),read=()=>engine.container.use(['state'],({state})=>state.snapshot());
  await write({loading:false,locale:'en',view:'contacts',route:{kind:'home'},config:{},session:{account:{id:OWNER},sessionContext:'ctx'},beamGeneration:1,data:{collections:[],devices:[]}});
@@ -37,16 +37,16 @@ test('B1 a profile save stores only display name and avatar and reports a plain 
 class Export extends OwnerFlow {async perform(r,ctx){const job=await r.api.request('/api/exports',{purpose:'owner'});r.state.transition(next=>Object.assign(next,{notice:'exported:'+job.id}));}}
 test('B4 identity step_up_required opens the owner confirmation; confirming retries the request once',async()=>{
  let confirmed=false;
- const f=await fixture({submissions:{pw:{password:'correct horse'}},request:async path=>{
-  if(path==='/api/exports'){if(!confirmed)throw Object.assign(Error('Confirm your password or passkey to continue.'),{code:'step_up_required',status:400});return {id:'job-1'};}
-  if(path==='/api/auth/step-up/begin')return {password:true,passkey:false};if(path==='/api/auth/step-up'){confirmed=true;return {};}throw Error('unexpected '+path);}});
+ const f=await fixture({submissions:{pk:{}},request:async path=>{
+  if(path==='/api/exports'){if(!confirmed)throw Object.assign(Error('Confirm with your passkey to continue.'),{code:'step_up_required',status:400});return {id:'job-1'};}
+  if(path==='/api/auth/step-up/begin')return {passkey:true,authenticationOptions:{challenge:'step-up'}};if(path==='/api/auth/step-up'){confirmed=true;return {};}throw Error('unexpected '+path);}});
  try{
   const pending=f.dispatch(new Export());
   for(let i=0;i<200&&!(await f.read()).stepUp;i++)await new Promise(resolve=>setTimeout(resolve,0));
-  const prompt=(await f.read()).stepUp;assert.ok(prompt,'the confirmation is shown instead of a generic refusal');assert.equal(prompt.password,true);assert.deepEqual(f.effects.at(-1),['focus','.step-up h2']);
-  await f.act(new ConfirmOwner({id:prompt.id,method:'password',operationId:'pw'}));await within(pending,'Export');
+  const prompt=(await f.read()).stepUp;assert.ok(prompt,'the confirmation is shown instead of a generic refusal');assert.equal(prompt.passkey,true);assert.equal('password' in prompt,false);assert.deepEqual(f.effects.at(-1),['focus','.step-up h2']);
+  await f.act(new ConfirmOwner({id:prompt.id,method:'passkey',operationId:'pk'}));await within(pending,'Export');
   const s=await f.read();assert.equal(s.stepUp,null);assert.equal(s.notice,'exported:job-1');assert.equal(f.calls.filter(c=>c.path==='/api/exports').length,2,'one refused attempt, one retry');
-  assert.deepEqual(f.calls.find(c=>c.path==='/api/auth/step-up').body,{method:'password',password:'correct horse'});
+  assert.deepEqual(f.calls.find(c=>c.path==='/api/auth/step-up').body,{method:'passkey',response:{id:'test-passkey',challenge:'step-up'}});
  }finally{await f.close();}
 });
 

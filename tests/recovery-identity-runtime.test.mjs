@@ -9,12 +9,13 @@ import { IdentityService } from '../packages/identity/service.mjs';
 import { identityBackupPort } from '../packages/runtime/identity-backup.mjs';
 import { verifyNameAssignment } from '../packages/recovery/identity-backup.mjs';
 import { validateRecoveryPayload } from '../packages/recovery/index.mjs';
+import { softAuthenticator, signupBody, registerPending } from './helpers/soft-passkey.mjs';
 
 // Recovery file v3 over the durable Node runtime and its HTTP routes (owner approval 2026-10-28): an opaque credential,
-// no keys, no provider proof; envelope v1 credentials (payloads v1 and v2) recover nothing.
+// no keys, no provider proof; envelope v1 credentials (payloads v1 and v2) recover nothing. Passwords were dropped (owner
+// approval 2026-10-28): accounts sign up, set up after recovery and sign in with a soft passkey (real WebAuthn adapter).
 
 const origin = 'http://localhost:8788';
-const password = 'Portable recovery runtime test password!';
 const challenge = 'local-browser-test-token';
 // Compare sensitive persisted records without printing their contents on failure.
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -31,13 +32,25 @@ async function fixture(t, config = {}) {
     }));
     return { response, status: response.status, value: await response.json() };
   };
+  const authenticator = softAuthenticator({ origin });
+  const send = async (path, input, headers = {}) => { const result = await request(path, input, headers); assert.equal(result.status, 200, result.value.error); return result.value; };
   return {
-    directory, request, get app() { return app; },
+    directory, request, authenticator, get app() { return app; },
     async restart() { await app.close(); app = await createNodeServer({ directory, config }); },
     async signup() {
-      const result = await request('/api/auth/signup', { method: 'password', password, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge });
-      assert.equal(result.status, 200, result.value.error);
+      const result = await request('/api/auth/signup', signupBody({ ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge }));
+      assert.equal(result.status, 200, result.value.error); assert.equal(result.value.readyForRecovery, false);
+      assert.equal((await registerPending(authenticator, send, result.value)).readyForRecovery, true);
       return result.value;
+    },
+    /** A fresh passkey for a pending (recovering) account. */
+    async registerPasskey(pendingToken) { const begin = await send('/api/auth/passkey/register/begin', { pendingToken }); return registerPending(authenticator, send, { pendingToken, ...begin }); },
+    /** Passkey sign-in: the session headers. */
+    async signIn(handle) {
+      const begin = await send('/api/auth/login/passkey/begin', { handle, turnstileToken: challenge });
+      const result = await request('/api/auth/login/passkey/finish', { challengeToken: begin.challengeToken, response: await authenticator.authenticate(begin.authenticationOptions) });
+      assert.equal(result.status, 200, result.value.error);
+      return { ...result.value, headers: { Cookie: result.response.headers.get('Set-Cookie').split(';')[0], 'X-CSRF-Token': result.value.csrfToken } };
     },
     async download(pendingToken) {
       const result = await request('/api/auth/recovery/download', { pendingToken });
@@ -83,7 +96,8 @@ test('durable v3 recovery across restart and return: no keys in the file, the si
   assert.equal(recovered.value.account.id, accountId); assert.equal(recovered.value.account.handle, assignedHandle);
   assert.equal((await f.request('/api/session', undefined, owner.headers, 'GET')).value.authenticated, false);
   const pendingToken = recovered.value.pendingToken;
-  assert.equal((await f.request('/api/auth/password/pending', { pendingToken, password })).status, 200);
+  assert.equal(recovered.value.credentialRequired, true, 'a recovery removes every passkey');
+  assert.equal((await f.registerPasskey(pendingToken)).readyForRecovery, true);
   const replacement = await f.download(pendingToken);
   assert.notEqual(replacement.fileId, file.fileId);
   assert.equal(await signingHistory(f, accountId), beforeKeys, 'the replacement file rotates nothing (P15 withdrawn)');
@@ -135,7 +149,7 @@ test('issuing a file needs no provider signing authority; setup provisions the s
   const f = await fixture(t), pending = await f.signup();
   const repository = f.app.resources.repository, accounts = f.app.resources.accounts;
   const service = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: origin }, accounts }),
-    turnstile: {}, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {},
+    turnstile: {}, rateLimiter: { check: async () => true }, webauthn: {},
     config: { origin, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
   const result = await service.downloadRecovery({ pendingToken: pending.pendingToken }, { origin });
   assert.equal(validateRecoveryPayload(result.content).fileId, result.fileId);
@@ -175,8 +189,7 @@ test('a retained verified-payment marker permits one numeric custom name after c
   await controller.metadata.put('billing/state', { owner: id, source: 'polar', plan: 'free', status: 'canceled', validUntil: Date.now() - 1000 });
   const recoveryBefore = (await repository.get(id)).recoveryHash, keychainBefore = await signingHistory(f, id);
   await f.restart();
-  const freshLogin=await f.request('/api/auth/login/password',{handle:owner.account.handle,password,turnstileToken:challenge});assert.equal(freshLogin.status,200,freshLogin.value.error);
-  const freshHeaders={Cookie:freshLogin.response.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':freshLogin.value.csrfToken};
+  const freshHeaders=(await f.signIn(owner.account.handle)).headers;
   const claim = await f.request('/api/auth/handles/claim', { handle: '123' }, freshHeaders);
   assert.equal(claim.status, 200, claim.value.error);
   assert.equal(claim.value.account.id, id);
@@ -196,27 +209,28 @@ test('a retained verified-payment marker permits one numeric custom name after c
     assert.equal(value.recoveryToken, undefined);
     assert.equal(value.keychain, undefined);
   }
-  const login = await f.request('/api/auth/login/password', { handle: '123', password, turnstileToken: challenge });
-  assert.equal(login.status, 200, login.value.error);
-  assert.equal(login.value.account.id, id);
+  const login = await f.signIn('123');
+  assert.equal(login.account.id, id);
   const recovery = await f.recover(file);
   assert.equal(recovery.status, 200, recovery.value.error);
   assert.equal(recovery.value.account.id, id);
   assert.equal(recovery.value.account.paidHandle, '123');
 });
 
-test('equivalent Crockford login spellings share the same handle abuse window', async () => {
+test('password sign-in is gone; passkey begin with equivalent Crockford spellings is charged only to the per-network window and never looks the handle up', async t => {
   const attempts = [], lookups = [];
   const service = new IdentityService({ repository: { findByHandle: async handle => { lookups.push(handle); return null; } },
     turnstile: { verify: async () => true }, rateLimiter: { check: async input => { attempts.push(input); return true; } },
-    webauthn: { authenticationOptions: async () => ({ challenge: 'fixture-challenge' }) }, passwordHasher: { hash: async () => 'fixture-hash', verify: async () => false },
+    webauthn: { authenticationOptions: async () => ({ challenge: 'fixture-challenge' }) },
     config: { origin, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
-  for (const handle of ['N.OI', 'n.0001']) {
-    await assert.rejects(service.loginPassword({ handle, password, turnstileToken: challenge }, { origin }), { code: 'unauthorized' });
-    await service.beginPasskeyLogin({ handle, turnstileToken: challenge }, { origin });
-  }
-  // Wargame 2026-10-23 #3/#9: the pre-Turnstile window is per network only; the handle window is consulted and charged
-  // (a failed check) under the canonical spelling; passkey begin neither touches the handle window nor looks it up.
-  assert.deepEqual(attempts.map(input => [input.phase ?? null, input.handle ?? null]), [['attempt', null], ['credential', 'n.1'], ['failure', 'n.1'], ['attempt', null], ['attempt', null], ['credential', 'n.1'], ['failure', 'n.1'], ['attempt', null]]);
-  assert.deepEqual(lookups, ['n.1', 'n.1']);
+  assert.equal(service.loginPassword, undefined);
+  for (const handle of ['N.OI', 'n.0001']) await service.beginPasskeyLogin({ handle, turnstileToken: challenge }, { origin });
+  // Wargame 2026-10-23 #3/#9: the pre-Turnstile window is per network only; passkey begin neither touches the handle
+  // window nor looks the handle up (the handle window was the password path's).
+  assert.deepEqual(attempts.map(input => [input.phase ?? null, input.handle ?? null]), [['attempt', null], ['attempt', null]]);
+  assert.deepEqual(lookups, []);
+  const f = await fixture(t);
+  // The route is gone: answered exactly like an unknown /api/auth path (401 without a session on this runtime).
+  const gone = await f.request('/api/auth/login/password', { handle: 'n.1', password: 'x', turnstileToken: challenge }), unknown = await f.request('/api/auth/no-such-route', { handle: 'n.1', password: 'x', turnstileToken: challenge });
+  assert.deepEqual([gone.status, gone.value], [unknown.status, unknown.value]); assert.notEqual(gone.status, 200);
 });

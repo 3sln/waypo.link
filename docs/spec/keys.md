@@ -6,13 +6,13 @@
 >
 > **Covers:** the strict JSON rules and compact JWS profile every Bindle signed object uses, and the rule that keeps objects signed by one key separable (signature domains).
 >
-> **Does not cover:** where keys come from or how they are discovered (identity documents and key discovery are in [Organizations §3a](extensions/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)); key moves and successor pins ([identity portability](extensions/identity-portability.md)); the meaning of any particular signed object (each profile's own spec); artefact integrity digests ([artefacts](artefacts.md)); the link query envelope ([Organizations link envelope annex](extensions/organizations-link-envelope.md)).
+> **Does not cover:** where keys come from or how they are discovered (identity documents and key discovery are in [Organizations §3a](extensions/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)); identity moves, provider transfer keys and successor pins ([identity portability](extensions/identity-portability.md)); the meaning of any particular signed object (each profile's own spec); artefact integrity digests ([artefacts](artefacts.md)); the link query envelope ([Organizations link envelope annex](extensions/organizations-link-envelope.md)).
 
 MUST, MUST NOT, SHOULD and MAY express draft requirements.
 
 ## 1. Scope
 
-A **signed object** is a compact JWS that a Bindle specification defines: for example a signaling leg certificate or message, an identity-portability move statement, a key-delegation or member certificate, a signed intent, or a link envelope meta. A **profile** is the specification that defines one signed object: its permitted algorithms, its exact protected header, its `typ`, its exact payload members and its key authority.
+A **signed object** is a compact JWS that a Bindle specification defines: for example a signaling leg certificate or message, an identity-portability move record or acceptance, a key-delegation or member certificate, a signed intent, or a link envelope meta. A **profile** is the specification that defines one signed object: its permitted algorithms, its exact protected header, its `typ`, its exact payload members and its key authority.
 
 Every profile uses the rules of §2 and §3 unless it states a stricter rule. Profiles MUST NOT relax them.
 
@@ -59,7 +59,7 @@ The unprefixed conversation-v1 form is a legacy exception: new profiles MUST NOT
 
 The Organizations rows were merged from AMD-O7 on 2026-10-28 (contacts spike CR-O1; provisional, unsigned). The former `bindle-link-data+jwt` row is dropped with link audiences (CL-3): no link type defines data ([annex §4](extensions/organizations-link-envelope.md#4-bindle_data-reserved)).
 
-**Rows proposed elsewhere (not yet merged into this table).** These amendments add rows and are pending with their own specifications: Organizations AMD-O12 (member and entity certificates), [intents](extensions/intents.md) AMD-I5 (`bindle-intent+jwt`), [signaling](extensions/signaling.md) (leg certificate, control statement and message `typ` values; SG-41), and [Bindle Messaging](extensions/messaging.md) §3 (key-delegation and author proofs). Until they are merged, each is authoritative in its own specification, and none may reuse another's `typ` or prefix.
+**Rows proposed elsewhere (not yet merged into this table).** These amendments add rows and are pending with their own specifications: Organizations AMD-O12 (member and entity certificates), [intents](extensions/intents.md) AMD-I5 (`bindle-intent+jwt`), [signaling](extensions/signaling.md) (leg certificate, control statement and message `typ` values; SG-41), [identity portability](extensions/identity-portability.md) AMD-P5 (`bindle-identity-move+jwt` and `bindle-move-acceptance+jwt`, signed by provider transfer keys, never identity keys; DPoP proofs on the migration channel, signed by a per-move key; revision 4, 2026-10-28, provisional), and [Bindle Messaging](extensions/messaging.md) §3 (key-delegation and author proofs). Until they are merged, each is authoritative in its own specification, and none may reuse another's `typ` or prefix.
 
 ## 5. Conformance vectors
 
@@ -68,4 +68,5 @@ The pure-JWS cases of the former links vector set (exact-bytes verification, non
 ## 6. Change log
 
 - 2026-10-27: created from links §3.1 and §7.2 (contacts and links spike CL-2, CR-K1; provisional, unsigned). References to "links §3.1" in signaling, identity portability, Bindle Messaging, intents and organizations now point here (CR-K2).
+- 2026-10-28: identity portability revision 4 replaces the move statement and attestation with the provider-signed move record and acceptance (rows proposed, AMD-P5); recovery files no longer carry identity keys (recovery file v3, owner-approved). Provisional, unsigned.
 - 2026-10-28: Organizations AMD-O7 rows merged; the link-meta row points to the Organizations annex; the link-data row is dropped (contacts and links spike CR-LK1, CR-LK2, CR-O1; provisional, unsigned).

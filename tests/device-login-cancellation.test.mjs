@@ -18,9 +18,9 @@ async function fixture() {
   const service = new IdentityService({ repository, deviceRequests, clock: () => now,
     config: { origin: context.origin, rpID: 'bindle.example', termsVersion: 'test', linkedEphemeralKey: true },
     turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {} });
-  const account = { id: service.crypto.id(), handle: 'alice', revision: 0, status: 'active', termsVersion:'test', credentials: [], sessions: [], createdAt: now };
-  const phone = await service.session(account, { label: 'Phone' });
-  const unrelated = await service.session(account, { label: 'Another browser' });
+  const account = { id: service.crypto.id(), handle: 'alice', revision: 0, status: 'active', termsVersion:'test', credentials: [{ id: 'passkey-1' }], sessions: [], createdAt: now };
+  const phone = await service.session(account, { label: 'Phone', credentialId: 'passkey-1' });
+  const unrelated = await service.session(account, { label: 'Another browser', credentialId: 'passkey-1' });
   await repository.create(account);
   const phoneContext = { ...context, ...phone };
   const request = await service.createDeviceLogin({ label: 'Shared TV', turnstileToken: 'test' }, context);
@@ -141,7 +141,7 @@ test('concurrent unrelated session creation survives targeted cancellation', asy
   f.repository.compareAndSwap = async (...args) => {
     if (!raced) {
       raced = true; const account = await f.repository.get(f.account.id), revision = account.revision;
-      other = await f.service.session(account, { label: 'Concurrent browser' }); account.revision++;
+      other = await f.service.session(account, { label: 'Concurrent browser', credentialId: 'passkey-1' }); account.revision++;
       await swap(account.id, revision, account);
     }
     return swap(...args);

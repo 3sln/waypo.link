@@ -48,7 +48,7 @@ export class AccountExport {
  async create(owner,input,actor){
   try{if(typeof this.issuer!=='string'||new URL(this.issuer).origin!==this.issuer)unavailable();}catch{unavailable();}
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['operationId','purpose'].includes(k))||!UUID.test(input.operationId??'')||input.purpose!==undefined&&input.purpose!=='owner')fault('invalid_export','Provide an export operation ID.',400);
-  const now=this.clock.now();if(!int(actor.stepUpAt)||actor.stepUpAt>now||now-actor.stepUpAt>300000||actor.stepUpMethod!==undefined&&!['password','passkey'].includes(actor.stepUpMethod))fault('step_up_required','Verify your password or passkey again.',401);
+  const now=this.clock.now();if(!int(actor.stepUpAt)||actor.stepUpAt>now||now-actor.stepUpAt>300000||actor.stepUpMethod!==undefined&&actor.stepUpMethod!=='passkey')fault('step_up_required','Verify with your passkey again.',401);
   const fingerprint=canonical({purpose:input.purpose??'owner'}),security=await this.security(owner),id=this.random.uuid();
   const result=await this.store.transaction(async tx=>{
    await this.fence(tx,owner);const history=await tx.get(HISTORY)??[],receipt=history.find(h=>h.operationId===input.operationId);

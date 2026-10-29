@@ -40,6 +40,7 @@
 // Divergences found are reported through `t.todo(...)` (so `npm test` stays green); SIGNALING_CONFORMANCE_STRICT=1
 // turns the ones not marked "plausibly intentional" into failures. Items that this deployment cannot exercise over its
 // public surfaces (provider-feature and service-class endpoints) are skipped with the reason, never passed.
+import {softAuthenticator, registerPending} from './soft-passkey.mjs';
 import nodeTest, {before, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -150,11 +151,13 @@ export async function boot({config = {}, contracts = {}} = {}) {
   const peer = peers.peer;
   /** A provider account (signup through the HTTP routes) and its identity URI from the provider's own directory. */
   let signups = 0;
+  const authenticator = softAuthenticator({origin: PROVIDER});
   async function account() {
     // Signup's fixed 3-per-minute burst per client address is met by giving each test account its own loopback address
     // through the operator's trusted client-IP header.
     const ip = `127.${2 + (signups >> 7)}.${signups & 127}.${1 + (signups++ & 63)}`;
-    const pending = await (await post('/api/auth/signup', {method: 'password', password: 'A durable conformance test password!', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token'}, {ip})).json();
+    const pending = await (await post('/api/auth/signup', {method: 'passkey', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token'}, {ip})).json();
+    await registerPending(authenticator, async (path, data) => (await post(path, data, {ip})).json(), pending);
     const recovery = await (await post('/api/auth/recovery/download', {pendingToken: pending.pendingToken}, {ip})).json();
     const activation = await post('/api/auth/recovery/confirm', {pendingToken: pending.pendingToken, recoveryToken: recovery.recoveryToken, downloadConfirmed: true}, {ip});
     assert.equal(activation.status, 200, 'signup: ' + JSON.stringify(pending));

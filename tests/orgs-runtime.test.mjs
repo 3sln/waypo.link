@@ -13,18 +13,19 @@ import {validateRecoveryPayload} from '../packages/recovery/index.mjs';
 import {accountHandle} from '../packages/runtime/routes/shared.mjs';
 import {stages,allowedMethods} from '../packages/runtime/routes/orgs.mjs';
 import {personActor,actingAs} from '../packages/orgs/authority.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeHasher,fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 import {IdentityCrypto} from '../packages/identity/crypto.mjs';
+import {signInEmails} from '../packages/identity/emails.mjs';
 
-const ORIGIN='http://localhost:8788',PASSWORD='Organizations runtime test password!';
+const ORIGIN='http://localhost:8788';
 async function fixture(t,{enabled=true}={}){
  const directory=await mkdtemp(join(tmpdir(),'orgs-runtime-'));
  const app=await createNodeServer({directory,config:{ORGANIZATIONS_ENABLED:enabled?'true':'false',ORGANIZATION_PLANS:{check:async()=>({paid:true,plan:'organization-internal',source:'test'})}}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const base={origin:ORIGIN,remoteIP:'127.0.0.1'};
- const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+ const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
  const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
  await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
  const id=pending.account.id,env={APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATIONS_ENABLED:enabled?'true':'false'};
@@ -58,10 +59,10 @@ test('ORG-1 runtime: creation issues a real organization recovery file (v3, no k
  assert.equal(created.body.recoveryFile.content.includes('keychain'),false,'no keys in the organization file');
  const record=await f.repository.get(org);
  assert.equal(record.kind,'organization');assert.equal(record.status,'active');assert.equal(record.recoveryHash,await new IdentityCrypto().hash('recovery',file.recoveryToken));assert.equal(record.recoveryFileId,verified.fileId);assert.equal(record.recoveryBackupVersion,3);assert.equal(record.recoveryKeyKid,undefined);
- assert.deepEqual([record.credentials.length,record.sessions.length,record.passwordHash,record.emailLoginEnabled],[0,0,null,false]);
+ assert.deepEqual([record.credentials.length,record.sessions.length,'passwordHash' in record,signInEmails(record).length],[0,0,false,0]);
  // No interactive path: the organization's own file recovers nothing (break-glass is phase B), and login finds nothing.
  await assert.rejects(f.identity.recover({recoveryToken:file.recoveryToken,turnstileToken:'ok'},f.base),{code:'unauthorized'});
- await assert.rejects(f.identity.loginPassword({handle:record.handle,password:PASSWORD,turnstileToken:'ok'},f.base),{code:'unauthorized'});
+ {const begin=await f.identity.beginPasskeyLogin({handle:record.handle,turnstileToken:'ok'},f.base);await assert.rejects(f.identity.finishPasskeyLogin({challengeToken:begin.challengeToken,response:passkeyResponse(begin,'passkey-'+org)},f.base),{code:'unauthorized'});}
  assert.equal((await f.repository.get(org)).status,'active','a refused recovery changes nothing');
  // The organization's own account is never removed by the inactivity lifecycle.
  assert.equal((await f.accounts.get(org).invoke({method:'snapshot',args:[org]})).retention.status,'review-required');

@@ -13,9 +13,11 @@ import {queuePushEndsOn} from '../packages/identity/service.mjs';
 import {transferIdentityPort} from '../packages/identity/transfer-out.mjs';
 import {metadataStore} from '../packages/app/memory-providers.mjs';
 import {SqliteMetadata} from '../apps/node/resources.mjs';
-import {identityEngine,activate,signupInput,sessionContext,context,MemoryAccounts} from './helpers/identity-engine.mjs';
+import {identityEngine,activate,sessionContext,context,MemoryAccounts,signInPasskey} from './helpers/identity-engine.mjs';
+import {softAuthenticator} from './helpers/soft-passkey.mjs';
 
-const origin='http://localhost:8791',password='Private wargame account password!';
+// Passwords were dropped (owner approval 2026-10-28): accounts sign up and sign in with a soft passkey (Node) or the fake one (engine).
+const origin='http://localhost:8791',authenticator=softAuthenticator({origin});
 const keys={p256dh:base64url(new Uint8Array(65).fill(4)),auth:base64url(new Uint8Array(16).fill(1))};
 const sub=()=>({endpoint:'https://fcm.googleapis.com/fcm/send/'+crypto.randomUUID(),keys});
 
@@ -26,12 +28,13 @@ test.describe('node server: owner removal of a device ends its push subscription
  const bind=r=>{const cookie=r.headers.getSetCookie().find(c=>c.startsWith('bindle_session='))??r.headers.get('Set-Cookie');return cookie.split(';')[0];};
  const call=(who,path,value,method='POST')=>fetchURL(path,{method,headers:{Origin:origin,...who.headers,...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}});
  async function signup(){
-  const s=await post('/api/auth/signup',{method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await s.json(),setup={Cookie:s.headers.get('Set-Cookie').split(';')[0]};
+  const s=await post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await s.json(),setup={Cookie:s.headers.get('Set-Cookie').split(';')[0]};
+  const registered=await post('/api/auth/passkey/register',{pendingToken:pending.pendingToken,response:await authenticator.register(pending.registrationOptions)},setup);assert.equal(registered.status,200,await registered.clone().text());
   const rec=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken},setup)).json();
   const a=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:rec.recoveryToken,downloadConfirmed:true},setup);assert.equal(a.status,200,await a.clone().text());
   const session=await a.json();return {session,headers:{Cookie:bind(a),'X-CSRF-Token':session.csrfToken}};
  }
- async function login(handle){const l=await post('/api/auth/login/password',{handle,password,turnstileToken:'local-browser-test-token'});assert.equal(l.status,200,await l.clone().text());const s=await l.json();return {session:s,headers:{Cookie:bind(l),'X-CSRF-Token':s.csrfToken}};}
+ async function login(handle){const b=await (await post('/api/auth/login/passkey/begin',{handle,turnstileToken:'local-browser-test-token'})).json(),l=await post('/api/auth/login/passkey/finish',{challengeToken:b.challengeToken,response:await authenticator.authenticate(b.authenticationOptions)});assert.equal(l.status,200,await l.clone().text());const s=await l.json();return {session:s,headers:{Cookie:bind(l),'X-CSRF-Token':s.csrfToken}};}
  test.before(async()=>{directory=await mkdtemp(join(tmpdir(),'wg4-push-'));app=await createNodeServer({directory,config:{APP_ORIGIN:origin}});});
  test.after(async()=>{await app?.close();if(directory)await rm(directory,{recursive:true,force:true});});
  for(const mode of ['revoke','revoke-others'])test(`owner ${mode} of a device session also ends that device's push subscription`,async()=>{
@@ -75,8 +78,8 @@ test('account object: ended sessions drop bound rows, refuse late subscribes and
 test('identity: every explicit session end queues a durable push-end row, retried until the account acknowledges',async()=>{
  const calls=[];let down=false;
  const accountChannels={async endSessions(owner,input){if(down)throw Object.assign(new Error('account down'),{code:'account_unavailable'});calls.push({owner,...structuredClone(input)});return {removed:0};}};
- const f=identityEngine({accountChannels}),{owner,ownerContext,file}=await activate(f.act);
- const second=await f.act('loginPassword',signupInput()),secondContext=sessionContext(second);
+ const f=identityEngine({accountChannels}),{owner,ownerContext,file,credentialId}=await activate(f.act);
+ const second=await signInPasskey(f.act,'alice',credentialId),secondContext=sessionContext(second);
  const devices=(await f.owner(ownerContext)).devices,other=devices.find(d=>!d.current);
  // Revoke with the account object down: the session ends now, the row waits.
  down=true;await f.act('revokeSession',{sessionId:other.id},ownerContext);
@@ -86,7 +89,7 @@ test('identity: every explicit session end queues a durable push-end row, retrie
  assert.equal((await f.repository.get(owner.account.id)).pendingPushEnds,undefined);assert.deepEqual(calls.at(-1).sessionIds,[other.id]);
  await assert.rejects(f.owner(secondContext),{code:'unauthorized'});
  // Cap eviction: the eleventh session evicts a live one, whose subscriptions end.
- let latest;for(let i=0;i<10;i++)latest=await f.act('loginPassword',signupInput());const latestContext=sessionContext(latest);
+ let latest;for(let i=0;i<10;i++)latest=await signInPasskey(f.act,'alice',credentialId);const latestContext=sessionContext(latest);
  assert.ok(calls.at(-1).sessionIds.length>=1,'an evicted live session is reported');assert.equal((await f.repository.get(owner.account.id)).pendingPushEnds,undefined);
  // Sign out other devices keeps the current chain and the browser's own subscription id.
  const push='A'.repeat(43);await f.act('revokeOtherSessions',{pushSubscription:push},latestContext);

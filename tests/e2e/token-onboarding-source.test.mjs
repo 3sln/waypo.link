@@ -3,11 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,stat,mkdir} from 'node:fs/promises';
 import {resolve,extname} from 'node:path';
-import {launch} from './browser.mjs';
+import {launch,virtualAuthenticator,fixtureRegistrationOptions} from './browser.mjs';
 const origin='https://onboarding.example',token='bo1.e30.'+'A'.repeat(43),root=resolve('.');
 test('Chromium private link scrubs before app load, selects only invited name and enters ordinary setup',async()=>{
  const browser=await launch();
- const page=await browser.newPage({viewport:{width:1440,height:1000}}),calls=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),calls=[],errors=[];page.on('pageerror',e=>errors.push(e.message));await virtualAuthenticator(page.context(),page);
  await page.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url());assert.equal(url.origin,origin,'No external resource is requested');assert(!request.url().includes(token));assert(!(request.headers().referer??'').includes(token));
   const send=value=>route.fulfill({contentType:'application/json',body:JSON.stringify(value)});
@@ -18,7 +18,8 @@ test('Chromium private link scrubs before app load, selects only invited name an
    if(url.pathname==='/api/signup/status')return send({signupEnabled:false,freeSignupOpen:false,paidSignupOpen:false,reason:'disabled'});
    if(url.pathname==='/api/auth/onboarding/begin')return send({ready:true});
    if(url.pathname==='/api/auth/onboarding/inspect')return send({issuer:origin,expiresAt:Date.now()+60000,names:[{name:'alice',status:'available'},{name:'bob',status:'claimed'}]});
-   if(url.pathname==='/api/auth/onboarding/claim')return send({pendingToken:'limited-private-setup',account:{handle:'n.abc',status:'pending'},readyForRecovery:true});
+   if(url.pathname==='/api/auth/onboarding/claim')return send({pendingToken:'limited-private-setup',account:{handle:'n.abc',status:'pending'},registrationOptions:fixtureRegistrationOptions('n.abc','onboarding.example'),readyForRecovery:false});
+   if(url.pathname==='/api/auth/passkey/register'){assert.equal(body.pendingToken,'limited-private-setup');return send({readyForRecovery:true});}
    if(url.pathname==='/api/auth/setup/status')return send({accountId:'owner',channelRequired:false,channelVerified:false});
    return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'Fixture stops before private recovery generation.'})});
   }
@@ -34,11 +35,10 @@ test('Chromium private link scrubs before app load, selects only invited name an
   await page.getByRole('combobox',{name:'Account name'}).waitFor();
   assert.deepEqual(await page.locator('[name=onboardingName] option').evaluateAll(nodes=>nodes.map(n=>n.value)),['','alice']);
   await page.selectOption('[name=onboardingName]','alice');assert(!(await page.locator('body').innerText()).includes(token));assert.equal(await page.locator('[name=password],[name=onboardingToken]').count(),0);await mkdir('artifacts/browser',{recursive:true});await page.screenshot({path:'artifacts/browser/private-onboarding-names.png'});await page.getByRole('button',{name:'Continue',exact:true}).click();
-  await page.getByRole('button',{name:'Password',exact:true}).click();await page.getByRole('button',{name:'Continue',exact:true}).click();
   await page.locator('input[name=ageConfirmed]').check();await page.locator('[name=termsAccepted]').check();await page.getByRole('button',{name:'Continue',exact:true}).click();
-  await page.locator('[name=password]').fill('a long private password');await page.getByRole('button',{name:'Create my account',exact:true}).click();
+  assert.equal(await page.locator('[name=password]').count(),0);await page.getByRole('button',{name:'Create my account',exact:true}).click();
   await page.waitForURL(origin+'/recovery/setup');
-  const claim=calls.find(c=>c.path.endsWith('/claim'));assert.equal(claim.body.name,'alice');assert.equal(claim.body.onboardingToken,token);assert.equal(claim.body.signupPlan,undefined);
+  const claim=calls.find(c=>c.path.endsWith('/claim'));assert.equal(claim.body.name,'alice');assert.equal(claim.body.onboardingToken,token);assert.equal(claim.body.signupPlan,undefined);assert.equal(claim.body.method,'passkey');assert.equal(calls.filter(c=>c.path==='/api/auth/passkey/register').length,1);
   assert.equal(await page.evaluate(t=>JSON.stringify({...sessionStorage,...localStorage}).includes(t),token),false);
   await page.evaluate(()=>sessionStorage.clear());await page.goto(origin+'/console?signin');await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:/Create.*account/}).count(),0);
   assert.deepEqual(errors,[]);

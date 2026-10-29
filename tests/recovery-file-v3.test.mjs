@@ -86,7 +86,7 @@ test('a stored v1/v2 credential recovers nothing, cannot cancel, and the console
     const view = (await f.owner()).recovery;
     assert.equal(view.reissueRequired, 'legacy-format'); assert.equal(view.fileId, null); assert.equal(view.reminder, null);
     // The ordinary reissue replaces it (age rule applies); the legacy previous credential can never cancel.
-    await f.age(); await f.stepUp('password'); const staged = f.parse(await f.begin()); await f.confirm(staged);
+    await f.age(); await f.stepUp(); const staged = f.parse(await f.begin()); await f.confirm(staged);
     const record = await f.identity(); assert.equal(record.recoveryPrevious.version, 'legacy'); assert.equal(record.recoveryKeyKid, undefined);
     assert.equal((await f.owner()).recovery.pendingReissue.previousFileCanCancel, false);
     await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, { origin: ORIGIN, remoteIP: '127.0.0.1' }), { code: 'recovery_reissue_not_pending' });
@@ -95,7 +95,7 @@ test('a stored v1/v2 credential recovers nothing, cannot cancel, and the console
 });
 
 test('reissue never cancels the old file before acknowledgement: staged, abandoned or expired, the old file keeps full authority', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   const staged = f.parse(await f.begin()), base = { origin: ORIGIN, remoteIP: '127.0.0.1' };
   // Staged but not confirmed: the old file is current (it can authorize a transfer check and recover); the new one is not.
   assert.equal(recoveryCredential(await f.identity()).fileId, f.file.fileId);
@@ -104,7 +104,7 @@ test('reissue never cancels the old file before acknowledgement: staged, abandon
   await assert.rejects(f.confirm(staged), { code: 'recovery_reissue_expired' });
   assert.equal(recoveryCredential(await f.identity()).fileId, f.file.fileId, 'expiry of the staging leaves the old file current');
   // Confirmation is the only event that makes a new file current: it needs the staged token AND its file id.
-  await f.stepUp('password'); const second = f.parse(await f.begin());
+  await f.stepUp(); const second = f.parse(await f.begin());
   await assert.rejects(f.service.reissueRecoveryConfirm({ recoveryToken: second.recoveryToken, downloadConfirmed: true }, f.ctx), { code: 'recovery_confirmation_required' });
   assert.equal(recoveryCredential(await f.identity()).fileId, f.file.fileId);
   const recovered = await f.service.recover({ recoveryToken: f.file.recoveryToken, turnstileToken: 'ok' }, base);
@@ -112,17 +112,27 @@ test('reissue never cancels the old file before acknowledgement: staged, abandon
 });
 
 test('7-day gap after a reissue: no file starts a recovery; the previous v3 file can only cancel; after the gap the new file recovers', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   const staged = f.parse(await f.begin()); const done = await f.confirm(staged);
   assert.equal(done.usableAt, f.now() + 7 * DAY);
   await assert.rejects(f.recover(staged), { code: 'recovery_not_ready' });
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_pending' });
-  // A password-authorized reissue (no passkey) stays cancellable by the previous file (isolated rule, see fileProofReissue).
+  // A reissue confirmed with a passkey that is not file-proof (enrolled no earlier than the previous file was issued)
+  // stays cancellable by the previous file (see fileProofReissue).
   const cancelled = await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, { origin: ORIGIN, remoteIP: '127.0.0.1' });
   assert.deepEqual(cancelled, { cancelled: true, restored: true });
   const record = await f.identity(); assert.equal(record.recoveryFileId, f.file.fileId); assert.equal(record.recoveryBackupVersion, 3);
   await assert.rejects(f.recover(staged), { code: 'unauthorized' }, 'the voided file never becomes current');
   assert.ok(await f.recover(f.file), 'the restored file recovers at once');
+});
+
+test('a reissue confirmed with a file-proof passkey (enrolled before the previous file, no recent channel removal) cannot be cancelled by that file', async t => {
+  const f = await reissueFixture(t); await f.age();
+  await f.patch(a => ({ ...a, credentials: a.credentials.map(c => ({ ...c, createdAt: a.recoveryIssuedAt - DAY })) })); await f.stepUp();
+  const staged = f.parse(await f.begin()); await f.confirm(staged);
+  assert.equal((await f.identity()).recoveryPrevious.fileLocked, true); assert.equal((await f.owner()).recovery.pendingReissue.previousFileCanCancel, false);
+  await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, { origin: ORIGIN, remoteIP: '127.0.0.1' }), { code: 'reissue_cancel_not_allowed' });
+  await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_locked' });
 });
 
 test('the annual reminder schedule: upcoming 30 days before the anniversary, due on it, then overdue every 30 days (pure)', async () => {
@@ -163,7 +173,7 @@ test('sendRecoveryReminder: once per slot of the current file, by email and push
   f.advance(10 * DAY); assert.equal((await f.service.sendRecoveryReminder(f.id)).sent, false);
   assert.equal(reminders().length, 3);
   // A pending replacement suppresses reminders; the new file restarts the schedule.
-  const ctx = await f.secondSession(); await f.age(); await f.stepUp('password', ctx); const staged = f.parse(await f.begin(undefined, ctx)); await f.confirm(staged, {}, ctx);
+  const ctx = await f.secondSession(); await f.age(); await f.stepUp('passkey', ctx); const staged = f.parse(await f.begin(undefined, ctx)); await f.confirm(staged, {}, ctx);
   assert.equal((await f.service.sendRecoveryReminder(f.id)).sent, false); assert.equal((await f.owner(ctx)).recovery.reminder, null);
   f.advance(RECOVERY_REISSUE_WINDOW_MS);
   const fresh = await f.service.sendRecoveryReminder(f.id); assert.equal(fresh.sent, false); assert.equal(fresh.nextAt, f.now() - RECOVERY_REISSUE_WINDOW_MS + 335 * DAY);
@@ -178,7 +188,7 @@ test('check-up by file id: the console\'s current id matches the saved file\'s h
   const file = await encrypt(f.file.payload), view = (await f.owner()).recovery;
   assert.equal(inspectRecoveryFile(JSON.stringify(file)).fileId, view.fileId);
   assert.equal((await decryptRecoveryFile(file, ANSWERS, fast)).fileId, view.fileId);
-  await f.age(); await f.stepUp('password'); const staged = f.parse(await f.begin()); await f.confirm(staged);
+  await f.age(); await f.stepUp(); const staged = f.parse(await f.begin()); await f.confirm(staged);
   const during = (await f.owner()).recovery;
   assert.equal(during.fileId, staged.fileId); assert.equal(during.pendingReissue.previousFileId, f.file.fileId);
   assert.notEqual(inspectRecoveryFile(JSON.stringify(file)).fileId, during.fileId, 'the old file is not current any more');

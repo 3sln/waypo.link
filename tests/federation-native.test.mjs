@@ -7,6 +7,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createNodeServer} from '../apps/node/server.mjs';
 import {federationAuthority} from '../packages/runtime/federation.mjs';
 import {PREFERENCES,PROFILE} from '../packages/federation/index.mjs';
+import {softAuthenticator,registerPending} from './helpers/soft-passkey.mjs';
 const origin='http://localhost:8788',clientOrigin='https://bindle-client.example',clientId=clientOrigin+'/client',redirectUri=clientOrigin+'/callback',fragment='https://schema.example/sync/v1',contract='https://3sln.me/artefacts/contracts/object-storage/v1';
 const secondOrigin='https://other-client.example',secondId=secondOrigin+'/client',secondRedirect=secondOrigin+'/callback';
 const clients=[{id:clientId,name:'Independent sync app',origin:clientOrigin,redirectUris:[redirectUri]},{id:secondId,name:'Second sync app',origin:secondOrigin,redirectUris:[secondRedirect]}];
@@ -16,7 +17,7 @@ async function fixture(t){
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const request=(path,{method='GET',data,cookie,csrf,bearer,appOrigin}={})=>app.fetch(new Request(origin+path,{method,headers:{Origin:appOrigin??origin,...data!==undefined?{'Content-Type':'application/json'}:{},...cookie?{Cookie:cookie}:{},...csrf?{'X-CSRF-Token':csrf}:{},...bearer?{Authorization:`Bearer ${bearer}`}:{},'CF-Connecting-IP':'198.51.100.17'},...data!==undefined?{body:JSON.stringify(data)}:{}}));
  const post=(path,data,options={})=>request(path,{...options,method:'POST',data});
- const pending=await(await post('/api/auth/signup',{method:'password',password:'A durable federation test password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+ const pending=await(await post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();await registerPending(softAuthenticator({origin}),async(path,data)=>(await post(path,data)).json(),pending);
  const recovery=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
  const activation=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activation.status,200);const session=await activation.json(),cookie=activation.headers.get('Set-Cookie').split(';')[0],owner={cookie,csrf:session.csrfToken};
  const resourceResponse=await post('/api/resources',{provider:'hosted',name:'My sync files'},owner);assert.equal(resourceResponse.status,200);const resource=await resourceResponse.json(),resourceURI=`${origin}/entities/${session.account.id}/resources/${resource.id}`;

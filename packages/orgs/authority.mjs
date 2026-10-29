@@ -53,7 +53,7 @@ export function hasPower(actor,power){return Array.isArray(actor?.powers)?actor.
 /** Refuses unless the actor holds one of `powers`. A missing power looks like an unknown entity (uniform 404). */
 export function requirePower(actor,...powers){if(!powers.some(power=>hasPower(actor,power)))fail('not_found','Not found.',404);return actor;}
 /** Fresh-authentication check against the operation's own clock (default 15 minutes, as IdentityService#recent). */
-export function requireFresh(actor,now,windowMs=900000){if(!nonNegative(actor?.authTime)||actor.authTime>now||actor.authTime+windowMs<=now)fail('reauthentication_required','Confirm your password or passkey before continuing.',401);return actor;}
+export function requireFresh(actor,now,windowMs=900000){if(!nonNegative(actor?.authTime)||actor.authTime>now||actor.authTime+windowMs<=now)fail('reauthentication_required','Confirm with your passkey before continuing.',401);return actor;}
 
 /**
  * Powers of `principal` in an organization record (phase A, design §12b.1, §12a): the owner of record holds

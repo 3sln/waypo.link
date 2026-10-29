@@ -1,17 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {launch,baseURL,screenshot} from './browser.mjs';
+import {launch,baseURL,screenshot,passkeyAccount} from './browser.mjs';
 
 // Real Chromium against the local Worker (wrangler.local.jsonc only): tag labels, the account profile (display name and
 // avatar) in Account & security, and a former contact-link URL. Contact links, their public landing, per-link sharing and
 // the disclosure switch were removed in contacts phase 4, so the console offers no link management, composer or delivery.
-const password='Private links browser password 2026!';
 let browser,network=40;
 test.before(async()=>{const url=new URL(baseURL);assert.ok(['localhost','127.0.0.1'].includes(url.hostname),'local Worker required');assert.equal((await (await fetch(`${baseURL}/api/config`)).json()).localDevelopment,true);browser=await launch();});
 test.after(async()=>{await browser?.close();});
 async function context(t){const value=await browser.newContext({viewport:{width:1280,height:900},extraHTTPHeaders:{'CF-Connecting-IP':`198.51.100.${network++}`}});t.after(()=>value.close());const page=await value.newPage();page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',error=>errors.push(error.message));t.after(()=>assert.deepEqual(errors,[],'No browser runtime errors'));await page.route('https://challenges.cloudflare.com/**',route=>route.abort());return {context:value,page};}
 // Account creation through the real identity API in the given cookie jar (no UI under test here).
-async function signup(request){const post=(path,data)=>request.post(baseURL+path,{headers:{Origin:baseURL},data});const start=await post('/api/auth/signup',{method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(start.status(),200,await start.text());const pending=await start.json(),recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json(),active=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(active.status(),200,await active.text());return (await active.json()).account;}
+async function signup(request){return (await passkeyAccount(request)).account;}
 const owner=(page,path,body,method='GET')=>page.evaluate(async({path,body,method})=>{const session=await (await fetch('/api/session')).json(),response=await fetch(path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},...method==='GET'?{}:{body:JSON.stringify(body)}});return {status:response.status,body:await response.json()};},{path,body,method});
 
 test('owner labels a tag and saves the profile; the console offers no contact-link management, sharing or composer',async t=>{

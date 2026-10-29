@@ -1,3 +1,4 @@
+import {legacyEmailView} from './emails.mjs';
 import {revokeAllLineage} from './linked-approval.mjs';
 import {AdminService} from './admin.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
@@ -9,7 +10,8 @@ const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 // (identity portability PORT-2, design §6.5) additionally keeps its `moved` record until `movedUntil`.
 const RETAINED=['id','handle','assignmentId','systemIdentity','onboardingIdentity','createdAt'];
 export const RETAINED_MOVED=Object.freeze([...RETAINED,'moved']);
-export const TOMBSTONE_REASONS=new Set(['inactive','owner','admin-email','admin-underage','admin-closure','moved']);
+// 'password-retired': the password retirement reset (packages/identity/password-retirement.mjs) of a password-only identity.
+export const TOMBSTONE_REASONS=new Set(['inactive','owner','admin-email','admin-underage','admin-closure','moved','password-retired']);
 /** The audit type the transfer-out commit writes on the identity (packages/identity/transfer-out.mjs). */
 export const MOVED_AUDIT='identity-moved';
 /** The deletion reason recorded on an identity tombstone, or null when it carries none. */
@@ -41,11 +43,12 @@ export function lifecycleIdentityPort(repository,{clock=()=>Date.now()}={}){
  return Object.freeze({
   async get(owner){
    if(!uuid(owner))throw new TypeError('Invalid account identifier');const account=await repository.get(owner);if(!account)return null;
-   const email=typeof account.verifiedEmail==='string'&&Number.isSafeInteger(account.emailVerifiedAt)?account.verifiedEmail:null;
+   // The notice address stands for the record's email in this projection (sign-in and intents spike §3.2).
+   const view=legacyEmailView(account),email=view.verifiedEmail;
    // DX-3 adds the canonical handle (typed confirmation), internal provenance (R1-L9), the email sign-in
    // setting (R1-M3) and, once deleted, the reason recorded by the tombstone (restore path, R1-L1).
-   return {status:account.status,assignmentId:account.assignmentId,createdAt:account.createdAt,verifiedEmail:email,emailVerifiedAt:email?account.emailVerifiedAt:null,
-    handle:typeof account.handle==='string'?account.handle:null,systemIdentity:Boolean(account.systemIdentity),emailLoginEnabled:account.emailLoginEnabled===true,
+   return {status:account.status,assignmentId:account.assignmentId,createdAt:account.createdAt,verifiedEmail:email,emailVerifiedAt:email?view.emailVerifiedAt:null,
+    handle:typeof account.handle==='string'?account.handle:null,systemIdentity:Boolean(account.systemIdentity),emailLoginEnabled:view.emailLoginEnabled===true,
     ...account.status==='deleted'?{deletionReason:deletionReason(account)}:{},...account.status==='moved'?{moved:true}:{}};
   },
   /** `reason` names the deletion path: 'inactive' (the lifecycle default, unchanged), or the deletion basis
@@ -64,7 +67,7 @@ export function lifecycleIdentityPort(repository,{clock=()=>Date.now()}={}){
     if(moved&&time(account.movedPurgedAt))return true;
     const now=clock(),next=Object.fromEntries(RETAINED.filter(key=>account[key]!==undefined).map(key=>[key,structuredClone(account[key])]));
     revokeAllLineage(account,now);if(account.lineageOutbox?.length)next.lineageOutbox=account.lineageOutbox;
-    Object.assign(next,{status:'deleted',deletedAt:now,revision:account.revision+1,sessions:[],credentials:[],challenges:[],emailChallenges:[],passwordHash:null,recoveryHash:null,audit:[{event:`account-deleted-${reason}`,at:now}]});
+    Object.assign(next,{status:'deleted',deletedAt:now,revision:account.revision+1,sessions:[],credentials:[],challenges:[],emailChallenges:[],recoveryHash:null,audit:[{event:`account-deleted-${reason}`,at:now}]});
     if(moved){const kept=retainedMoved(account.moved,now);next.movedPurgedAt=now;if(kept){next.status='moved';next.moved=kept;}else{const marker=plain(account.moved)&&account.moved.ended===true?account.moved.settlement:settlementMarker(account.moved,now);if(marker)next.movedSettlement=structuredClone(marker);}}
     if(await repository.compareAndSwap(owner,account.revision,next))return true;
    }

@@ -19,14 +19,14 @@ import {jwkThumbprint} from '../packages/identity/delegation.mjs';
 import {digestJSON,versionRecord,parseEnvelope} from '../packages/core/artefacts.mjs';
 import {signMessage} from '../packages/signaling/certificates.mjs';
 import {buildBatch,BATCH_MEDIA_TYPE} from '../packages/signaling/messages.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 import {kindBody,CHAT,SYNC} from './helpers/signaling-fixture.mjs';
 import {federationDeclarations} from '../packages/runtime/federation.mjs';
 import {SIGNALING_EXTENSION,SIGNALING_CONTRACT,ICE_RELAY_CONTRACT} from '../packages/signaling/extension.mjs';
 import {EXT} from '../packages/core/extensions.mjs';
 import {IdentityDirectory} from '../packages/federation/directory.mjs';
 
-const ORIGIN='https://signaling-fed-runtime.example',PEER='https://peer.example',PASSWORD='Signaling federation runtime password, long enough!',APP='https://app.example/client';
+const ORIGIN='https://signaling-fed-runtime.example',PEER='https://peer.example',APP='https://app.example/client';
 const envelope=spec=>({bindle_artefact:1,id:spec.line,kind:'intent',versions:[{version:1,prev:null,body:kindBody(spec)}]});
 const KINDS=[{line:CHAT,parties:'any'},{line:SYNC,parties:'self'}],ENVELOPES=Object.fromEntries(KINDS.flatMap(k=>{const e=envelope(k);return [[k.line,e],[k.line+'/envelope',e]];}));
 const REF=Object.fromEntries(await Promise.all(KINDS.map(async k=>{const e=ENVELOPES[k.line];return [k.line,{artefact:k.line,version:1,digest:await digestJSON(versionRecord(parseEnvelope(e,{id:k.line}),e.versions[0]))}];})));
@@ -39,10 +39,11 @@ async function runtime(t,flags){
  const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',SIGNALING_EGRESS,SIGNALING_FOREIGN_ISSUERS:JSON.stringify([PEER])}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const env={...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts},base={origin:ORIGIN,remoteIP:'127.0.0.1'};
  const person=async()=>{
-  const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']},owner={kind:'owner',owner:id,parties:[APP]};

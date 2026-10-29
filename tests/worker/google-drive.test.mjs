@@ -37,7 +37,7 @@ test('actual Worker Drive callback is an inert public redirect with bounded para
 test('actual Worker Drive denial is session-bound, consumes matching state and performs no provider exchange',async t=>{
  const h=await createHarness({bindings:{GOOGLE_CLIENT_ID:'dummy-client',GOOGLE_CLIENT_SECRET:'dummy-secret'}});t.after(()=>h.close());const {headers,owner}=await signed(h);
  const pending=await read(await h.request(start,{method:'POST',headers,value:{name:'Denied Drive'}})),state=new URL(pending.authorizationUrl).searchParams.get('state');
- const login=await h.request('/api/auth/login/password',{method:'POST',headers:{Origin:h.origin},value:{handle:owner.account.handle,password:'isolated test account password',turnstileToken:'local-browser-test-token'}}),second=await read(login),otherHeaders={Origin:h.origin,Cookie:login.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':second.csrfToken};
+ const login=await h.passkeyLogin(owner.account.handle),second=await read(login),otherHeaders={Origin:h.origin,Cookie:login.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':second.csrfToken};
  assert.equal((await read(await h.request(complete,{method:'POST',headers:otherHeaders,value:{state,error:'access_denied'}}),409)).error,'oauth_expired');
  assert.equal((await read(await h.request(complete,{method:'POST',headers,value:{state:'wrong',error:'access_denied'}}),403)).error,'oauth_state');
  assert.equal((await read(await h.request(complete,{method:'POST',headers,value:{state,error:'access_denied'}}),400)).error,'oauth_denied');

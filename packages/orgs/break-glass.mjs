@@ -648,7 +648,7 @@ export class BreakGlassService extends OwnershipService{
   */
  breakGlassAbort(actor,input){return this.onClaim(actor,input,[],async(r,c,v,now,tx)=>{
   if(!isOpen(c)||!samePrincipal(actor.principal,c.owner))fail('not_found','Not found.',404);
-  const tier=this.ownerTier(r,c,actor,now);if(tier===null)fail('owner_proof_required','Confirm with a passkey or password you had before this claim began.',401);
+  const tier=this.ownerTier(r,c,actor,now);if(tier===null)fail('owner_proof_required','Confirm with a passkey you had before this claim began.',401);
   await this.ownerStop(tx,r,c,tier,now,actor,{channel:null});return {claim:await this.claimView(r,c,actor,now),tier};
  });}
  /**
@@ -684,7 +684,7 @@ export class BreakGlassService extends OwnershipService{
   return this.act(actor,{},[],async(r,_,now,tx)=>{
    const k=r.breakGlassContest;if(!k||k.claim!==v.claim||!this.contestActive(r,now)||!samePrincipal(actor.principal,k.formerOwner))fail('not_found','Not found.',404);
    const c=await tx.get(CLAIM+k.claim);if(!c||c.state!=='effective')fail('not_found','Not found.',404);
-   if(this.ownerTier(r,c,actor,now)!==1)fail('tight_verification_required','Confirm with a passkey or password enrolled at least 7 days before the claim began.',401);
+   if(this.ownerTier(r,c,actor,now)!==1)fail('tight_verification_required','Confirm with a passkey enrolled at least 7 days before the claim began.',401);
    if(k.state==='open')return {contest:{state:'open'}};
    k.state='open';k.openedAt=now;c.contest={openedAt:now,state:'open',...typeof v.reason==='string'?{reasonDigest:await hex(v.reason.slice(0,2000))}:{}};
    await this.move(tx,r,c,'contest',now,actor);await this.notify(tx,r,c,'contest',now,{owner:false,parties:[k.formerOwner]});return {contest:{state:'open'}};

@@ -1,21 +1,23 @@
-// PORT-6: password enrollment for an arriving person. The destination package stays in request memory until
+// PORT-6: passkey enrollment for an arriving person (password enrollment was removed with passwords, owner approval
+// 2026-10-28). The destination package stays in request memory until
 // server-side CAPTCHA, signup admission, age/terms and possession of a new credential have all succeeded.
 // The receipt authenticates only the move flow; it is never a general account session or recovery credential.
+import {migrateEmails} from './emails.mjs';
 import {Action} from '../../vendor/ngin/src/index.js';
 import {IdentityFault} from './service.mjs';
 import {secureEqual} from './crypto.mjs';
 const fail=(code,message,status=400)=>{throw Object.assign(new IdentityFault(code,message),{status});};
 const RECEIPT_TTL=45*86400000;
 const canonical=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
-const fields=new Set(['package','source','method','password','turnstileToken','termsAccepted','termsVersion','ageConfirmed','unattestedConfirmed']);
-// Passkey enrollment (feature 4, provisional): phase 1 (`passkey-options`) passes the same gates as a password start
+
+// Passkey enrollment (feature 4, provisional): phase 1 (`passkey-options`) passes the sign-up gates
 // (CAPTCHA, terms, age, source check, admission) and reserves, then stores a WebAuthn challenge on the reserved
 // pending-transfer row under a hashed single-use ticket; phase 2 (`start` with method `passkey`) verifies the signup
 // ceremony's registration (origin, RP ID, user verification, through the identity service's own WebAuthn adapter)
 // against that challenge and only then issues the move receipt. The challenge is bound to the reserved `sub`, the
 // reservation, the package hash and the source, and is cleared on use, so a replay fails. A lost reply resumes with a
-// passkey assertion instead of the password check.
-const passkeyFields=new Set([...fields].filter(name=>name!=='password'));
+// passkey assertion.
+const passkeyFields=new Set(['package','source','method','turnstileToken','termsAccepted','termsVersion','ageConfirmed','unattestedConfirmed']);
 const startPasskeyFields=new Set(['package','source','method','passkeyTicket','response','label']);
 const PASSKEY_TTL=300000;
 const label=value=>typeof value==='string'&&value.trim()&&value.length<=80&&!/[\u0000-\u001f\u007f]/.test(value)?value.trim():'Passkey';
@@ -24,43 +26,8 @@ export class TransferEnrollment {
  async start(input,context){
   const s=this.identity,p=this.ports;
   if(input&&typeof input==='object'&&!Array.isArray(input)&&input.method==='passkey')return this.passkeyStart(input,context);
-  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!fields.has(key)))fail('invalid_request','Check the move request.');
-  if(input.method!=='password'||typeof input.password!=='string'||input.password.length<12||input.password.length>1024)fail('invalid_password','Choose a password of 12–1024 characters.');
-  await s.guard('signup',input,context);
-  if(input.termsAccepted!==true||input.termsVersion!==s.config.termsVersion)fail('terms_required','Agree to the current account terms.');
-  const age=s.ageAttestation(input,context);let pkg;try{pkg=typeof input.package==='string'?JSON.parse(input.package):input.package;}catch{fail('package_invalid','This identity package cannot be used.');}
-  const packageHash=await s.crypto.hash('transfer-package',canonical(pkg)),source=input.source??'package';
-  // A fresh CAPTCHA and the enrolled credential recover a lost HTTP reply. Never depend on the old provider
-  // still listing the package key: it may already have committed its side of this very move.
-  const prior=typeof pkg?.sub==='string'&&/^[a-f0-9-]{36}$/.test(pkg.sub)?await s.repository.get(pkg.sub):null;
-  if(prior?.transferEnrollment){
-   const receipt=prior.transferEnrollment;
-   if(prior.id!==pkg.sub||!['pending-transfer','active'].includes(prior.status)||receipt.reservation!==prior.transferIn?.reservation||receipt.packageHash!==packageHash||receipt.source!==source||!prior.passwordHash||!await s.passwordHasher.verify(input.password,prior.passwordHash))fail('intake_conflict','This identity is already being enrolled.',409);
-   const revision=prior.revision,transferToken=prior.id+'.'+s.crypto.random();
-   prior.transferEnrollment={...receipt,hash:await s.crypto.hash('transfer-enrollment',transferToken),expiresAt:s.clock()+RECEIPT_TTL};s.audit(prior,'transfer-in-enrollment-resumed');await s.save(prior,revision);
-   try{await s.requireSetupChannel(prior);}catch(error){if(error.code==='contact_required')return {transferToken,owner:prior.id,transfer:{state:'enrolled'},contactRequired:true,resumed:true};throw error;}
-   // Retrying begin is idempotent in PORT-4, including after the source has moved.
-   let transfer;try{transfer=await p.begin(prior.id,{package:input.package,source});}catch(error){return {transferToken,owner:prior.id,transfer:{state:'enrolled'},retry:true,resumed:true,error:typeof error?.code==='string'?error.code:'temporarily_unavailable'};}
-   return {transferToken,owner:prior.id,transfer,resumed:true};
-  }
-  const facts=await p.check({package:input.package,source});
-  if(facts.kind!=='person')fail('not_found','Not found.',404);
-  if(facts.mode==='unattested'&&input.unattestedConfirmed!==true)fail('unattested_confirmation_required','Confirm moving without confirmation from the old provider.');
-  const passwordHash=await s.passwordHasher.hash(input.password);
-  if(!await s.passwordHasher.verify(input.password,passwordHash))fail('credential_required','Verify the new credential.');
-  if(!await s.rateLimiter.check({phase:'admitted',operation:'signup',signupKind:'free',remoteIP:context.remoteIP,region:context.region,admissionId:facts.sub}))fail('rate_limited','Account creation is limited. Try again later.',429);
-  const reserved=await p.reserve({package:input.package,source:input.source??'package'}),account=await s.repository.get(reserved.sub);
-  if(!account||account.status!=='pending-transfer'||account.transferIn?.reservation!==reserved.reservation||account.passwordHash||account.credentials?.length||account.transferEnrollment)fail('intake_conflict','This identity is already being enrolled.',409);
-  const revision=account.revision,transferToken=account.id+'.'+s.crypto.random();
-  // An abandoned passkey ceremony on this reservation (no credential yet) gives way to the password.
-  delete account.transferPasskey;
-  Object.assign(account,{passwordHash,passwordSetAt:s.clock(),termsVersion:s.config.termsVersion,termsAcceptedAt:s.clock(),...age,
-   transferEnrollment:{hash:await s.crypto.hash('transfer-enrollment',transferToken),expiresAt:s.clock()+RECEIPT_TTL,reservation:reserved.reservation,packageHash,source}});
-  s.audit(account,'transfer-in-enrolled');await s.save(account,revision);
-  // Do not hide a retryable import error: the owner keeps the restricted receipt and can retry with the same package.
-  if(s.config.requireReachability===true)return {transferToken,owner:account.id,transfer:{state:'enrolled'},contactRequired:true};
-  let transfer;try{transfer=await p.begin(account.id,{package:input.package,source:input.source??'package'});}catch(error){return {transferToken,owner:account.id,transfer:{state:'enrolled'},retry:true,error:typeof error?.code==='string'?error.code:'temporarily_unavailable'};}
-  return {transferToken,owner:account.id,transfer};
+  // Passwords were dropped (owner approval 2026-10-28; sign-in and intents spike §6.3): a move enrolls with a passkey.
+  fail('invalid_method','Move your identity with a passkey.');
  }
  /** Phase 1 of passkey enrollment. A new identity gets registration options; an identity already enrolled with a
   * passkey (a lost reply) gets authentication options to resume. Either way the challenge is stored server-side
@@ -89,11 +56,11 @@ export class TransferEnrollment {
   if(facts.kind!=='person')fail('not_found','Not found.',404);
   if(facts.mode==='unattested'&&input.unattestedConfirmed!==true)fail('unattested_confirmation_required','Confirm moving without confirmation from the old provider.');
   const pending=prior?.transferPasskey;let account;
-  if(pending&&prior.id===pkg.sub&&prior.status==='pending-transfer'&&!prior.passwordHash&&!prior.credentials?.length&&pending.reservation===prior.transferIn?.reservation&&pending.packageHash===packageHash&&pending.source===source)account=prior;
+  if(pending&&prior.id===pkg.sub&&prior.status==='pending-transfer'&&!prior.credentials?.length&&pending.reservation===prior.transferIn?.reservation&&pending.packageHash===packageHash&&pending.source===source)account=prior;
   else {
    if(!await s.rateLimiter.check({phase:'admitted',operation:'signup',signupKind:'free',remoteIP:context.remoteIP,region:context.region,admissionId:facts.sub}))fail('rate_limited','Account creation is limited. Try again later.',429);
    const reserved=await p.reserve({package:input.package,source});account=await s.repository.get(reserved.sub);
-   if(!account||account.id!==reserved.sub||account.status!=='pending-transfer'||account.transferIn?.reservation!==reserved.reservation||account.passwordHash||account.credentials?.length||account.transferEnrollment||account.transferPasskey&&(account.transferPasskey.packageHash!==packageHash||account.transferPasskey.source!==source))fail('intake_conflict','This identity is already being enrolled.',409);
+   if(!account||account.id!==reserved.sub||account.status!=='pending-transfer'||account.transferIn?.reservation!==reserved.reservation||account.credentials?.length||account.transferEnrollment||account.transferPasskey&&(account.transferPasskey.packageHash!==packageHash||account.transferPasskey.source!==source))fail('intake_conflict','This identity is already being enrolled.',409);
   }
   const revision=account.revision,ticket=account.id+'.'+s.crypto.random();
   const registrationOptions=await s.webauthn.registrationOptions({account:{id:account.id,handle:account.handle??account.id,credentials:[]},config:s.config});
@@ -102,7 +69,7 @@ export class TransferEnrollment {
   return {passkeyTicket:ticket,registrationOptions};
  }
  /** Phase 2: verifies the registration (or, on resume, the assertion) against the challenge stored for this exact
-  * identity, reservation, package and source, then continues exactly as the password path does. */
+  * identity, reservation, package and source, then issues the move receipt. */
  async passkeyStart(input,context){
   const s=this.identity;s.origin(context);
   if(Object.keys(input).some(key=>!startPasskeyFields.has(key))||typeof input.passkeyTicket!=='string'||input.passkeyTicket.length>512||!input.response||typeof input.response!=='object'||Array.isArray(input.response))fail('invalid_request','Check the move request.');
@@ -124,7 +91,7 @@ export class TransferEnrollment {
    return this.proceed(account,input,transferToken,true);
   }
   const c=account.transferPasskey;
-  if(!c||typeof c.value!=='string'||c.expiresAt<=now||!secureEqual(c.hash,ticketHash)||account.status!=='pending-transfer'||c.reservation!==account.transferIn?.reservation||c.packageHash!==packageHash||c.source!==source||account.passwordHash||account.credentials?.length)fail('invalid_challenge','Start the passkey step again.');
+  if(!c||typeof c.value!=='string'||c.expiresAt<=now||!secureEqual(c.hash,ticketHash)||account.status!=='pending-transfer'||c.reservation!==account.transferIn?.reservation||c.packageHash!==packageHash||c.source!==source||account.credentials?.length)fail('invalid_challenge','Start the passkey step again.');
   let credential=null;try{credential=await s.webauthn.verifyRegistration({response:input.response,challenge:c.value,config:s.config});}catch{credential=null;}
   // The challenge is single use: a failure spends it but keeps the reservation binding, so phase 1 can issue a fresh
   // one without spending admission again.
@@ -169,7 +136,7 @@ export class TransferEnrollment {
   if(account.status!=='pending-transfer'||!c||c.expiresAt<=s.clock()||c.attempts>=5||typeof input.code!=='string'||!/^\d{8}$/.test(input.code))fail('invalid_challenge','Request a fresh email code.');
   c.attempts++;if(!secureEqual(c.hash,await s.crypto.hash('transfer-email',owner+'|'+c.email+'|'+input.code))){await s.save(account,revision);fail('invalid_challenge','That email code is incorrect.');}
   const existing=await s.repository.findByEmail(c.email);if(existing&&existing.id!==owner)fail('email_already_linked','Use another contact address.');
-  account.verifiedEmail=c.email;account.emailVerifiedAt=s.clock();account.emailLoginEnabled=false;delete account.transferEnrollment.emailChallenge;await s.save(account,revision);return {verified:true,retry:true};
+  migrateEmails(account,s.clock());{const now=s.clock(),entries=(account.emails??[]).filter(entry=>entry.address!==c.email&&entry.state!=='unverified');for(const entry of entries)entry.notices=false;account.emails=[...entries,{address:c.email,state:'verified',verifiedAt:now,notices:true,source:'transfer',addedBy:{session:'setup',at:now}}].slice(-3);}delete account.transferEnrollment.emailChallenge;await s.save(account,revision);return {verified:true,retry:true};
  }
  async run(method,input,context){
   if(method==='start')return this.start(input,context);
@@ -184,7 +151,7 @@ export class TransferEnrollment {
   fail('not_found','Not found.',404);
  }
 }
-// Existing identity-engine composition supplies the actual identity service (including Turnstile and Argon2).
+// Existing identity-engine composition supplies the actual identity service (including Turnstile and WebAuthn).
 // `ports` is supplied only by the runtime, never selected or deserialized from a request body.
 export class TransferEnrollmentAction extends Action {
  static deps=['identity'];

@@ -1,17 +1,18 @@
 // Identity core regressions from the 2026-10-23 red-team review (wargame 2), engine level. Federation findings are in
 // tests/federation-wargame2.test.mjs and the admin console / boot findings in tests/boot-admin.test.mjs.
-//   #1  a stolen password must not become a permanent takeover through reissue + recover (cooling-off window)
+//   #1  a stolen session must not become a permanent takeover through reissue + recover (cooling-off window); passwords
+//       were dropped (owner approval 2026-10-28), so the former password branch is the non-file-proof passkey branch
 //   #3  CAPTCHA-less traffic must not lock a handle out of sign-in
 //   #7  email sign-in start: per-mailbox and global windows
 //   #8  email sign-in start: no account-existence timing oracle
 //   #9  passkey begin: opaque token, no state, no eviction; single-use finish
-//   #11 pending password: budgeted before any KDF work
+//   #11 pending password: removed with passwords (2026-10-28); the action no longer exists
 //   P15 churn: recovery downloads are budgeted
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { identityEngine, activate, signupInput, context, PASSWORD, fakeHasher, sessionContext } from './helpers/identity-engine.mjs';
-import { reissueFixture, DAY, MINUTE } from './helpers/recovery-reissue.mjs';
+import { identityEngine, activate, signupInput, context, fakeHasher, sessionContext, signInPasskey, passkeyResponse } from './helpers/identity-engine.mjs';
+import { reissueFixture, DAY, MINUTE, PASSKEY } from './helpers/recovery-reissue.mjs';
 import { limit } from '../packages/runtime/routes/shared.mjs';
 import { federationEpoch } from '../packages/runtime/federation.mjs';
 import { RECOVERY_REISSUE_WINDOW_MS } from '../packages/identity/service.mjs';
@@ -28,20 +29,26 @@ function realLimiter() {
 
 // ---- #1 reissue takeover ---------------------------------------------------------------------------------------
 
-test('#1(a): with a passkey enrolled, a password step-up (however old the password) never reissues the recovery file', async t => {
-  const f = await reissueFixture(t);
-  await f.patch(a => ({ ...a, passwordSetAt: f.now() - 60 * DAY, credentials: [{ id: 'owner-passkey', publicKey: 'pk', counter: 0, label: 'Owner phone', createdAt: f.now() - 30 * DAY }] }));
-  const attacker = await f.secondSession(); await f.stepUp('password', attacker);
+/** White-box: `account` with `address` as its only (verified, notice) email, verified at `at` (emails model, 2026-10-28). */
+const onlyEmail = (account, address, at) => { const { verifiedEmail, emailVerifiedAt, emailLoginEnabled, ...rest } = account; return { ...rest, emails: [{ address, state: 'verified', verifiedAt: at, notices: true, source: 'linked', addedBy: { session: 'passkey', at } }] }; };
+/** EMAIL_REMOVAL_ENABLED on, so a session with a fresh step-up can remove an address (the only way to replace one now). */
+const removalOn = f => { f.service.flags = { for: () => ({ enabled: name => name === 'EMAIL_REMOVAL_ENABLED' }) }; };
+/** Adds `email` from `ctx` (link mailed in the background) and confirms it. */
+async function addEmail(f, sent, email, ctx) { await f.service.emailStart({ email }, ctx); await f.service.settleBackground(); await f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, ctx); }
+
+test('#1(a): a password step-up is refused, and a session without a passkey step-up never reissues the recovery file', async t => {
+  const f = await reissueFixture(t); await f.age();
+  const attacker = await f.secondSession(); await assert.rejects(f.stepUp('password', attacker), { code: 'invalid_method' });
   await assert.rejects(f.begin({ acknowledged: true }, attacker), { code: 'reauthentication_required', message: /passkey/ });
   const record = await f.identity(); assert.equal(record.recoveryStaged, undefined); assert.equal(record.recoveryHash, (await f.identityBefore()).recoveryHash);
   await assert.doesNotReject(f.recover(f.file), 'the owner file still restores');
 });
 
-test('#1(b)-(d): a password-only reissue cannot recover for 7 days; the owner\'s file cannot recover either but cancels it, which restores the file, voids the new one, rotates its key and revokes grants', async t => {
+test('#1(b)-(d): a reissue that is not file-proof (its passkey is no older than the file) cannot recover for 7 days; the owner\'s file cannot recover either but cancels it, which restores the file, voids the new one, rotates its key and revokes grants', async t => {
   const f = await reissueFixture(t); await f.age();
   const e0 = await federationEpoch(await f.identity());
-  // Attacker: a stuffed password only (no passkey on this account). Reissue and confirm.
-  const attacker = await f.secondSession(); await f.stepUp('password', attacker);
+  // Attacker: a session with a passkey step-up whose passkey is not older than the file (not file-proof). Reissue and confirm.
+  const attacker = await f.secondSession(); await f.stepUp('passkey', attacker);
   const staged = f.parse(await f.begin({ acknowledged: true }, attacker)); const done = await f.confirm(staged, {}, attacker);
   assert.equal(done.usableAt, f.now() + RECOVERY_REISSUE_WINDOW_MS);
   const e1 = await federationEpoch(await f.identity()); assert.notEqual(e1, e0);
@@ -65,7 +72,7 @@ test('#1(b)-(d): a password-only reissue cannot recover for 7 days; the owner\'s
 
 test('#1(c): cancel from a session that predates the reissue, or with the emailed link; a session created after it began cannot', async t => {
   const f = await reissueFixture(t); await f.age(); f.advance(MINUTE);
-  const attacker = await f.secondSession(); await f.stepUp('password', attacker);
+  const attacker = await f.secondSession(); await f.stepUp('passkey', attacker);
   const staged = f.parse(await f.begin({ acknowledged: true }, attacker));
   f.advance(MINUTE); const late = await f.secondSession();
   await f.confirm(staged, {}, attacker);
@@ -76,7 +83,7 @@ test('#1(c): cancel from a session that predates the reissue, or with the emaile
   await assert.rejects(f.recover(staged), { code: 'unauthorized' });
 
   const g = await reissueFixture(t); await g.age();
-  const thief = await g.secondSession(); await g.stepUp('password', thief);
+  const thief = await g.secondSession(); await g.stepUp('passkey', thief);
   await g.confirm(g.parse(await g.begin({ acknowledged: true }, thief)), {}, thief);
   const notice = g.mail.find(m => m.type === 'recovery-reissued'); assert.ok(notice.cancelToken, 'the pre-existing email gets the cancel link');
   const base = { origin: g.ctx.origin, remoteIP: '127.0.0.1' };
@@ -88,17 +95,17 @@ test('#1(c): cancel from a session that predates the reissue, or with the emaile
 
   // An email verified after the reissue began receives no cancel capability.
   const h = await reissueFixture(t); await h.age();
-  const other = await h.secondSession(); await h.stepUp('password', other);
+  const other = await h.secondSession(); await h.stepUp('passkey', other);
   const s = h.parse(await h.begin({ acknowledged: true }, other));
-  await h.patch(a => ({ ...a, verifiedEmail: 'attacker@reissue.example', emailVerifiedAt: h.now() }));
+  await h.patch(a => onlyEmail(a, 'attacker@reissue.example', h.now()));
   await h.confirm(s, {}, other);
   assert.equal(h.mail.find(m => m.type === 'recovery-reissued').cancelToken, undefined);
 });
 
 test('#1: after the window the new file recovers and the previous one is gone; a second reissue waits for the window', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   const staged = f.parse(await f.begin()); await f.confirm(staged);
-  await f.stepUp('password'); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
+  await f.stepUp(); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
   f.advance(RECOVERY_REISSUE_WINDOW_MS);
   await assert.rejects(f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken, turnstileToken: 'ok' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' }), { code: 'recovery_reissue_not_pending' });
   await assert.rejects(f.recover(f.file), { code: 'unauthorized' });
@@ -117,30 +124,26 @@ test('#1(c): the emailed cancel page changes nothing on GET, keeps the capabilit
 
 // ---- #3 handle lockout -------------------------------------------------------------------------------------------
 
-test('#3: CAPTCHA-less attempts never touch the handle window; only completed failed checks count, and they still cap guessing', async () => {
-  let enforce = false, kdf = 0; const limiter = realLimiter();
-  const passwordHasher = { ...fakeHasher, verify: async (value, encoded) => { kdf++; return fakeHasher.verify(value, encoded); } };
-  const f = identityEngine({ passwordHasher, rateLimiter: { check: input => enforce ? limiter.check(input) : true } });
-  await activate(f.act, signupInput({ handle: 'victim' })); enforce = true; kdf = 0;
+test('#3: CAPTCHA-less attempts never touch the handle window; owner sign-ins never consume it; the password sign-in is gone', async () => {
+  // Passwords were dropped (2026-10-28): the wrong-password KDF budget this test measured has no analogue; the
+  // CAPTCHA and handle-window properties are kept for passkey sign-in.
+  let enforce = false; const limiter = realLimiter();
+  const f = identityEngine({ rateLimiter: { check: input => enforce ? limiter.check(input) : true } });
+  await activate(f.act, signupInput({ handle: 'victim' })); enforce = true;
   const ip = n => ({ ...context, remoteIP: `198.51.${100 + (n >> 8)}.${n & 255}` });
-  for (let i = 0; i < 40; i++) await assert.rejects(f.act('loginPassword', { handle: 'victim', password: 'x'.repeat(20), turnstileToken: 'bogus' }, ip(i)), { code: 'challenge_failed' });
+  await assert.rejects(f.act('loginPassword', { handle: 'victim', password: 'x'.repeat(20), turnstileToken: 'verified' }, ip(0)), TypeError, 'no password sign-in action');
   for (let i = 0; i < 40; i++) await assert.rejects(f.act('beginPasskeyLogin', { handle: 'victim', turnstileToken: 'bogus' }, ip(100 + i)), { code: 'challenge_failed' });
-  assert.equal(kdf, 0);
   // The owner's own successful sign-ins never consume it either.
-  for (let i = 0; i < 25; i++) assert.ok((await f.act('loginPassword', { handle: 'victim', password: PASSWORD, turnstileToken: 'verified' }, ip(200 + i))).sessionToken);
+  for (let i = 0; i < 25; i++) assert.ok((await signInPasskey(f.act, 'victim', 'passkey-victim', ip(200 + i))).sessionToken);
   // Passkey begin is exempt from the handle window.
   for (let i = 0; i < 25; i++) assert.ok((await f.act('beginPasskeyLogin', { handle: 'victim', turnstileToken: 'verified' }, ip(300 + i))).challengeToken);
-  // Solved CAPTCHAs with wrong passwords: 20 completed failures per 5 minutes, then refused before the KDF.
-  kdf = 0; let refused = 0;
-  for (let i = 0; i < 30; i++) await f.act('loginPassword', { handle: 'victim', password: 'y'.repeat(20), turnstileToken: 'verified' }, ip(400 + i)).catch(error => { if (error.code === 'rate_limited') refused++; else assert.equal(error.code, 'unauthorized'); });
-  assert.equal(kdf, 20); assert.equal(refused, 10);
 });
 
 // ---- #7, #8 email sign-in start ----------------------------------------------------------------------------------
 
 async function emailLogin(f) {
   const { ownerContext } = await activate(f.act);
-  await f.act('emailStart', { email: 'victim@mail.example' }, ownerContext);
+  await f.act('emailStart', { email: 'victim@mail.example' }, ownerContext); await f.service.settleBackground();
   await f.act('emailConfirm', { token: f.mail.at(-1).token, confirmed: true }, ownerContext);
   await f.act('configureEmailLogin', { enabled: true }, ownerContext);
   f.mail.length = 0; return ownerContext;
@@ -171,7 +174,7 @@ test('#8: email sign-in start takes the same time and never surfaces provider er
   const f = identityEngine({ mailer: { sendVerification: async value => { sent.push(value); await new Promise(resolve => setTimeout(resolve, LATENCY)); if (failing && value.purpose === 'login') throw Object.assign(new Error('provider said: quota for victim@mail.example'), { code: 'E_DAILY_LIMIT_EXCEEDED' }); } } });
   try {
     const { ownerContext } = await activate(f.act);
-    await f.act('emailStart', { email: 'victim@mail.example' }, ownerContext);
+    await f.act('emailStart', { email: 'victim@mail.example' }, ownerContext); await f.service.settleBackground();
     await f.act('emailConfirm', { token: sent.at(-1).token, confirmed: true }, ownerContext);
     await f.act('configureEmailLogin', { enabled: true }, ownerContext);
     const time = async email => { const started = performance.now(); assert.deepEqual(await f.act('emailLoginStart', { email, turnstileToken: 'verified' }), { sent: true }); return performance.now() - started; };
@@ -189,8 +192,10 @@ test('#8: email sign-in start takes the same time and never surfaces provider er
 
 function passkeyEngine() {
   let n = 0;
+  // Activation registers and steps up with the shared fake shape ({id, challenge}); the tests sign with `signed`.
   const webauthn = { registrationOptions: async () => ({ challenge: 'unused' }), authenticationOptions: async () => ({ challenge: `challenge-${n++}-${randomUUID()}` }),
-    verifyAuthentication: async ({ response, challenge }) => { if (response?.signed !== challenge) throw new Error('bad assertion'); return { counter: 0, backedUp: true }; } };
+    verifyRegistration: async ({ response }) => ({ id: response.id, publicKey: 'pk', counter: 0 }),
+    verifyAuthentication: async ({ response, challenge }) => { if ((response?.signed ?? response?.challenge) !== challenge) throw new Error('bad assertion'); return { counter: 0, backedUp: true }; } };
   return identityEngine({ webauthn });
 }
 
@@ -225,41 +230,36 @@ test('#9: passkey begin is opaque and stateless: no account id, no existence or 
 
 // ---- #11 pending password and P15 churn -------------------------------------------------------------------------
 
-test('#11: pending password sets are budgeted before any KDF work: limiter first, then at most 5 per setup token, with no redundant verify', async () => {
-  let kdf = 0, open = true;
+test('#11: pending passwords are gone: the action does not exist and no password is ever hashed during setup', async () => {
+  let kdf = 0;
   const passwordHasher = { dummyHash: fakeHasher.dummyHash, hash: async value => { kdf++; return fakeHasher.hash(value); }, verify: async (value, encoded) => { kdf++; return fakeHasher.verify(value, encoded); } };
-  const f = identityEngine({ passwordHasher, rateLimiter: { check: async () => open } });
-  const pending = await f.act('signup', signupInput({ handle: 'kdfburn', method: 'passkey', password: undefined }));
-  open = false; kdf = 0;
-  for (let i = 0; i < 10; i++) await assert.rejects(f.act('setPendingPassword', { pendingToken: pending.pendingToken, password: `burn-password-${i}-xxxxxxxx` }), { code: 'rate_limited' });
-  assert.equal(kdf, 0, 'no KDF while limited');
-  open = true;
-  for (let i = 0; i < 5; i++) await f.act('setPendingPassword', { pendingToken: pending.pendingToken, password: `owner-password-${i}-xxxxxxxx` });
-  assert.equal(kdf, 5, 'one hash per set; the immediate re-verify is gone');
-  await assert.rejects(f.act('setPendingPassword', { pendingToken: pending.pendingToken, password: 'one-more-password-xxxxxxxx' }), { code: 'rate_limited' });
-  assert.equal(kdf, 5);
+  const f = identityEngine({ passwordHasher });
+  const pending = await f.act('signup', signupInput({ handle: 'kdfburn' }));
+  await assert.rejects(f.act('setPendingPassword', { pendingToken: pending.pendingToken, password: 'owner-password-0-xxxxxxxx' }), TypeError);
+  await assert.rejects(f.act('signup', signupInput({ handle: 'kdfburn2', method: 'password', password: 'owner-password-1-xxxxxxxx' })), { code: 'invalid_method' });
+  assert.equal(kdf, 0);
 });
 
 test('P15 churn: recovery downloads are budgeted per setup token and by the limiter, so rotation cannot be churned', async () => {
   let open = true; const f = identityEngine({ rateLimiter: { check: async () => open } });
-  const pending = await f.act('signup', signupInput({ handle: 'churn' }));
+  const pending = await f.act('signup', signupInput({ handle: 'churn' })); await f.act('registerPasskey', { pendingToken: pending.pendingToken, response: passkeyResponse(pending, 'churn-key') });
   for (let i = 0; i < 5; i++) await f.act('downloadRecovery', pending);
   await assert.rejects(f.act('downloadRecovery', pending), { code: 'rate_limited' });
-  const other = await f.act('signup', signupInput({ handle: 'churn2' })); open = false;
+  const other = await f.act('signup', signupInput({ handle: 'churn2' })); await f.act('registerPasskey', { pendingToken: other.pendingToken, response: passkeyResponse(other, 'churn2-key') }); open = false;
   await assert.rejects(f.act('downloadRecovery', other), { code: 'rate_limited' });
   open = true; const file = await f.act('downloadRecovery', other);
   assert.ok((await f.act('confirmRecovery', { ...other, recoveryToken: file.recoveryToken, downloadConfirmed: true })).sessionToken);
 });
 
-test('the session context for sign-in still works end to end after the guard reorder (password, passkey begin)', async () => {
+test('the session context for sign-in still works end to end after the guard reorder (passkey begin and finish)', async () => {
   const gate = { live: null, check: input => gate.live ? gate.live.check(input) : true }, f = identityEngine({ rateLimiter: gate }), { owner } = await activate(f.act); gate.live = realLimiter();
-  assert.ok((await f.act('loginPassword', { handle: owner.account.handle, password: PASSWORD, turnstileToken: 'verified' })).sessionToken);
+  assert.ok((await signInPasskey(f.act, owner.account.handle, 'passkey-alice')).sessionToken);
   assert.ok((await f.owner(sessionContext(owner))).account);
 });
 
 test('#1(c) over HTTP: the cancel page is served by the router and the emailed link cancels through the real route', async t => {
   const f = await reissueFixture(t); await f.age(); f.advance(MINUTE);
-  const attacker = await f.secondSession(); await f.stepUp('password', attacker);
+  const attacker = await f.secondSession(); await f.stepUp('passkey', attacker);
   await f.confirm(f.parse(await f.begin({ acknowledged: true }, attacker)), {}, attacker);
   const origin = f.ctx.origin, page = await f.app.fetch(new Request(origin + REISSUE_CANCEL_PATH));
   assert.equal(page.status, 200); assert.match(page.headers.get('Content-Type'), /text\/html/);
@@ -276,16 +276,12 @@ test('#1(c) over HTTP: the cancel page is served by the router and the emailed l
 
 // ---- coordinator decision 2026-10-23: passkey-authorized reissues are not file-cancellable; swapped emails ----------
 
-async function passkeyStepUp(f, context) {
-  f.service.webauthn = { authenticationOptions: async () => ({ challenge: 'step-up-challenge' }), verifyAuthentication: async ({ response, challenge }) => { if (response?.id !== 'owner-passkey' || challenge !== 'step-up-challenge') throw new Error('bad'); return { counter: 1, backedUp: true }; } };
-  await f.service.stepUpBegin({}, context);
-  return f.service.stepUp({ method: 'passkey', response: { id: 'owner-passkey' } }, context);
-}
+/** The fixture's passkey made older than the current file (file-proof), then a passkey step-up with it. */
+const fileProofPasskey = f => f.patch(a => ({ ...a, credentials: a.credentials.map(c => ({ ...c, createdAt: f.now() - 30 * DAY })) }));
 
 test('#1 passkey branch: a passkey-authorized reissue cannot be cancelled (or recovered) with the previous file; earlier sessions and the pre-reissue email still cancel', async t => {
-  const f = await reissueFixture(t);
-  await f.patch(a => ({ ...a, credentials: [{ id: 'owner-passkey', publicKey: 'pk', counter: 0, label: 'Phone', createdAt: f.now() - 30 * DAY }] }));
-  f.advance(MINUTE); const device = await f.secondSession(); await passkeyStepUp(f, device);
+  const f = await reissueFixture(t); await fileProofPasskey(f);
+  f.advance(MINUTE); const device = await f.secondSession(); await f.stepUp('passkey', device);
   const staged = f.parse(await f.begin({ acknowledged: true }, device)); await f.confirm(staged, {}, device);
   assert.equal((await f.identity()).recoveryPrevious.credential.kind, 'passkey');
   // The previous file (perhaps the leaked one this reissue retires) can neither recover nor cancel.
@@ -296,30 +292,32 @@ test('#1 passkey branch: a passkey-authorized reissue cannot be cancelled (or re
   assert.equal((await f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx)).cancelled, true);
   await assert.doesNotReject(f.recover(f.file));
 
-  const g = await reissueFixture(t);
-  await g.patch(a => ({ ...a, credentials: [{ id: 'owner-passkey', publicKey: 'pk', counter: 0, label: 'Phone', createdAt: g.now() - 30 * DAY }] }));
-  await passkeyStepUp(g, g.ctx); await g.confirm(g.parse(await g.begin()));
+  const g = await reissueFixture(t); await fileProofPasskey(g);
+  await g.stepUp(); await g.confirm(g.parse(await g.begin()));
   const token = g.mail.find(m => m.type === 'recovery-reissued').cancelToken;
   assert.equal((await g.service.reissueRecoveryCancelEmail({ token, confirmed: true }, { origin: g.ctx.origin, remoteIP: '127.0.0.1' })).cancelled, true, 'the pre-reissue email still cancels');
 });
 
-test('#1 password branch: on an account without a passkey the previous file still cancels (a password thief cannot lock the owner out)', async t => {
+test('#1 non-file-proof branch: a reissue confirmed with a passkey no older than the previous file stays cancellable by that file; an account with no passkey cannot reissue', async t => {
+  // Passwords were dropped (2026-10-28): the former password branch is restated as the non-file-proof passkey branch.
   const f = await reissueFixture(t); await f.age();
-  const thief = await f.secondSession(); await f.stepUp('password', thief);
+  const thief = await f.secondSession(); await f.stepUp('passkey', thief);
   await f.confirm(f.parse(await f.begin({ acknowledged: true }, thief)), {}, thief);
-  assert.equal((await f.identity()).recoveryPrevious.credential.kind, 'password');
+  const previous = (await f.identity()).recoveryPrevious; assert.equal(previous.credential.kind, 'passkey'); assert.equal(previous.fileLocked, false);
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_pending' });
   assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' })).cancelled, true);
+  const g = await reissueFixture(t); await g.patch(a => ({ ...a, credentials: [] }));
+  await assert.rejects(g.begin(), { code: 'passkey_required', status: 409 });
 });
 
 test('#1 swapped email: an email replaced within 30 days before the reissue still gets the notices and the cancel link; older replacements do not', async t => {
-  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async value => { sent.push(value); };
+  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async value => { sent.push(value); }; removalOn(f);
   const owner = 'owner@reissue.example';
-  // A password thief swaps the email (needs only a recent sign-in), then reissues.
+  // A session thief adds an address and removes the owner's (a removal needs a fresh step-up), then reissues.
   const thief = await f.secondSession();
-  await f.service.emailStart({ email: 'thief@mail.example' }, thief); await f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, thief);
-  assert.equal((await f.identity()).verifiedEmail, 'thief@mail.example');
-  f.advance(MINUTE); await f.age(); await f.stepUp('password', thief);
+  await addEmail(f, sent, 'thief@mail.example', thief); await f.stepUp('passkey', thief); await f.service.emailRemove({ address: owner, confirmed: true }, thief);
+  assert.deepEqual((await f.identity()).emails.map(e => e.address), ['thief@mail.example']);
+  f.advance(MINUTE); await f.age(); await f.stepUp('passkey', thief);
   await f.confirm(f.parse(await f.begin({ acknowledged: true }, thief)), {}, thief);
   assert.ok(f.mail.some(m => m.email === owner && m.type === 'recovery-reissue-started'), 'the replaced email hears about the begin');
   const notice = f.mail.find(m => m.email === owner && m.type === 'recovery-reissued'); assert.ok(notice?.cancelToken, 'and gets the cancel link');
@@ -327,10 +325,10 @@ test('#1 swapped email: an email replaced within 30 days before the reissue stil
   assert.ok(f.mail.some(m => m.email === owner && m.type === 'recovery-reissue-cancelled'));
 
   // A replacement more than 30 days before the reissue is no longer a channel (review 2026-10-23 R1(iii)).
-  const g = await reissueFixture(t), mails = []; g.service.mailer.sendVerification = async value => { mails.push(value); };
+  const g = await reissueFixture(t), mails = []; g.service.mailer.sendVerification = async value => { mails.push(value); }; removalOn(g);
   const early = await g.secondSession();
-  await g.service.emailStart({ email: 'new@mail.example' }, early); await g.service.emailConfirm({ token: mails.at(-1).token, confirmed: true }, early);
-  g.advance(31 * DAY); await g.age(); const later = await g.secondSession(); await g.stepUp('password', later);
+  await addEmail(g, mails, 'new@mail.example', early); await g.stepUp('passkey', early); await g.service.emailRemove({ address: owner, confirmed: true }, early);
+  g.advance(31 * DAY); await g.age(); const later = await g.secondSession(); await g.stepUp('passkey', later);
   await g.confirm(g.parse(await g.begin({ acknowledged: true }, later)), {}, later);
   assert.equal(g.mail.some(m => m.email === owner && m.type.startsWith('recovery-reissue')), false);
   assert.equal(g.mail.some(m => m.email === owner && m.type === 'recovery-reissued'), false);
@@ -341,25 +339,28 @@ test('#1 swapped email: an email replaced within 30 days before the reissue stil
 
 function thiefWebauthn(f) {
   f.service.webauthn = { registrationOptions: async () => ({ challenge: 'reg' }), verifyRegistration: async () => ({ id: 'thief-passkey', publicKey: 'pk', counter: 0 }),
-    authenticationOptions: async () => ({ challenge: 'auth' }), verifyAuthentication: async ({ response }) => { if (!['thief-passkey', 'owner-passkey'].includes(response?.id)) throw new Error('bad'); return { counter: 1, backedUp: false }; } };
+    authenticationOptions: async () => ({ challenge: 'auth' }), verifyAuthentication: async ({ response }) => { if (!['thief-passkey', 'owner-passkey', PASSKEY].includes(response?.id)) throw new Error('bad'); return { counter: 1, backedUp: false }; } };
 }
 
-test('R1: a password thief who enrols a passkey, swaps the email and revokes sessions still cannot lock the owner out: the reissue is not file-proof and every change was notified', async t => {
-  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async value => { sent.push(value); }; thiefWebauthn(f);
+test('R1: a session thief who enrols a passkey, swaps the email and revokes sessions still cannot lock the owner out: the reissue is not file-proof and every change was notified', async t => {
+  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async value => { sent.push(value); }; thiefWebauthn(f); removalOn(f);
   const owner = 'owner@reissue.example', base = { origin: f.ctx.origin, remoteIP: '127.0.0.1' };
+  // A fresh session (passwords are gone; say a stolen unlocked device) enrols its own passkey, steps up with it,
+  // adds an address and removes the owner's (a swap is now an addition and a removal).
   const thief = await f.secondSession();
-  await f.service.emailStart({ email: 'thief@mail.example' }, thief); await f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, thief);
   const { challengeId } = await f.service.credentialBegin({ label: 'x' }, thief); await f.service.credentialFinish({ challengeId, response: { id: 'thief-passkey' } }, thief);
-  // (ii) Both changes reached the owner's (replaced) address and push, with guidance.
-  assert.ok(f.mail.some(m => m.email === owner && m.type === 'email-changed')); assert.ok(f.mail.some(m => m.email === owner && m.type === 'passkey-added'));
-  assert.ok(f.push.some(p => p.event === 'email-changed') && f.push.some(p => p.event === 'passkey-added'));
+  await f.service.stepUpBegin({}, thief); await f.service.stepUp({ method: 'passkey', response: { id: 'thief-passkey' } }, thief);
+  await addEmail(f, sent, 'thief@mail.example', thief); await f.service.emailRemove({ address: owner, confirmed: true }, thief);
+  // (ii) Both changes reached the owner's (replaced) address and push.
+  assert.ok(f.mail.some(m => m.email === owner && m.type === 'email-removed')); assert.ok(f.mail.some(m => m.email === owner && m.type === 'passkey-added'));
+  assert.ok(f.push.some(p => p.event === 'email-removed') && f.push.some(p => p.event === 'passkey-added'));
   f.advance(8 * DAY);
-  const thief2 = await f.secondSession(), stale = await f.secondSession(); await f.service.revokeOtherSessions({}, thief2);
+  const thief2 = await f.secondSession('thief-passkey'), stale = await f.secondSession(); void stale; await f.service.revokeOtherSessions({}, thief2);
   assert.ok(f.mail.some(m => m.email === owner && m.type === 'sessions-revoked'), '(ii, iii) the replaced address is still a channel after 8 days');
   await f.service.stepUpBegin({}, thief2); await f.service.stepUp({ method: 'passkey', response: { id: 'thief-passkey' } }, thief2);
   const staged = f.parse(await f.begin({ acknowledged: true }, thief2)); await f.confirm(staged, {}, thief2);
   assert.equal((await f.identity()).recoveryPrevious.fileLocked, false, '(i) a passkey enrolled after the file is not file-proof');
-  assert.ok(f.mail.find(m => m.email === owner && m.type === 'recovery-reissued').cancelToken, 'password branch: the replaced address gets the link');
+  assert.ok(f.mail.find(m => m.email === owner && m.type === 'recovery-reissued').cancelToken, 'not file-proof: the replaced address gets the link');
   await assert.rejects(f.recover(f.file), { code: 'recovery_reissue_pending' });
   assert.equal((await f.service.reissueRecoveryCancelFile({ recoveryToken: f.file.recoveryToken }, base)).cancelled, true);
   const record = await f.identity();
@@ -394,9 +395,11 @@ test('R2: the file-proof distribution rule: a replaced address gets the notice o
 });
 
 test('V1 trade-off: an owner who swaps the email and then reissues with an old passkey is not file-proof, so the replaced address gets the cancel link', async t => {
-  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async value => { sent.push(value); }; thiefWebauthn(f);
+  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async value => { sent.push(value); }; thiefWebauthn(f); removalOn(f);
   await f.patch(a => ({ ...a, credentials: [{ id: 'owner-passkey', publicKey: 'pk', counter: 0, createdAt: f.now() - 30 * DAY }] }));
-  await f.service.emailStart({ email: 'fresh@owner.example' }, f.ctx); await f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, f.ctx);
+  // A swap is an addition and a removal (2026-10-28); the removal is the channel-removing authority event.
+  await addEmail(f, sent, 'fresh@owner.example', f.ctx);
+  await f.service.stepUpBegin({}, f.ctx); await f.service.stepUp({ method: 'passkey', response: { id: 'owner-passkey' } }, f.ctx); await f.service.emailRemove({ address: 'owner@reissue.example', confirmed: true }, f.ctx);
   f.advance(MINUTE); await f.service.stepUpBegin({}, f.ctx); await f.service.stepUp({ method: 'passkey', response: { id: 'owner-passkey' } }, f.ctx);
   await f.confirm(f.parse(await f.begin()));
   assert.equal((await f.identity()).recoveryPrevious.fileLocked, false);
@@ -406,7 +409,7 @@ test('V1 trade-off: an owner who swaps the email and then reissues with an old p
 test('cancel ends sessions created at or after the begin, and severs app connections; a recovery start severs them too', async t => {
   const f = await reissueFixture(t), severed = []; f.service.severConnections = async (owner, input) => { severed.push([owner, input]); };
   await f.age(); f.advance(MINUTE);
-  const minter = await f.secondSession(); await f.stepUp('password', minter); f.advance(MINUTE);
+  const minter = await f.secondSession(); await f.stepUp('passkey', minter); f.advance(MINUTE);
   const staged = f.parse(await f.begin({ acknowledged: true }, minter)); const atBegin = await f.secondSession(); f.advance(MINUTE); const later = await f.secondSession();
   await f.confirm(staged, {}, minter);
   await f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx);
@@ -418,14 +421,14 @@ test('cancel ends sessions created at or after the begin, and severs app connect
 test('a cancel from the session that staged and confirmed the replacement reports signedOut instead of projecting the account; an earlier bystander session keeps its account view', async t => {
   // recovery-reissue-browser regression (2026-10-27): the console cancelled from the confirming device, lost its session
   // to the "Cancel sessions" rule and showed "Your session expired" instead of the outcome.
-  const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); const bystander = await f.secondSession(); f.advance(MINUTE); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); const bystander = await f.secondSession(); f.advance(MINUTE); await f.stepUp();
   await f.confirm(f.parse(await f.begin()));
   assert.equal((await f.owner()).recovery.pendingReissue.cancellable, true, 'the minter predates its own begin, so the view offers the cancel');
   const own = await f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx);
   assert.deepEqual(own, { cancelled: true, restored: true, notified: own.notified, signedOut: true }); assert.equal('account' in own, false);
   await assert.rejects(f.owner(f.ctx), { code: 'unauthorized' }); await assert.doesNotReject(f.owner(bystander));
 
-  const g = await reissueFixture(t); await g.age(); g.advance(MINUTE); const earlier = await g.secondSession(); g.advance(MINUTE); await g.stepUp('password');
+  const g = await reissueFixture(t); await g.age(); g.advance(MINUTE); const earlier = await g.secondSession(); g.advance(MINUTE); await g.stepUp();
   await g.confirm(g.parse(await g.begin()));
   const other = await g.service.reissueRecoveryCancel({ confirmed: true }, earlier);
   assert.equal(other.cancelled, true); assert.equal(other.signedOut, undefined); assert.equal(other.account.id, g.id);
@@ -433,7 +436,7 @@ test('a cancel from the session that staged and confirmed the replacement report
 });
 
 test('item 7: a cancel whose identity write never lands leaves the current (new) file current', async t => {
-  const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); await f.stepUp();
   const staged = f.parse(await f.begin()); await f.confirm(staged);
   const swap = f.service.repository.compareAndSwap; f.service.repository = new Proxy(f.service.repository, { get: (o, n) => n === 'compareAndSwap' ? async () => false : Reflect.get(o, n).bind?.(o) ?? Reflect.get(o, n) }); void swap;
   await assert.rejects(f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx), { code: 'conflict' });
@@ -446,11 +449,15 @@ test('item 8: a configured identity token key that is too short fails loudly ins
   await assert.rejects(f.act('beginPasskeyLogin', { handle: 'alice', turnstileToken: 'verified' }), /at least 16/);
 });
 
-test('R1(ii): a password set during a recovery is notified to every email channel, with guidance', async t => {
-  const f = await reissueFixture(t), started = await f.recover(f.file);
-  await f.service.setPendingPassword({ pendingToken: started.pendingToken, password: 'a brand new recovery password' }, { origin: f.ctx.origin, remoteIP: '127.0.0.1' });
-  assert.ok(f.mail.some(m => m.email === 'owner@reissue.example' && m.type === 'password-changed'));
-  assert.ok(f.push.some(p => p.event === 'password-changed'));
+// Suspected product gap (2026-10-28 password removal): the former setPendingPassword queued a 'password-changed' notice
+// while recovering; registerPasskey during a recovery queues nothing, so the owner's channels never hear of the new credential.
+test('R1(ii): the replacement passkey registered during a recovery is notified to every email channel', async t => {
+  // Passkey analogue of the former "password set during a recovery" notice (passwords dropped 2026-10-28).
+  const f = await reissueFixture(t), started = await f.recover(f.file), base = { origin: f.ctx.origin, remoteIP: '127.0.0.1' };
+  const options = await f.service.beginPasskeyRegistration({ pendingToken: started.pendingToken }, base);
+  await f.service.registerPasskey({ pendingToken: started.pendingToken, response: passkeyResponse(options, 'recovery-passkey') }, base);
+  assert.ok(f.mail.some(m => m.email === 'owner@reissue.example' && m.type === 'passkey-added'));
+  assert.ok(f.push.some(p => p.event === 'passkey-added'));
 });
 
 test('item 5: email sign-in windows: 5 per 15 minutes and 12 per 6 hours per mailbox, 5,000 per hour per region, 20,000 per hour overall', async () => {
@@ -462,9 +469,9 @@ test('item 5: email sign-in windows: 5 per 15 minutes and 12 per 6 hours per mai
 
 // ---- re-verification 2026-10-23: V1 and follow-ups ---------------------------------------------------------------
 
-test('V1: a pre-file rogue passkey, session-cap eviction and an email swap no longer make a file-proof reissue; eviction is notified', async t => {
+test('V1: a pre-file rogue passkey, session-cap eviction and an added email no longer make a file-proof reissue; eviction is notified', async t => {
   const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async v => { sent.push(v); }; thiefWebauthn(f);
-  await f.patch(a => ({ ...a, credentials: [{ id: 'owner-passkey', publicKey: 'pk', counter: 0, createdAt: f.now() - 60 * DAY }] }));
+  await f.patch(a => ({ ...a, credentials: [...a.credentials, { id: 'owner-passkey', publicKey: 'pk', counter: 0, createdAt: f.now() - 60 * DAY }] }));
   const t0 = await f.secondSession(); const { challengeId } = await f.service.credentialBegin({ label: 'Laptop' }, t0); await f.service.credentialFinish({ challengeId, response: { id: 'thief-passkey' } }, t0);
   f.advance(10 * DAY);
   const owner10 = await f.secondSession(); await f.service.stepUpBegin({}, owner10); await f.service.stepUp({ method: 'passkey', response: { id: 'owner-passkey' } }, owner10);
@@ -473,7 +480,7 @@ test('V1: a pre-file rogue passkey, session-cap eviction and an email swap no lo
   f.advance(7 * DAY + MINUTE); await f.secondSession(); f.advance(MINUTE);
   const mark = f.mail.length; let thief; for (let i = 0; i < 10; i++) thief = await f.secondSession();
   assert.ok(f.mail.slice(mark).some(m => m.type === 'sessions-evicted'), 'eviction notified'); assert.ok((await f.identity()).authorityEvents.some(e => e.kind === 'sessions-evicted'));
-  await f.service.emailStart({ email: 'thief@mail.example' }, thief); await f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, thief);
+  await addEmail(f, sent, 'thief@mail.example', thief);
   await f.service.stepUpBegin({}, thief); await f.service.stepUp({ method: 'passkey', response: { id: 'thief-passkey' } }, thief);
   const staged = f.parse(await f.begin({ acknowledged: true }, thief)); await f.confirm(staged, {}, thief);
   assert.equal((await f.identity()).recoveryPrevious.fileLocked, false);
@@ -517,7 +524,7 @@ test('security notices coalesce per type: one per 10 minutes, the next carrying 
 
 test('N1: a different session is never coalesced, and a pending count is delivered at the next owner view after the window', async t => {
   const f = await reissueFixture(t); let id = 'owner-new';
-  f.service.webauthn = { registrationOptions: async () => ({ challenge: 'r' }), verifyRegistration: async () => ({ id, publicKey: 'pk', counter: 0 }) };
+  f.service.webauthn = { ...f.service.webauthn, registrationOptions: async () => ({ challenge: 'r' }), verifyRegistration: async () => ({ id, publicKey: 'pk', counter: 0 }) };
   const add = async ctx => { const { challengeId } = await f.service.credentialBegin({ label: 'x' }, ctx); await f.service.credentialFinish({ challengeId, response: {} }, ctx); };
   await add(f.ctx);
   const thief = await f.secondSession(); f.advance(MINUTE); id = 'thief-passkey'; await add(thief);
@@ -531,9 +538,10 @@ test('N1: a different session is never coalesced, and a pending count is deliver
 
 test('V2: filler events cannot push a channel removal out; the file-proof check reads the uncapped latest removal time', async t => {
   const f = await reissueFixture(t); thiefWebauthn(f);
-  await f.patch(a => ({ ...a, recoveryIssuedAt: f.now() - 45 * DAY, credentials: [{ id: 'owner-passkey', publicKey: 'pk', counter: 0, createdAt: f.now() - 50 * DAY }] }));
+  await f.patch(a => ({ ...a, recoveryIssuedAt: f.now() - 45 * DAY, credentials: [...a.credentials, { id: 'owner-passkey', publicKey: 'pk', counter: 0, createdAt: f.now() - 50 * DAY }] }));
   // 20 cheap events (own throwaway sessions revoked), then the one that matters.
-  for (let i = 0; i < 20; i++) { const a = await f.secondSession(), b = await f.secondSession(); await f.service.revokeSession({ sessionId: b.sessionId }, a); }
+  // Spaced 30 s apart: passkey sign-in keeps at most 32 live replay nonces (5 minutes each).
+  for (let i = 0; i < 20; i++) { f.advance(MINUTE / 2); const a = await f.secondSession(), b = await f.secondSession(); await f.service.revokeSession({ sessionId: b.sessionId }, a); }
   f.advance(29 * DAY); const late = await f.secondSession(), other = await f.secondSession(); await f.service.revokeSession({ sessionId: other.sessionId }, late);
   const record = await f.identity();
   assert.equal(record.authorityEvents.length, 16); assert.equal(record.authorityEvents.at(-1).at, f.now(), 'the display list keeps the newest');
@@ -545,10 +553,12 @@ test('V2: filler events cannot push a channel removal out; the file-proof check 
 });
 
 test('V2 audit: replaced emails are never dropped to make room (further changes are refused), and live sign-in nonces are never evicted', async t => {
-  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async v => { sent.push(v); };
-  for (let i = 0; i < 8; i++) { await f.service.emailStart({ email: `e${i}@mail.example` }, f.ctx); await f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, f.ctx); }
-  await f.service.emailStart({ email: 'e9@mail.example' }, f.ctx);
-  await assert.rejects(f.service.emailConfirm({ token: sent.at(-1).token, confirmed: true }, f.ctx), { code: 'email_change_limited' });
+  const f = await reissueFixture(t), sent = []; f.service.mailer.sendVerification = async v => { sent.push(v); }; removalOn(f);
+  // A replacement is an addition and a removal (2026-10-28): 8 replacements fill the retained list.
+  await f.stepUp(); let previous = 'owner@reissue.example';
+  for (let i = 0; i < 8; i++) { await addEmail(f, sent, `e${i}@mail.example`, f.ctx); await f.service.emailRemove({ address: previous, confirmed: true }, f.ctx); previous = `e${i}@mail.example`; }
+  await addEmail(f, sent, 'e9@mail.example', f.ctx);
+  await assert.rejects(f.service.emailRemove({ address: previous, confirmed: true }, f.ctx), { code: 'email_change_limited' });
   assert.ok((await f.identity()).previousEmails.some(e => e.email === 'owner@reissue.example'), 'the owner address is still a channel');
   const g = passkeyEngine(), { owner } = await activate(g.act, signupInput({ handle: 'nonces' }));
   g.repository.records.get(owner.account.id).credentials = [{ id: 'cred-1', publicKey: 'pk', counter: 0, createdAt: Date.now() }];
@@ -568,7 +578,7 @@ test('flushSever clears only the row it ran: a newer row written meanwhile survi
 test('severing: a durable row written in the commit retries a failed port at the next owner read and at activation', async t => {
   const f = await reissueFixture(t); let fail = true; const calls = [];
   f.service.severConnections = async (owner, input) => { calls.push(input); if (fail) throw new Error('transient'); };
-  await f.age(); f.advance(MINUTE); const minter = await f.secondSession(); await f.stepUp('password', minter); f.advance(MINUTE);
+  await f.age(); f.advance(MINUTE); const minter = await f.secondSession(); await f.stepUp('passkey', minter); f.advance(MINUTE);
   await f.confirm(f.parse(await f.begin({ acknowledged: true }, minter)), {}, minter);
   await f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx);
   assert.deepEqual((await f.identity()).pendingSever?.reason, 'recovery', 'the failed sever stays durable');
@@ -587,12 +597,13 @@ test('item 7 (info): with no identity token key outside tests and local developm
 test('organization verification carries hasPasskey and the step-up method, as packages/orgs/ownership.mjs reads them', async () => {
   const { organizationVerification } = await import('../packages/identity/authority-epoch.mjs');
   const { personActor } = await import('../packages/orgs/authority.mjs');
-  const withPasskey = { security: { epoch: 1, changedAt: 10 }, passwordHash: 'h', passwordSetAt: 5, credentials: [{ id: 'p', createdAt: 20 }] };
-  const byPassword = organizationVerification(withPasskey, { stepUpAt: 30, stepUpCredential: { kind: 'password' } });
-  assert.equal(byPassword.hasPasskey, true); assert.equal(byPassword.method, 'password');
-  assert.equal(organizationVerification(withPasskey, { stepUpAt: 30, stepUpCredential: { kind: 'passkey', id: 'p' } }).method, 'passkey');
-  assert.equal(organizationVerification({ ...withPasskey, credentials: [] }, { stepUpAt: 30, stepUpCredential: { kind: 'password' } }).hasPasskey, false);
+  const withPasskey = { security: { epoch: 1, changedAt: 10 }, credentials: [{ id: 'p', createdAt: 20 }] };
+  // Passwords were dropped (2026-10-28): a password step-up is no verification at all.
+  assert.equal(organizationVerification(withPasskey, { stepUpAt: 30, stepUpCredential: { kind: 'password' } }), null);
+  const byPasskey = organizationVerification(withPasskey, { stepUpAt: 30, stepUpCredential: { kind: 'passkey', id: 'p' } });
+  assert.equal(byPasskey.hasPasskey, true); assert.equal(byPasskey.method, 'passkey');
+  assert.equal(organizationVerification(withPasskey, { stepUpAt: 30, stepUpCredential: { kind: 'passkey', id: 'unknown' } }), null);
   // The fields survive into the org actor the ownership check reads (`actor.verification.hasPasskey/method`).
-  const actor = personActor({ owner: '00000000-0000-4000-8000-000000000001', iss: 'https://3sln.example', verification: byPassword });
-  assert.equal(actor.verification.hasPasskey, true); assert.equal(actor.verification.method, 'password');
+  const actor = personActor({ owner: '00000000-0000-4000-8000-000000000001', iss: 'https://3sln.example', verification: byPasskey });
+  assert.equal(actor.verification.hasPasskey, true); assert.equal(actor.verification.method, 'passkey');
 });

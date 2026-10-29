@@ -18,6 +18,7 @@ import {key} from '../packages/core/records.mjs';
 import {CancelExport,StepExport,ExportStatus} from '../packages/app/domains/account-export.mjs';
 import {createExportDigest} from '../packages/runtime/export-generation.mjs';
 import {tarHeader,concatBytes} from '../packages/runtime/export-tar.mjs';
+import {softAuthenticator,registerPending} from './helpers/soft-passkey.mjs';
 // Match the fixture's explicit IPv4 listener in both this process and CLI children; localhost may resolve to ::1.
 // Bound tests and child lifetimes so a failed network/cleanup path cannot hang the suite indefinitely.
 setDefaultResultOrder('ipv4first');
@@ -65,7 +66,7 @@ async function nodeFixture(t){
   if(!error){app=candidate;break;}if(error.code!=='EADDRINUSE'||attempt>=9)throw error;
  }
  const post=(path,input)=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(input)}));
- const pending=await(await post('/api/auth/signup',{handle:'export_cli',method:'password',password:'local export CLI fixture password',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();const recovery=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activated.status,200,await activated.clone().text());const session=await activated.json(),owner=session.account.id,c=app.resources.accounts.get(owner);await c.warm(owner);clock.advance(4*DAY);
+ const pending=await(await post('/api/auth/signup',{handle:'export_cli',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();await registerPending(softAuthenticator({origin}),async(path,input)=>(await post(path,input)).json(),pending);const recovery=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activated.status,200,await activated.clone().text());const session=await activated.json(),owner=session.account.id,c=app.resources.accounts.get(owner);await c.warm(owner);clock.advance(4*DAY);
  const large=Uint8Array.from({length:5*1024**2+17},(_,i)=>i%251),small=new Uint8Array([7,9,11]);for(const [id,bytes]of [['large',large],['small',small]]){const ref=`messages/${owner}/${id}`;await c.blobs.put(ref,bytes);await c.metadata.put(key('app-message',owner,id),{id,owner,blobRef:ref,size:bytes.length,mimeType:'application/octet-stream'});}
  const actor={stepUpAt:clock.now(),sessionId:'cli-test'},job=await c.exportCreate(owner,{operationId:EP},actor);// One contributor page or seal step per alarm (60 for this account today); the bound only stops a stuck job.
  let alarms=0,status;for(;(status=await c.exportStatus(owner,job.id)).state!=='ready'&&!['failed','cancelled','expired'].includes(status.state)&&alarms<ALARM_BOUND;alarms++)await c.exportAlarm();assert.equal(status.state,'ready',`export not ready after ${alarms} alarms: ${JSON.stringify(status)}`);const grant=await c.exportGrant(owner,job.id,{},actor);

@@ -89,7 +89,7 @@ test('new unused account: check-in after two days, warning, suspension, deletion
  f.advance(60000);const deleted=await f.tick();assert.equal(deleted.action,'deleted');
  assert.equal(f.blobs.map.has(`objects/${owner}/res/v1`),false);assert.equal(f.blobs.map.has('objects/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/res/v1'),true);
  assert.deepEqual([...(await f.db.list()).keys()].sort(),['lifecycle/tombstone-v1','owner']);
- const identity=await f.repository.get(owner);assert.equal(identity.status,'deleted');assert.equal(identity.handle,handle);assert.equal(identity.passwordHash,null);assert.equal(identity.recoveryHash,null);assert.equal(identity.verifiedEmail,undefined);
+ const identity=await f.repository.get(owner);assert.equal(identity.status,'deleted');assert.equal(identity.handle,handle);assert.equal('passwordHash' in identity,false);assert.equal(identity.recoveryHash,null);assert.equal(identity.verifiedEmail,undefined);
  assert.equal(await f.repository.findByEmail(email),null);assert.equal((await f.repository.findByHandle(handle)).id,owner);
  assert.equal(await f.repository.create({id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle,assignmentId:'a2',status:'active',createdAt:f.now,revision:1,sessions:[],credentials:[]}),false);
  assert.equal((await f.invoke('snapshot')).$fault.code,'account_deleted');assert.equal((await f.tick()).action,'deleted');assert.equal(f.notices(),6);

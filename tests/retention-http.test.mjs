@@ -7,13 +7,14 @@ import {createNodeServer} from '../apps/node/server.mjs';
 import {BILLING_TRANSITION_PREFIX} from '../packages/billing/service.mjs';
 import {OVER_QUOTA_EPISODE} from '../packages/runtime/export-hooks.mjs';
 import {key} from '../packages/core/records.mjs';
+import {softAuthenticator,registerPending} from './helpers/soft-passkey.mjs';
 const DAY=86400000;
 test('Node retention HTTP is owner/CSRF protected and persists deadline/keep/evidence across restart',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'bindle-retention-')),origin='http://localhost:8788',now=Date.now(),config={APP_ORIGIN:origin,OVER_QUOTA_RETENTION_ENABLED:'true',ACCOUNT_EXPORT_ENABLED:'true',BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_ACCESS_TOKEN:'offline',POLAR_WEBHOOK_SECRET:'offline',POLAR_PRODUCT_ID_PAID:'paid',POLAR_PRODUCT_ID_PLUS:'plus',POLAR_PRODUCT_ID_ULTRA:'ultra',LIFECYCLE_CLOCK:()=>now};let app;
  try{
   app=await createNodeServer({directory,config});
   const post=(path,input,headers={})=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(input)}));
-  const pending=await(await post('/api/auth/signup',{method:'password',password:'retention local test long password',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+  const pending=await(await post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();await registerPending(softAuthenticator({origin}),async(path,input)=>(await post(path,input)).json(),pending);
   const recovery=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
   const activation=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}),session=await activation.json(),cookie=activation.headers.get('Set-Cookie').split(';')[0],owner=session.account.id,c=app.resources.accounts.get(owner);await c.warm(owner);
   const resource=(await c.metadata.get('builtin/hosted-resource-v1')).id;
@@ -33,7 +34,7 @@ test('Node retention HTTP is owner/CSRF protected and persists deadline/keep/evi
 async function account(config,directory){
  const origin=config.APP_ORIGIN,app=await createNodeServer({directory,config});
  const post=(path,input,headers={})=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(input)}));
- const pending=await(await post('/api/auth/signup',{method:'password',password:'retention local test long password',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+ const pending=await(await post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();await registerPending(softAuthenticator({origin}),async(path,input)=>(await post(path,input)).json(),pending);
  const recovery=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
  const activation=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}),session=await activation.json(),cookie=activation.headers.get('Set-Cookie').split(';')[0],owner=session.account.id,c=app.resources.accounts.get(owner);await c.warm(owner);
  const headers={Cookie:cookie,'X-CSRF-Token':session.csrfToken};

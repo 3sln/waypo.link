@@ -36,7 +36,6 @@ async function claimThroughOnboarding(browser,link,name){
  await page.route(baseURL+'/api/config',async route=>{try{const response=await route.fetch(),config=JSON.parse(await response.text());config.tokenOnboardingEnabled=true;await route.fulfill({status:response.status(),headers:response.headers(),body:JSON.stringify(config)});}catch{await route.continue().catch(()=>{});}});
  await page.goto(link);await page.getByRole('button',{name:'Use invitation',exact:true}).click();
  await page.selectOption('[name=onboardingName]',name);await page.getByRole('button',{name:'Continue',exact:true}).click();
- await page.getByRole('button',{name:'Passkey',exact:true}).click();await page.getByRole('button',{name:'Continue',exact:true}).click();
  for(let step=0;step<6;step++){const create=page.getByRole('button',{name:'Create my account',exact:true}),terms=page.locator('[name=termsAccepted]');await create.or(terms).first().waitFor();if(await create.count())break;await page.locator('[name=ageConfirmed]').check();await terms.check();await page.getByRole('button',{name:'Continue',exact:true}).click();await terms.waitFor({state:'detached'});}
  await page.getByRole('button',{name:'Create my account',exact:true}).click();await page.waitForURL(/\/recovery\/setup/);
  const pendingToken=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('3sln-setup')??'null')?.token);assert.ok(pendingToken,'onboarding produced a pending setup');

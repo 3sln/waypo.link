@@ -13,7 +13,7 @@ export const ORG_ERRORS=Object.freeze({
  stale_consent:'These preferences changed. Reload and review them again.',
  invalid_preferences:'Check the preference values.',
  organization_read_only:'The organization’s payment has lapsed, so it is read-only. Leaving, removing members, decisions and export stay available.',
- tight_verification_required:'Confirm with a passkey or password enrolled more than 7 days ago. After a recent security change, wait until the 30-day cooling period ends.',
+ tight_verification_required:'Confirm with a passkey enrolled more than 7 days ago. After a recent security change, wait until the 30-day cooling period ends.',
  recipient_unavailable:'No active 3sln.me person account has that handle.',
  billing_unavailable:'Organization billing is not available on this host.',
  billing_provider_unavailable:'The payment provider is not responding. Try again in a few minutes.',
@@ -80,7 +80,7 @@ export const ORG_ERRORS=Object.freeze({
 });
 // ORG-12e break-glass codes, with their Spanish text here (the shared catalogue is owned elsewhere).
 export const ORG_BREAK_GLASS_ERRORS=Object.freeze({
- owner_proof_required:['Confirm with a passkey or password you had before this claim began.','Confirma con una llave de acceso o contraseña que tenías antes de que empezara esta reclamación.'],
+ owner_proof_required:['Confirm with a passkey you had before this claim began.','Confirma con una llave de acceso que tenías antes de que empezara esta reclamación.'],
  candidate_ineligible:['That account cannot be the candidate. Candidates are active 3sln.me admins of at least 30 days, with no recent security change.','Esa cuenta no puede ser la candidata. Las candidatas son administradores activos de 3sln.me desde hace al menos 30 días, sin cambios de seguridad recientes.'],
  break_glass_pending:['An ownership claim is already open for this organization.','Ya hay una reclamación de propiedad abierta para esta organización.'],
  break_glass_locked:['A recent claim was stopped by the owner or support. A new claim is possible later.','El propietario o el soporte detuvo una reclamación reciente. Podrás iniciar otra más adelante.'],

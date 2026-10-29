@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {baseURL} from './browser.mjs';
+import {baseURL,softAuthenticator,softWebAuthn,fixtureRegistrationOptions} from './browser.mjs';
 // UI chaos harness. The real local Worker serves the built application; every
 // /api request is answered by an explicit, labeled fixture model so faults can be
 // injected deterministically at the HTTP boundary: status bursts, truncated or
@@ -26,8 +26,9 @@ const STUCK=()=>[...document.querySelectorAll('button')].filter(button=>button.t
 // Settled predicate as a standalone function: string predicates are refused by the page CSP (no 'unsafe-eval').
 const SETTLED=()=>([...document.querySelectorAll('button')].filter(button=>button.textContent.trim()==='Please wait…').length+document.querySelectorAll('.boot-screen,[aria-busy=true]').length+[...document.querySelectorAll('[role=status]')].filter(node=>/^(Loading|Cargando)/.test(node.textContent.trim())).length)===0;
 /** One browser context whose /api surface is a mutable fixture model. */
-export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chaos',status:'active',hasPassword:true,passkeyCount:0},signedIn=true,config={},data={},views=builtinViews(),incoming={},viewport={width:1440,height:1000},contextOptions={},handlers={},goto='/console'}={}){
+export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chaos',status:'active',passkeyCount:0},signedIn=true,config={},data={},views=builtinViews(),incoming={},viewport={width:1440,height:1000},contextOptions={},handlers={},goto='/console'}={}){
  const context=await browser.newContext({viewport,serviceWorkers:'block',...contextOptions});t.after(()=>context.close());
+ const authenticator=softAuthenticator({origin:baseURL});await authenticator.register(fixtureRegistrationOptions(account.handle));await softWebAuthn(context,authenticator);
  account={termsVersion:config.termsVersion??'2026-10-11',...account};
  const model={account,signedIn,config:{environment:'UI chaos fixture',termsVersion:'2026-10-11',localDevelopment:true,signupEnabled:true,providers:{},...config},data:{account,collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],rules:[],resources:[],grants:[],...data},views,incoming,calls:[],faults:[],gates:[],handlers};
  const waiters=new Set(),record=(method,path,body)=>{model.calls.push({method,path,body});for(const waiter of waiters)waiter();};
@@ -40,7 +41,10 @@ export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chao
   if(path==='/api/account'){if(!model.signedIn)return route.fulfill({status:401,json:{error:'unauthorized',message:'Sign in to continue.'}});return route.fulfill({json:{...model.data,account:model.account,views:model.views}});}
   if(path==='/api/views'&&method==='GET')return route.fulfill({json:{views:model.views}});
   if(path==='/api/incoming'&&method==='GET'){const view=url.searchParams.get('view')??'all',items=model.incoming[view]??[],start=Number(url.searchParams.get('cursor')??0),limit=Number(url.searchParams.get('limit')??50),page=items.slice(start,start+limit);return route.fulfill({json:{items:page,cursor:start+limit<items.length?String(start+limit):null,indexRevision:1}});}
-  if(path==='/api/auth/login/password'&&method==='POST'){model.signedIn=true;return route.fulfill({json:{account:model.account,csrfToken:'fixture-csrf',sessionContext:'fixture-context'}});}
+  // Passkey sign-in (passwords were dropped, owner approval 2026-10-28): the page's WebAuthn calls reach this context's
+  // soft authenticator, and finish installs the fixture session.
+  if(path==='/api/auth/login/passkey/begin'&&method==='POST')return route.fulfill({json:{authenticationOptions:{challenge:'Zml4dHVyZS1zaWduLWluLWNoYWxsZW5nZQ',rpId:url.hostname,allowCredentials:[],userVerification:'required',timeout:60000},challengeToken:'fixture-challenge'}});
+  if(path==='/api/auth/login/passkey/finish'&&method==='POST'){model.signedIn=true;return route.fulfill({json:{account:model.account,csrfToken:'fixture-csrf',sessionContext:'fixture-context'}});}
   return route.fulfill({status:404,json:{error:'not_found',message:'Not found.'}});
  };
  await context.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{

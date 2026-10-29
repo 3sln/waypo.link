@@ -20,6 +20,7 @@
     "./member.mjs": "./src/member.mjs",
     "./item-classification.mjs": "./src/item-classification.mjs",
     "./item-classification-fetch.mjs": "./src/item-classification-fetch.mjs",
-    "./item-classification-fetch-node.mjs": "./node/item-classification-fetch-node.mjs"
+    "./item-classification-fetch-node.mjs": "./node/item-classification-fetch-node.mjs",
+    "./cbor.mjs": "./src/cbor.mjs"
   }
 }

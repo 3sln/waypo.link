@@ -100,13 +100,13 @@ test('account and security notice resources restrict templates and senders', asy
     assert.match(sent.at(-1).text, /Open https:\/\/space.example\//);
   }
   assert.doesNotMatch(sent[1].text, /\d{4}-\d{2}-\d{2}|grace|days/);
-  for (const type of ['recovery-used', 'passkey-added', 'passkey-removed', 'password-changed', 'email-removed']) {
+  for (const type of ['recovery-used', 'passkey-added', 'passkey-removed', 'email-sign-in-enabled', 'email-sign-in-removed', 'email-removed']) {
     await transport.sendSecurityAlert({ email, type });
     assert.equal(sent.at(-1).from, 'security@sys.3sln.me');
   }
   assert.throws(() => transport.sendAccountNotice({ email, type: 'unknown' }), /Invalid mail notice type/);
   assert.throws(() => transport.sendSecurityAlert({ email, type: 'toString' }), /Invalid mail notice type/);
-  assert.equal(sent.length, 8);
+  assert.equal(sent.length, 9);
 });
 
 test('mail rejects CRLF envelopes, token injection, malformed addresses and substituted issuers before binding calls', async () => {
@@ -117,7 +117,7 @@ test('mail rejects CRLF envelopes, token injection, malformed addresses and subs
   for (const issuer of ['https://attacker.example', `${origin}\r\nInjected: yes`]) await assert.rejects(transport.sendVerification({ ...input, issuer }), /Invalid mail verification request/);
   await assert.rejects(transport.sendVerification({ ...input, purpose: 'recovery' }), /Invalid mail verification request/);
   await assert.rejects(transport.sendReminder({ email, token, owner: 'owner\r\nInjected: yes' }), /Invalid mail link/);
-  assert.throws(() => transport.sendSecurityAlert({ email, type: 'password-changed\r\nSubject: forged' }), /Invalid mail notice type/);
+  assert.throws(() => transport.sendSecurityAlert({ email, type: 'email-sign-in-enabled\r\nSubject: forged' }), /Invalid mail notice type/);
   assert.equal(sent.length, 0);
 });
 

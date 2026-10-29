@@ -6,7 +6,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createNodeServer} from '../../apps/node/server.mjs';
 import {signSystemInvitation} from '../../packages/identity/system-bootstrap.mjs';
-import {launch,screenshot} from './browser.mjs';
+import {launch,screenshot,passkeyAccount} from './browser.mjs';
+import {softAuthenticator,registerPending} from '../helpers/soft-passkey.mjs';
 
 // Real Node identity/runtime + real Chromium. A local wrangler Worker cannot bootstrap the
 // protected developer identity (it needs a configured email or push provider), so the
@@ -15,7 +16,7 @@ import {launch,screenshot} from './browser.mjs';
 // POST asks the developer identity's Parlay, through the host mint hook DEVELOPER_CONTACT_MINT, for a single-use
 // invitation bound to the requesting user. No adapter carries that request to Parlay yet, so without the hook the
 // service answers developer-unavailable; with a loopback test double the eligible hand-off runs end to end.
-const password='Private conditional browser password 2026!',secret=Buffer.alloc(32,61).toString('base64url');
+const secret=Buffer.alloc(32,61).toString('base64url');
 let browser;const servers=[];
 test.before(async()=>{browser=await launch();});
 test.after(async()=>{await browser?.close();for(const s of servers){await s.app.close();await rm(s.directory,{recursive:true,force:true});}});
@@ -29,7 +30,7 @@ async function server(config={}){
  const post=(path,input,cookie)=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json','CF-Connecting-IP':'192.0.2.250',...cookie?{Cookie:cookie}:{}},body:JSON.stringify(input)}));
  const begin=await post('/api/auth/system/bootstrap/begin',{});const cookie=begin.headers.get('Set-Cookie').split(';')[0],now=Date.now();
  const token=await signSystemInvitation({version:1,purpose:'bindle-system-account-setup',issuer:origin,handle:'ray',role:'developer',owner:crypto.randomUUID(),assignmentId:crypto.randomUUID(),nonce:crypto.randomUUID(),issuedAt:now,expiresAt:now+3600000},secret);
- const pending=await (await post('/api/auth/system/bootstrap',{bootstrapToken:token,method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'},cookie)).json();assert.equal(pending.account.systemBadge.role,'developer');
+ const send=async(path,data)=>(await post(path,data,cookie)).json(),started=await send('/api/auth/system/bootstrap',{bootstrapToken:token,method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(started.account.systemBadge.role,'developer');assert.equal((await registerPending(softAuthenticator({origin}),send,started)).readyForRecovery,true);const pending={pendingToken:started.pendingToken};
  const file=await (await post('/api/auth/recovery/download',pending,cookie)).json();await post('/api/auth/setup/email/start',{...pending,email:'developer@links.example'},cookie);
  assert.equal((await post('/api/auth/setup/email/confirm',{...pending,code:mailbox.at(-1).code},cookie)).status,200);assert.equal((await post('/api/auth/recovery/confirm',{...pending,...file,downloadConfirmed:true},cookie)).status,200);
  // The scheduled census normally completes the active-population baseline; step it here so policy is decidable.
@@ -39,7 +40,7 @@ async function server(config={}){
 let network=10;
 async function person(t,s,{signedIn=true}={}){
  const context=await browser.newContext({viewport:{width:1280,height:900},extraHTTPHeaders:{'CF-Connecting-IP':`198.51.100.${network++}`}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',error=>errors.push(error.message));t.after(()=>assert.deepEqual(errors,[],'No browser runtime errors'));
- let account=null;if(signedIn){const request=(path,data)=>context.request.post(s.origin+path,{headers:{Origin:s.origin},data});const pending=await (await request('/api/auth/signup',{method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json(),recovery=await (await request('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json(),active=await request('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(active.status(),200,await active.text());account=(await active.json()).account;}
+ let account=null;if(signedIn)account=(await passkeyAccount(context.request,{origin:s.origin})).account;
  return {context,page,account};
 }
 async function developerLink(page,s){await page.goto(s.origin+'/console');await page.locator('.app-shell').waitFor();return page.evaluate(async()=>{const session=await (await fetch('/api/session')).json();return (await fetch('/api/developer-contact',{headers:{'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext}})).json();});}

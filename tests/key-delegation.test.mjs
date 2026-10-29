@@ -18,6 +18,7 @@ import * as B from '../packages/messaging-protocol/index.mjs';
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';
 import { createNodeServer } from '../apps/node/server.mjs';
+import { softAuthenticator, signupBody, registerPending } from './helpers/soft-passkey.mjs';
 
 const OWNER = '11111111-1111-4111-8111-111111111111', OTHER = '22222222-2222-4222-8222-222222222222', ISSUER = 'https://3sln.example';
 const APP = 'https://box.example/client.json', EVIL = 'https://evil.example/client.json';
@@ -299,7 +300,8 @@ async function server(port, config) {
   const origin = `http://localhost:${port}`, directory = await mkdtemp(join(tmpdir(), 'bindle-key-delegation-')), app = await createNodeServer({ directory, config: { APP_ORIGIN: origin, ...config } });
   const fetchURL = (path, init = {}) => app.fetch(new Request(new URL(path, origin), init));
   const ip = '198.51.100.9', post = (path, value, headers = {}) => fetchURL(path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'CF-Connecting-IP': ip, ...headers }, body: JSON.stringify(value) });
-  const signup = await post('/api/auth/signup', { method: 'password', password: 'Private key delegation account password!', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }), pending = await signup.json(), setup = { Cookie: signup.headers.get('Set-Cookie').split(';')[0] };
+  const signup = await post('/api/auth/signup', signupBody({ ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' })), pending = await signup.json(), setup = { Cookie: signup.headers.get('Set-Cookie').split(';')[0] };
+  await registerPending(softAuthenticator({ origin }), async (path, value) => { const response = await post(path, value, setup); assert.equal(response.status, 200, await response.clone().text()); return response.json(); }, pending);
   const recovery = await (await post('/api/auth/recovery/download', { pendingToken: pending.pendingToken }, setup)).json();
   const activated = await post('/api/auth/recovery/confirm', { pendingToken: pending.pendingToken, recoveryToken: recovery.recoveryToken, downloadConfirmed: true }, setup); assert.equal(activated.status, 200, await activated.clone().text());
   const session = await activated.json(), headers = { Cookie: activated.headers.getSetCookie().find(c => c.startsWith('bindle_session=')).split(';')[0], 'X-CSRF-Token': session.csrfToken };

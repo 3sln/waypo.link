@@ -120,7 +120,7 @@ class Accounts {records=new Map();async get(id){return structuredClone(this.reco
 test('tombstone chaos: racing session writers never resurrect credentials, and a lost race leaves the account intact',async()=>{
  await forEachSeed(25,async random=>{
   const repository=new Accounts(),scheduler=createScheduler(random),id=randomUUID(),gated=scheduler.wrap(repository,'identity');
-  repository.records.set(id,{id,revision:0,handle:'n.42',assignmentId:'assign-1',status:'active',createdAt:1,verifiedEmail:'owner@example.example',passwordHash:'hash',recoveryHash:'recovery',credentials:[{id:'c1'}],sessions:[],challenges:[],audit:[]});
+  repository.records.set(id,{id,revision:0,handle:'n.42',assignmentId:'assign-1',status:'active',createdAt:1,verifiedEmail:'owner@example.example',emailVerifiedAt:1,passwordHash:'hash',recoveryHash:'recovery',credentials:[{id:'c1'}],sessions:[],challenges:[],audit:[]});
   const port=lifecycleIdentityPort(gated,{clock:()=>5000});
   // Mirrors the identity service: a session is added only to an active account, by revision-checked swap.
   const writer=async n=>{let added=0;for(let attempt=0;attempt<4;attempt++){const account=await gated.get(id);if(account.status!=='active')return added?'added':'refused';account.sessions.push({id:'s'+n+'-'+attempt});account.revision++;if(await gated.compareAndSwap(id,account.revision-1,account))added++;}return added?'added':'conflict';};
@@ -128,7 +128,7 @@ test('tombstone chaos: racing session writers never resurrect credentials, and a
   const final=repository.records.get(id),[tomb]=results;
   if(tomb.status==='fulfilled'){
    assert.equal(tomb.value,true);assert.equal(final.status,'deleted');
-   assert.deepEqual([final.sessions,final.credentials,final.passwordHash,final.recoveryHash,final.verifiedEmail],[[],[],null,null,undefined]);
+   assert.deepEqual([final.sessions,final.credentials,final.passwordHash,final.recoveryHash,final.verifiedEmail,final.emails],[[],[],undefined,null,undefined,undefined],'a legacy password hash is not retained either');
    assert.deepEqual([final.handle,final.assignmentId,final.id],['n.42','assign-1',id],'the name and assignment stay bound forever');
    assert.equal(await port.tombstone(id,{assignmentId:'assign-1'}),true,'tombstoning is idempotent');
   }else{assert.equal(tomb.reason.code,'lifecycle_identity_conflict');assert.equal(final.status,'active');assert.equal(final.passwordHash,'hash');}

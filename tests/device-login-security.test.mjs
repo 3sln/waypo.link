@@ -1,22 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {identityEngine,activate,context,sessionContext,PASSWORD} from './helpers/identity-engine.mjs';
+import {identityEngine,activate,context,sessionContext,stepUpPasskey,signInPasskey,passkeyResponse} from './helpers/identity-engine.mjs';
 
 const start=f=>f.act('createDeviceLogin',{label:'TV',turnstileToken:'verified'});
 async function derive(f,parent){const request=await start(f);await f.act('approveDeviceLogin',{...request,approved:true,accountHandle:parent.account.handle},sessionContext(parent));f.clock.advance(5000);const result=await f.act('pollDeviceLogin',request);assert.equal(result.status,'authorized');return {...result,request};}
-async function step(f,session){await f.service.stepUp({method:'password',password:PASSWORD},sessionContext(session));}
+async function step(f,session){await stepUpPasskey(f.act,sessionContext(session),'passkey-alice');}
 async function refused(f,session){
  const ctx=sessionContext(session),request=await start(f);
- for(const [method,input] of [['approveDeviceLogin',{...request,approved:true,accountHandle:session.account.handle}],['credentialBegin',{label:'Untrusted key'}],['emailStart',{email:'attacker@mail.example'}],['configureEmailLogin',{enabled:true}]])await assert.rejects(f.act(method,input,ctx),{code:'reauthentication_required'},method);
+ for(const [method,input] of [['approveDeviceLogin',{...request,approved:true,accountHandle:session.account.handle}],['credentialBegin',{label:'Untrusted key'}],['emailStart',{email:'attacker@mail.example'}]])await assert.rejects(f.act(method,input,ctx),{code:'reauthentication_required'},method);
+ // Turning on email sign-in needs a passkey step-up within 5 minutes (2026-10-28); with no verified address there is nothing to turn on.
+ const verified=((await f.repository.get(session.account.id)).emails??[]).find(entry=>entry.state==='verified');
+ await assert.rejects(f.act('configureEmailLogin',{enabled:true,...verified?{address:verified.address}:{}},ctx),{code:verified?'step_up_required':'verified_email_required'},'configureEmailLogin');
 }
 
 test('device, email and recovery sessions need their own credential step-up before changing access',async()=>{
  const f=identityEngine();try{
   const {owner,file,ownerContext}=await activate(f.act),child=await derive(f,owner);
   await refused(f,child);await step(f,child);await f.service.recent(sessionContext(child));
-  await f.act('emailStart',{email:'owner@mail.example'},ownerContext);await f.act('emailConfirm',{token:f.mail.at(-1).token,confirmed:true},ownerContext);await f.act('configureEmailLogin',{enabled:true},ownerContext);await f.act('emailLoginStart',{email:'owner@mail.example',turnstileToken:'verified'});await f.service.settleBackground();
+  await f.act('emailStart',{email:'owner@mail.example'},ownerContext);await f.service.settleBackground();await f.act('emailConfirm',{token:f.mail.at(-1).token,confirmed:true},ownerContext);await f.act('configureEmailLogin',{enabled:true},ownerContext);await f.act('emailStart',{email:'second@mail.example'},ownerContext);await f.service.settleBackground();await f.act('emailConfirm',{token:f.mail.at(-1).token,confirmed:true},ownerContext);await f.act('emailLoginStart',{email:'owner@mail.example',turnstileToken:'verified'});await f.service.settleBackground();
   const email=await f.act('emailLoginConfirm',{token:f.mail.at(-1).token,confirmed:true});assert.equal((await f.service.authorized(sessionContext(email))).session.source,'email');await refused(f,email);await step(f,email);await f.service.recent(sessionContext(email));
-  const recovering=await f.act('recover',{recoveryToken:file.recoveryToken,turnstileToken:'verified'});await f.act('setPendingPassword',{...recovering,password:PASSWORD});const replacement=await f.act('downloadRecovery',recovering),recovery=await f.act('confirmRecovery',{...recovering,recoveryToken:replacement.recoveryToken,downloadConfirmed:true});assert.equal((await f.service.authorized(sessionContext(recovery))).session.source,'recovery');await refused(f,recovery);await step(f,recovery);await f.service.recent(sessionContext(recovery));
+  const recovering=await f.act('recover',{recoveryToken:file.recoveryToken,turnstileToken:'verified'});const options=await f.act('beginPasskeyRegistration',recovering);await f.act('registerPasskey',{...recovering,response:passkeyResponse(options,'passkey-alice')});const replacement=await f.act('downloadRecovery',recovering),recovery=await f.act('confirmRecovery',{...recovering,recoveryToken:replacement.recoveryToken,downloadConfirmed:true});assert.equal((await f.service.authorized(sessionContext(recovery))).session.source,'recovery');await refused(f,recovery);await step(f,recovery);await f.service.recent(sessionContext(recovery));
 
  }finally{await f.engine.dispose();}
 });
@@ -31,9 +34,9 @@ test('device session lifetime is capped at approval and remains bounded through 
 
 for(const operation of ['logout','logoutSaved','revokeSession','removePasskey','cancelDeviceLogin'])test(`${operation} revokes descendants transitively while preserving unrelated sessions`,async()=>{
  const f=identityEngine();try{
-  const {owner}=await activate(f.act),child=await derive(f,owner);await step(f,child);const grandchild=await derive(f,child),unrelated=await f.act('loginPassword',{handle:owner.account.handle,password:PASSWORD,turnstileToken:'verified'});
+  const {owner}=await activate(f.act),child=await derive(f,owner);await step(f,child);const grandchild=await derive(f,child),unrelated=await signInPasskey(f.act,owner.account.handle,'passkey-alice');
   if(operation==='revokeSession')await f.act(operation,{sessionId:owner.sessionContext},sessionContext(unrelated));
-  else if(operation==='removePasskey'){const account=await f.repository.get(owner.account.id);account.credentials=[{id:'parent-key'}];account.sessions.find(s=>s.id===owner.sessionContext).credentialId='parent-key';await f.repository.compareAndSwap(account.id,account.revision,account);await f.act(operation,{credentialId:'parent-key'},sessionContext(unrelated));}
+  else if(operation==='removePasskey'){const account=await f.repository.get(owner.account.id);account.credentials.push({id:'parent-key'});account.sessions.find(s=>s.id===owner.sessionContext).credentialId='parent-key';await f.repository.compareAndSwap(account.id,account.revision,account);await f.act(operation,{credentialId:'parent-key'},sessionContext(unrelated));}
   else if(operation==='cancelDeviceLogin')await f.act(operation,child.request);
   else await f.act(operation,{},sessionContext(owner));
   for(const session of [child,grandchild])await assert.rejects(f.service.authorized(sessionContext(session)),{code:'unauthorized'});await f.service.authorized(sessionContext(unrelated));
@@ -45,7 +48,7 @@ test('revoke-others preserves a derived caller and its ancestors but revokes its
 });
 
 test('session eviction preserves live ancestors and removes orphaned descendants with expired parents',async()=>{
- const f=identityEngine();try{const {owner}=await activate(f.act),child=await derive(f,owner);for(let i=0;i<9;i++)await f.act('loginPassword',{handle:owner.account.handle,password:PASSWORD,turnstileToken:'verified'});await f.service.authorized(sessionContext(owner));await assert.rejects(f.service.authorized(sessionContext(child)),{code:'unauthorized'});const derived=await derive(f,owner),account=await f.repository.get(owner.account.id);account.sessions.find(s=>s.id===owner.sessionContext).expiresAt=f.clock.now();await f.repository.compareAndSwap(account.id,account.revision,account);await f.act('loginPassword',{handle:owner.account.handle,password:PASSWORD,turnstileToken:'verified'});await assert.rejects(f.service.authorized(sessionContext(derived)),{code:'unauthorized'});}finally{await f.engine.dispose();}
+ const f=identityEngine();try{const {owner}=await activate(f.act),child=await derive(f,owner);for(let i=0;i<9;i++)await signInPasskey(f.act,owner.account.handle,'passkey-alice');await f.service.authorized(sessionContext(owner));await assert.rejects(f.service.authorized(sessionContext(child)),{code:'unauthorized'});const derived=await derive(f,owner),account=await f.repository.get(owner.account.id);account.sessions.find(s=>s.id===owner.sessionContext).expiresAt=f.clock.now();await f.repository.compareAndSwap(account.id,account.revision,account);await signInPasskey(f.act,owner.account.handle,'passkey-alice');await assert.rejects(f.service.authorized(sessionContext(derived)),{code:'unauthorized'});}finally{await f.engine.dispose();}
 });
 
 test('QR links carry only the locator; the typed code is required, hashed and matched before approval',async()=>{
@@ -53,7 +56,7 @@ test('QR links carry only the locator; the typed code is required, hashed and ma
 });
 
 test('a device session can gain freshness through its own verified passkey step-up',async()=>{
- const f=identityEngine({webauthn:{authenticationOptions:async()=>({challenge:'step-up-challenge'}),verifyAuthentication:async({response,challenge,credential})=>{assert.equal(response.id,credential.id);assert.equal(challenge,'step-up-challenge');return {counter:1,backedUp:true};}}});try{const {owner}=await activate(f.act),child=await derive(f,owner),account=await f.repository.get(owner.account.id);account.credentials=[{id:'own-passkey'}];await f.repository.compareAndSwap(account.id,account.revision,account);await assert.rejects(f.service.recent(sessionContext(child)),{code:'reauthentication_required'});await f.service.stepUpBegin({},sessionContext(child));await f.service.stepUp({method:'passkey',response:{id:'own-passkey'}},sessionContext(child));await f.service.recent(sessionContext(child));}finally{await f.engine.dispose();}
+ const f=identityEngine();try{const {owner,credentialId}=await activate(f.act),child=await derive(f,owner);await assert.rejects(f.service.recent(sessionContext(child)),{code:'reauthentication_required'});await assert.rejects(f.act('stepUp',{method:'passkey',response:{id:credentialId,challenge:'forged'}},sessionContext(child)),{code:'unauthorized'});await stepUpPasskey(f.act,sessionContext(child),credentialId);await f.service.recent(sessionContext(child));}finally{await f.engine.dispose();}
 });
 
 test('revoking an ancestor from a derived caller reports that the caller was revoked',async()=>{
@@ -72,11 +75,14 @@ test('QR generation refuses code-bearing links and the anonymous inspection rout
  assert.equal(await call('/api/auth/device/inspect',{requestId,userCode:'23456789'}),undefined);
 });
 
-for(const method of ['password','passkey','pending-password','no-ceremony','expired-ceremony','future-ceremony'])test(`activation freshness requires this setup credential ceremony: ${method}`,async()=>{
- const f=identityEngine({webauthn:{registrationOptions:async()=>({challenge:'register'}),verifyRegistration:async()=>({id:'registered',publicKey:'key'})}});try{
-  const passwordSignup=['password','no-ceremony','expired-ceremony','future-ceremony'].includes(method),pending=await f.act('signup',{handle:'new-owner',method:passwordSignup?'password':'passkey',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'});
-  if(method==='passkey')await f.act('registerPasskey',{...pending,response:{id:'registered'}});
-  if(method==='pending-password')await f.act('setPendingPassword',{...pending,password:PASSWORD});
+test('passwords are gone: a password sign-up or pending password is refused',async()=>{
+ const f=identityEngine();try{for(const input of [{method:'password',password:'correct horse battery staple'},{method:'passkey',password:'correct horse battery staple'}])await assert.rejects(f.act('signup',{handle:'new-owner',...input,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'}),{code:'invalid_method'});const pending=await f.act('signup',{handle:'new-owner',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'});await assert.rejects(f.act('setPendingPassword',{...pending,password:'correct horse battery staple'}));await assert.rejects(f.act('downloadRecovery',pending),{code:'credential_required'});}finally{await f.engine.dispose();}
+});
+
+for(const method of ['passkey','no-ceremony','expired-ceremony','future-ceremony'])test(`activation freshness requires this setup credential ceremony: ${method}`,async()=>{
+ const f=identityEngine();try{
+  const pending=await f.act('signup',{handle:'new-owner',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'});
+  await f.act('registerPasskey',{pendingToken:pending.pendingToken,response:passkeyResponse(pending,'registered')});
   if(['no-ceremony','future-ceremony'].includes(method)){const account=await f.repository.get(pending.account.id);if(method==='no-ceremony')delete account.pendingCredentialAt;else account.pendingCredentialAt=f.clock.now()+1000;await f.repository.compareAndSwap(account.id,account.revision,account);}
   if(method==='expired-ceremony')f.clock.advance(900000);
   const file=await f.act('downloadRecovery',pending),owner=await f.act('confirmRecovery',{...pending,recoveryToken:file.recoveryToken,downloadConfirmed:true}),ctx=sessionContext(owner),{session}=await f.service.authorized(ctx);
@@ -87,5 +93,5 @@ for(const method of ['password','passkey','pending-password','no-ceremony','expi
 });
 
 test('rotating setup authority discards previous ceremony evidence',async()=>{
- const f=identityEngine();try{const pending=await f.act('signup',{handle:'rotated-owner',method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'}),account=await f.repository.get(pending.account.id);assert(Number.isSafeInteger(account.pendingCredentialAt));await f.service.newPending(account,context);assert.equal(account.pendingCredentialAt,undefined);}finally{await f.engine.dispose();}
+ const f=identityEngine();try{const pending=await f.act('signup',{handle:'rotated-owner',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'});await f.act('registerPasskey',{pendingToken:pending.pendingToken,response:passkeyResponse(pending,'rotated-key')});const account=await f.repository.get(pending.account.id);assert(Number.isSafeInteger(account.pendingCredentialAt));await f.service.newPending(account,context);assert.equal(account.pendingCredentialAt,undefined);}finally{await f.engine.dispose();}
 });

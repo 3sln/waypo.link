@@ -20,7 +20,7 @@ test('operations register under unique wire names and are terms-exempt', () => {
 
 test('aged owner: begin stages a v3 file without touching keys and notifies; confirm commits into the 7-day window (new file not yet usable, old file cancel-only), resets P14 age and notifies every channel with a cancel link', async t => {
   const f = await reissueFixture(t), { id, c } = f;
-  await f.age(); await f.stepUp('password');
+  await f.age(); await f.stepUp();
   const before = await f.identity(), signer = (await c.signingKey(id)).kid;
   const begun = await f.begin();
   assert.equal(begun.transferPending, false); assert.equal(begun.forced, null);
@@ -66,28 +66,30 @@ test('aged owner: begin stages a v3 file without touching keys and notifies; con
 test('authority: a fresh step-up with a credential enrolled at least 7 days earlier, acknowledgement, and the recovery feature', async t => {
   const f = await reissueFixture(t);
   await assert.rejects(f.begin(), { code: 'reauthentication_required' }, 'no step-up');
-  await f.stepUp('password'); f.advance(5 * MINUTE);
+  await f.stepUp(); f.advance(5 * MINUTE);
   await assert.rejects(f.begin(), { code: 'reauthentication_required' }, 'a step-up older than 5 minutes');
-  await f.stepUp('password');
+  await f.stepUp();
   await assert.rejects(f.begin(), { code: 'credential_too_new' }, 'only a new credential exists');
-  await f.patch(a => ({ ...a, credentials: [{ id: 'pk-old', createdAt: f.now() - 8 * DAY, publicKey: 'x', counter: 0 }] }));
-  await assert.rejects(f.begin(), { code: 'reauthentication_required' }, 'a newer credential was used while an aged one exists: confirm with that one');
-  // Wargame #1(a): with any passkey enrolled, even an aged password never authorizes a reissue.
-  await f.patch(a => ({ ...a, passwordSetAt: f.now() - 30 * DAY })); await f.stepUp('password');
-  await assert.rejects(f.begin(), { code: 'reauthentication_required', message: /passkey/ });
-  await f.patch(a => ({ ...a, credentials: [], passwordSetAt: f.now() - RECOVERY_CREDENTIAL_AGE_MS })); await f.stepUp('password');
+  await f.patch(a => ({ ...a, credentials: [...a.credentials, { id: 'pk-old', createdAt: f.now() - 8 * DAY, publicKey: 'x', counter: 0 }] }));
+  await assert.rejects(f.begin(), { code: 'reauthentication_required', message: /passkey/ }, 'a newer passkey was used while an aged one exists: confirm with that one');
+  // Passwords were dropped (owner approval 2026-10-28): a password step-up is no method at all, and an account with no
+  // passkey cannot reissue (it must add one and wait 7 days).
+  await assert.rejects(f.stepUp('password'), { code: 'invalid_method' });
+  const credentials = (await f.identity()).credentials; await f.patch(a => ({ ...a, credentials: [] }));
+  await assert.rejects(f.begin(), { code: 'passkey_required', message: /passkey/ });
+  await f.patch(a => ({ ...a, credentials: credentials.filter(c => c.id === f.credentialId).map(c => ({ ...c, createdAt: f.now() - RECOVERY_CREDENTIAL_AGE_MS })) })); await f.stepUp();
   await assert.rejects(f.begin({ acknowledged: false }), { code: 'confirmation_required' });
   await assert.rejects(f.begin({ acknowledged: true, extra: 1 }), { code: 'invalid_request' });
   const unconfigured = f.service.identityBackup; f.service.identityBackup = { issue: unconfigured.issue };
   await assert.rejects(f.begin(), { code: 'recovery_unavailable' }); f.service.identityBackup = unconfigured;
-  const legacy = await f.identity(); assert.equal(legacy.passwordSetAt, f.now() - RECOVERY_CREDENTIAL_AGE_MS);
+  const legacy = await f.identity(); assert.equal(legacy.credentials[0].createdAt, f.now() - RECOVERY_CREDENTIAL_AGE_MS);
   assert.ok(await f.begin(), 'exactly 7 days old qualifies');
   // The step-up records the credential that confirmed it.
-  assert.deepEqual((await f.identity()).sessions.find(s => s.stepUpAt).stepUpCredential, { kind: 'password' });
+  assert.deepEqual((await f.identity()).sessions.find(s => s.stepUpAt).stepUpCredential, { kind: 'passkey', id: f.credentialId });
 });
 
 test('confirmation: bound to the session, the staged token, 30 minutes and the credential it replaces', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   const staged = f.parse(await f.begin());
   await assert.rejects(f.confirm({ ...staged, recoveryToken: `${f.id}.${'w'.repeat(43)}` }), { code: 'recovery_reissue_expired' }, 'wrong token');
   await assert.rejects(f.confirm(staged, { downloadConfirmed: false }), { code: 'recovery_confirmation_required' });
@@ -101,22 +103,22 @@ test('confirmation: bound to the session, the staged token, 30 minutes and the c
   // An expired staging left the current file current.
   assert.equal((await f.identity()).recoveryHash, (await f.identityBefore()).recoveryHash);
   // A newer begin replaces the staged file; the replaced staged file never becomes current.
-  await f.stepUp('password'); const first = f.parse(await f.begin()); await f.stepUp('password'); const second = f.parse(await f.begin());
+  await f.stepUp(); const first = f.parse(await f.begin()); await f.stepUp(); const second = f.parse(await f.begin());
   assert.notEqual(second.fileId, first.fileId);
   await assert.rejects(f.confirm(first), { code: 'recovery_reissue_expired' });
   await f.confirm(second);
   await assert.rejects(f.recover(first), { code: 'unauthorized' });
   // One window at a time: nothing new can be staged until it ends (or is cancelled).
-  await f.stepUp('password'); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
+  await f.stepUp(); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
   // A staged file whose base credential changed (another reissue committed from another session) is refused.
   f.advance(RECOVERY_REISSUE_WINDOW_MS); await f.age(); const s1 = await f.secondSession(), s2 = await f.secondSession();
-  await f.stepUp('password', s1); const third = f.parse(await f.begin(undefined, s1));
-  await f.stepUp('password', s2); await f.confirm(f.parse(await f.begin(undefined, s2)), {}, s2);
+  await f.stepUp('passkey', s1); const third = f.parse(await f.begin(undefined, s1));
+  await f.stepUp('passkey', s2); await f.confirm(f.parse(await f.begin(undefined, s2)), {}, s2);
   await assert.rejects(f.confirm(third, {}, s1), { code: 'recovery_reissue_expired' }, 'the other session replaced the staged record');
 });
 
 test('keys are independent of files: an ordinary key rotation between begin and confirm leaves the staged file valid', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   const staged = f.parse(await f.begin()), k0 = (await f.c.signingKey(f.id)).kid;
   await f.c.rotateIdentityKey(f.id, { purpose: 'signing', expectedKid: k0 });
   await f.confirm(staged);
@@ -127,7 +129,7 @@ test('keys are independent of files: an ordinary key rotation between begin and 
 
 test('deletion: refused while scheduled or executing, including one scheduled between begin and confirm; nothing changes', async t => {
   for (const state of ['scheduled', 'executing']) {
-    const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+    const f = await reissueFixture(t); await f.age(); await f.stepUp();
     await f.c.metadata.put(REQUEST_KEY, { state });
     const kid = (await f.c.signingKey(f.id)).kid;
     await assert.rejects(f.begin(), { code: 'deletion_scheduled' });
@@ -138,13 +140,13 @@ test('deletion: refused while scheduled or executing, including one scheduled be
     await assert.rejects(f.confirm(staged), { code: 'deletion_scheduled' });
     assert.equal((await f.identity()).recoveryHash, (await f.identityBefore()).recoveryHash);
   }
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   await f.c.metadata.put('lifecycle/tombstone-v1', { at: 1 });
   await assert.rejects(f.begin(), { code: 'account_deleted' });
 });
 
 test('transfer-out: begin reports a pending move; confirm cancels it (no P14 dodge); contested, locked and committed moves refuse', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   await f.seedTransfer({ state: 'pending' });
   const staged = f.parse(await f.begin()); assert.equal(staged.transferPending, true);
   const done = await f.confirm(staged); assert.equal(done.transferCancelled, true);
@@ -152,14 +154,14 @@ test('transfer-out: begin reports a pending move; confirm cancels it (no P14 dod
   // The new credential cannot start a move for 7 days (credential age), and the security bump trips the look-back.
   assert.ok(f.now() - (await f.identity()).security.changedAt < 7 * DAY);
   for (const [seed, code] of [[{ state: 'held' }, null], [{ state: 'contested' }, 'transfer_contested']]) {
-    const g = await reissueFixture(t); await g.age(); await g.stepUp('password'); await g.seedTransfer(seed);
+    const g = await reissueFixture(t); await g.age(); await g.stepUp(); await g.seedTransfer(seed);
     if (code) { await assert.rejects(g.begin(), { code }); continue; }
     const s = g.parse(await g.begin()); assert.equal((await g.confirm(s)).transferCancelled, true); assert.equal((await g.c.metadata.get(TRANSFER_KEY)).state, 'cancelled');
   }
-  const locked = await reissueFixture(t); await locked.age(); await locked.stepUp('password');
+  const locked = await reissueFixture(t); await locked.age(); await locked.stepUp();
   await locked.c.metadata.put(LOCK_KEY, { contested: { since: locked.now(), until: null, reason: 'test' } });
   await assert.rejects(locked.begin(), { code: 'transfer_locked' });
-  const moved = await reissueFixture(t); await moved.age(); await moved.stepUp('password');
+  const moved = await reissueFixture(t); await moved.age(); await moved.stepUp();
   await moved.seedTransfer({ state: 'committed' });
   await assert.rejects(moved.begin(), { code: 'identity_moved' });
 });
@@ -173,29 +175,30 @@ test('forced path after an elevated abort: no aged credential needed; no key cha
   assert.equal((await f.owner()).recovery.reissueRequired, 'elevated-abort');
   await f.c.metadata.put(LOCK_KEY, { elevatedAbort: { at: f.now(), credentialId: null, sessionId: f.sessionId } });
   // Another session (another credential) is contested and refused (P17).
-  const other = await f.secondSession(); await f.stepUp('password', other);
+  const other = await f.secondSession(); await f.stepUp('passkey', other);
   await assert.rejects(f.begin(undefined, other), { code: 'transfer_contested' });
   assert.ok((await f.c.metadata.get(LOCK_KEY)).contested, 'the account goes to support');
   await f.c.metadata.put(LOCK_KEY, { elevatedAbort: { at: f.now(), credentialId: null, sessionId: f.sessionId } });
   // Review M1: the marker never waives the age for a credential enrolled after it was armed.
-  const armedAt = f.now(); f.advance(MINUTE); await f.patch(a => ({ ...a, passwordSetAt: f.now() }));
-  await f.stepUp('password'); await assert.rejects(f.begin(), { code: 'credential_too_new' });
-  await f.patch(a => ({ ...a, passwordSetAt: armedAt }));
-  await f.stepUp('password');
+  const armedAt = f.now(), enroll = at => f.patch(a => ({ ...a, credentials: a.credentials.map(c => ({ ...c, createdAt: at })) }));
+  f.advance(MINUTE); await enroll(f.now());
+  await f.stepUp(); await assert.rejects(f.begin(), { code: 'credential_too_new' });
+  await enroll(armedAt);
+  await f.stepUp();
   const staged = f.parse(await f.begin()); assert.equal(staged.forced, 'elevated-abort');
   assert.equal((await f.c.signingKey(f.id)).kid, k0, 'no rotation');
   // Review L5: the credential that authorized phase 1 must still exist at confirmation.
-  const password = (await f.identity()).passwordHash; await f.patch(a => ({ ...a, passwordHash: null }));
+  const passkeys = (await f.identity()).credentials; await f.patch(a => ({ ...a, credentials: [] }));
   await assert.rejects(f.confirm(staged), { code: 'recovery_reissue_expired' });
-  await f.patch(a => ({ ...a, passwordHash: password }));
+  await f.patch(a => ({ ...a, credentials: passkeys }));
   await f.confirm(staged);
   record = await f.identity(); assert.equal(record.recoveryReissue, undefined); assert.equal(recoveryCredential(record).fileId, staged.fileId);
   await assert.rejects(f.recover(f.file), { code: 'unauthorized' });
   // The window is open (the invalidated file has nothing to restore); after it the marker is spent and the next
   // reissue needs an aged credential again.
-  await f.stepUp('password'); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
-  f.advance(RECOVERY_REISSUE_WINDOW_MS); await f.patch(a => ({ ...a, passwordSetAt: f.now() - DAY }));
-  const later = await f.secondSession(); await f.stepUp('password', later); await assert.rejects(f.begin(undefined, later), { code: 'credential_too_new' });
+  await f.stepUp(); await assert.rejects(f.begin(), { code: 'recovery_reissue_pending' });
+  f.advance(RECOVERY_REISSUE_WINDOW_MS); await enroll(f.now() - DAY);
+  const later = await f.secondSession(); await f.stepUp('passkey', later); await assert.rejects(f.begin(undefined, later), { code: 'credential_too_new' });
 });
 
 test('forced path after PORT-4 activation: the recovery port arms the reissue; the first file leaves the key alone', async t => {
@@ -206,14 +209,14 @@ test('forced path after PORT-4 activation: the recovery port arms the reissue; t
   assert.deepEqual(await port.issue(f.id), { ok: false, armed: true }, 'idempotent');
   assert.deepEqual((await f.identity()).recoveryReissue, { reason: 'transfer-in', at: f.now() });
   const current = (await f.c.signingKey(f.id)).kid;
-  await f.stepUp('password'); const staged = f.parse(await f.begin());
+  await f.stepUp(); const staged = f.parse(await f.begin());
   assert.equal((await f.c.signingKey(f.id)).kid, current, 'issuance never rotates');
   await f.confirm(staged); assert.equal((await f.identity()).recoveryReissue, undefined);
   await assert.rejects(port.issue('00000000-0000-4000-8000-000000000000'), { code: 'identity_unavailable' });
 });
 
 test('a recovery started with the current file supersedes a staged reissue; a recovering account cannot confirm', async t => {
-  const f = await reissueFixture(t); await f.age(); await f.stepUp('password');
+  const f = await reissueFixture(t); await f.age(); await f.stepUp();
   const staged = f.parse(await f.begin());
   await f.recover(f.file);
   const record = await f.identity(); assert.equal(record.status, 'recovering'); assert.equal(record.recoveryStaged, undefined);

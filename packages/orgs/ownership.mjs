@@ -203,7 +203,7 @@ export class OwnershipService extends MembershipService{
  tight(actor,now){
   const proof=actor?.verification;
   if(!proof||!Number.isSafeInteger(proof.stepUpAt)||proof.stepUpAt>now||proof.stepUpAt+OWNERSHIP.STEP_UP_MS<=now||!Number.isSafeInteger(proof.enrolledAt)||proof.enrolledAt<0||proof.enrolledAt>now-OWNERSHIP.CREDENTIAL_AGE_MS||!Number.isSafeInteger(proof.securityChangedAt)||proof.securityChangedAt<0||proof.securityChangedAt>now)
-   fail('tight_verification_required','Confirm with a passkey or password enrolled more than 7 days ago.',401);
+   fail('tight_verification_required','Confirm with a passkey enrolled more than 7 days ago.',401);
   return proof.securityChangedAt>now-OWNERSHIP.SECURITY_COOLING_MS?proof.securityChangedAt+OWNERSHIP.SECURITY_COOLING_MS:null;
  }
  freshStepUp(actor,now){const at=actor?.verification?.stepUpAt;if(Number.isSafeInteger(at)&&at<=now&&at+OWNERSHIP.STEP_UP_MS>now)return;requireFresh(actor,now,OWNERSHIP.STEP_UP_MS);}

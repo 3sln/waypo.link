@@ -5,14 +5,14 @@
 import {bgWorld,A,B,C,E,DAY,ORG,p} from './break-glass-world.mjs';
 import {ownerChannelsAdapter} from '../../packages/identity/owner-channels.mjs';
 import {BreakGlassService} from '../../packages/orgs/break-glass.mjs';
-import {identityEngine,activate,signupInput,PASSWORD} from './identity-engine.mjs';
+import {identityEngine,activate,signupInput,signInPasskey} from './identity-engine.mjs';
 import {SqliteMetadata} from '../../apps/node/resources.mjs';
 import {metered,freshStats} from './org-world.mjs';
 
 export const ISS='https://3sln.example',SECRET='owner-channels-test-secret-0001',H=3600000;
 /** Identity records as the identity service stores them (only the fields the adapter reads). */
 export function people(now){
- const person=(sub,email,extra={})=>({id:sub,kind:'person',status:'active',handle:'h'+sub.slice(0,6),verifiedEmail:email,emailVerifiedAt:now-200*DAY,credentials:[{id:'cred-'+sub.slice(0,4),createdAt:now-300*DAY}],passwordHash:'fake',passwordSetAt:now-100*DAY,sessions:[{id:'sess-'+sub.slice(0,4),createdAt:now-H,expiresAt:now+20*H}],lastInteractiveAt:now-90*DAY,...extra});
+ const person=(sub,email,extra={})=>({id:sub,kind:'person',status:'active',handle:'h'+sub.slice(0,6),verifiedEmail:email,emailVerifiedAt:now-200*DAY,credentials:[{id:'cred-'+sub.slice(0,4),createdAt:now-300*DAY}],sessions:[{id:'sess-'+sub.slice(0,4),createdAt:now-H,expiresAt:now+20*H}],lastInteractiveAt:now-90*DAY,...extra});
  return new Map([[A,person(A,'alice@home-alice.example')],[B,person(B,'bob@bob-family.example')],[C,person(C,'carol@carol.example')],[E,person(E,'erin@erin.example')],[ORG,{id:ORG,kind:'organization',status:'active',handle:'acme'}]]);
 }
 export function fixture(now,{mail=true,fail=()=>false}={}){
@@ -44,9 +44,9 @@ export async function identityFor(w,{wired=true}={}){
  const calls=[],cas={count:0};
  const id=identityEngine({clock:w.clock,...wired?{organizationSignals:{liveness:async(owner,input)=>{calls.push({owner,...input});return w.signal(owner,input);}}}:{}});
  const swap=id.repository.compareAndSwap.bind(id.repository);id.repository.compareAndSwap=async(...args)=>{cas.count++;return swap(...args);};
- const {owner}=await activate(id.act,signupInput({handle:'alice'}));const record=id.repository.records.get(owner.account.id);id.repository.records.delete(record.id);record.id=A;id.repository.records.set(A,record);
+ const {owner,credentialId}=await activate(id.act,signupInput({handle:'alice'}));const record=id.repository.records.get(owner.account.id);id.repository.records.delete(record.id);record.id=A;id.repository.records.set(A,record);
  calls.length=0;cas.count=0;
- const login=async()=>{const result=await id.act('loginPassword',{handle:'alice',password:PASSWORD,turnstileToken:'verified'});await id.service.settleBackground();return result;};
- return {...id,calls,cas,login};
+ const login=async()=>{const result=await signInPasskey(id.act,'alice',credentialId);await id.service.settleBackground();return result;};
+ return {...id,calls,cas,login,credentialId};
 }
 

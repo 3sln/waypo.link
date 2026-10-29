@@ -10,17 +10,20 @@ import {join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {createNodeServer} from '../apps/node/server.mjs';
 import {SqliteMetadata} from '../apps/node/resources.mjs';
+import {softAuthenticator,registerPending,passkeyStepUp} from './helpers/soft-passkey.mjs';
 
-const origin='http://localhost:8791',key=randomBytes(32).toString('base64url'),PASSWORD='Integration test long password!';
+const origin='http://localhost:8791',key=randomBytes(32).toString('base64url');
 class Jar{constructor(){this.map=new Map();}apply(response){for(const line of response.headers.getSetCookie()){const [pair,...attributes]=line.split(';'),i=pair.indexOf('='),name=pair.slice(0,i),value=pair.slice(i+1);if(attributes.some(a=>/^\s*Max-Age=0$/i.test(a)))this.map.delete(name);else this.map.set(name,value);}return response;}header(){return [...this.map].map(([k,v])=>k+'='+v).join('; ');}}
 async function fixture(t,config={}){
  const directory=await mkdtemp(join(tmpdir(),'bindle-dx-'));const app=await createNodeServer({directory,config:{APP_ORIGIN:origin,SESSION_COOKIE_KEY:key,SIGNUP_IP_DAILY_LIMIT:'50',SIGNUP_SUBNET_DAILY_LIMIT:'50',SIGNUP_REGION_HOURLY_LIMIT:'50',SIGNUP_REGION_DAILY_LIMIT:'50',SIGNUP_GLOBAL_HOURLY_LIMIT:'50',SIGNUP_GLOBAL_DAILY_LIMIT:'200',...config}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});let ip=0;
  const call=(path,{jar,method='GET',value,headers={}}={})=>app.fetch(new Request(origin+path,{method,headers:{...method==='GET'?{}:{Origin:origin,'Content-Type':'application/json'},...jar?{Cookie:jar.header()}:{},'CF-Connecting-IP':'198.51.100.'+(++ip%250),...headers},...value!==undefined?{body:JSON.stringify(value)}:{}}));
- async function signup(jar=new Jar()){const pending=await jar.apply(await call('/api/auth/signup',{jar,method:'POST',value:{method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();const recovery=await jar.apply(await call('/api/auth/recovery/download',{jar,method:'POST',value:{pendingToken:pending.pendingToken}})).json();const response=jar.apply(await call('/api/auth/recovery/confirm',{jar,method:'POST',value:{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}}));return {jar,body:await response.json()};}
+ // Passwords were dropped (2026-10-28): every account signs up with a soft passkey (tests/helpers/soft-passkey.mjs).
+ const send=(jar,headers={})=>async(path,value)=>{const response=jar.apply(await call(path,{jar,method:'POST',value,headers}));const body=await response.json();if(!response.ok)throw Object.assign(Error(`${path} answered ${response.status}`),body);return body;};
+ async function signup(jar=new Jar(),authenticator=softAuthenticator({origin})){const pending=await send(jar)('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});await registerPending(authenticator,send(jar),pending);const recovery=await jar.apply(await call('/api/auth/recovery/download',{jar,method:'POST',value:{pendingToken:pending.pendingToken}})).json();const response=jar.apply(await call('/api/auth/recovery/confirm',{jar,method:'POST',value:{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}}));return {jar,authenticator,body:await response.json()};}
  const as=session=>({'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken});
  const invoke=(owner,method,args=[])=>app.resources.accounts.get(owner).invoke({method,args:[owner,...args]});
- return {app,directory,call,signup,as,invoke};
+ return {app,directory,call,send,signup,as,invoke};
 }
 const request=(owner,stepUpAt,handle)=>[{confirmHandle:handle,acknowledgements:{messages:true,storage:true,names:true,plan:true},operationId:'op-integration-0123456789'},{stepUpAt}];
 
@@ -85,7 +88,7 @@ function untar(bytes){
  return entries;
 }
 test('export end to end: create with step-up, alarm generation, HTTP download with Range resume, tar contents against the inventory, expiry',async t=>{
- let offset=0;const f=await fixture(t,{ACCOUNT_EXPORT_ENABLED:'true',LOCAL_DEVELOPMENT:'true',LIFECYCLE_CLOCK:()=>Date.now()+offset}),{jar,body}=await f.signup(),owner=body.account.id;
+ let offset=0;const f=await fixture(t,{ACCOUNT_EXPORT_ENABLED:'true',LOCAL_DEVELOPMENT:'true',LIFECYCLE_CLOCK:()=>Date.now()+offset}),{jar,body,authenticator}=await f.signup(),owner=body.account.id;
  const controller=f.app.resources.accounts.get(owner),blobs=new FileBucket(join(f.directory,'blobs'));
  // A small (packed) and a large (streamed from BLOBS) message payload; the large one exercises the Node range reader.
  const small=new TextEncoder().encode('hello export'),large=Uint8Array.from({length:300*1024},(_,i)=>i%251);
@@ -93,7 +96,7 @@ test('export end to end: create with step-up, alarm generation, HTTP download wi
  const headers=f.as(body),post=(path,value,extra={})=>f.call(path,{jar,method:'POST',value,headers:{...headers,...extra}});
  // Creation needs a fresh step-up; without it the route refuses.
  {const refused=await post('/api/exports',{operationId:crypto.randomUUID()});assert.equal((await refused.json()).error,'step_up_required');}
- assert.equal((await post('/api/auth/step-up',{method:'password',password:PASSWORD})).status,200);
+ await passkeyStepUp(authenticator,f.send(jar,headers));
  const created=await post('/api/exports',{operationId:crypto.randomUUID()});assert.equal(created.status,200,await created.clone().text());const job=await created.json();
  assert.equal((await f.app.resources.repository.get(owner)).audit.filter(e=>e.type==='export-created').length,1,'the owner security log records creation');
  // A new account counts as a recent security change: the export is ready only 72 hours later.
@@ -129,8 +132,8 @@ test('export end to end: create with step-up, alarm generation, HTTP download wi
 });
 
 test('closure-export sessions: credential sign-in to a closed account is restricted, time-bound and server-enforced',async t=>{
- const f=await fixture(t,{ACCOUNT_EXPORT_ENABLED:'true',ACCOUNT_DELETION_ENABLED:'true',ADMIN_ENABLED:'true'}),{body}=await f.signup(),owner=body.account.id,repo=f.app.resources.repository;
- const handle=(await repo.get(owner)).handle,login=jar=>f.call('/api/auth/login/password',{jar,method:'POST',value:{handle,password:PASSWORD,turnstileToken:'local-browser-test-token'}});
+ const f=await fixture(t,{ACCOUNT_EXPORT_ENABLED:'true',ACCOUNT_DELETION_ENABLED:'true',ADMIN_ENABLED:'true'}),{body,authenticator}=await f.signup(),owner=body.account.id,repo=f.app.resources.repository;
+ const handle=(await repo.get(owner)).handle,login=async jar=>{const begin=await f.call('/api/auth/login/passkey/begin',{jar,method:'POST',value:{handle,turnstileToken:'local-browser-test-token'}});if(!begin.ok)return begin;const {challengeToken,authenticationOptions}=await begin.json();return f.call('/api/auth/login/passkey/finish',{jar,method:'POST',value:{challengeToken,response:await authenticator.authenticate(authenticationOptions)}});};
  // Closed by an administrator (as AdminService.closeUser leaves it): suspended, sessions ended, closure applied.
  const exportUntil=Date.now()+30*86400000,account=await repo.get(owner);
  assert(await repo.compareAndSwap(owner,account.revision,{...account,status:'suspended',sessions:[],revision:account.revision+1}));

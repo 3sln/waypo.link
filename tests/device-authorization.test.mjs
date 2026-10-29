@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
-import {identityEngine,activate,context,sessionContext,config as identityConfig,PASSWORD,MemoryAccounts,MemoryDevices} from './helpers/identity-engine.mjs';
+import {identityEngine,activate,context,sessionContext,config as identityConfig,signInPasskey,MemoryAccounts,MemoryDevices} from './helpers/identity-engine.mjs';
 import {forEachSeed,createScheduler,fakeClock} from './helpers/chaos.mjs';
 import {createTestEngine} from './helpers/app-engine.mjs';
 import {dpopKey} from './authorization-entry-helpers.mjs';
@@ -45,7 +45,7 @@ async function fixture({clock=fakeClock(),flag=true,repository,deviceRequests,li
   start:async(key,fields={},options)=>{const r=await f.authorize({client_id:cli.id,dpop_jkt:key.jkt,...fields},options);assert.equal(r.status,200,JSON.stringify(r.body));return r.body;},
   proof:async(key,extra={})=>key.sign({htu:`${issuer}/oauth/token`,nonce:await nonces.issue('token'),iat:iat(),...extra}),
   poll:async(key,flow,{proof,clientId=cli.id,remoteIP='192.0.2.10',headers={}}={})=>op(DeviceToken,{headers:{...FORM,...proof===null?{}:{DPoP:proof??await f.proof(key)},...headers},body:body({grant_type:DEVICE_GRANT,device_code:flow.device_code,client_id:clientId}),remoteIP}),
-  login:async(handle='alice')=>id.act('loginPassword',{handle,password:PASSWORD,turnstileToken:'verified'},context),
+  login:async(handle='alice')=>signInPasskey(id.act,handle,`passkey-${handle}`,context),
   review:(session,flow)=>op(DeviceReview,{context:sessionContext(session),requestId:requestOf(flow),code:flow.user_code}),
   approve:async(session,flow,extra={})=>{const view=await f.review(session,flow);return op(DeviceApprove,{context:sessionContext(session),requestId:requestOf(flow),code:flow.user_code,approved:view.consent.requests.map(r=>({fragment:r.fragment,fields:r.fields,revision:r.revision})),...extra});},
   refresh:async(owner,key,token,extra={})=>f.service(owner).refresh({refreshToken:token,clientId:cli.id,dpop:await key.sign({htu:`${issuer}/oauth/token`,nonce:await nonces.issue('token'),iat:iat(),...extra})}),

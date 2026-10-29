@@ -44,9 +44,9 @@ export async function orgCasesWorld(seed=1,{keyEncryptionKey=KEY,...options}={})
  const admin=new AdminService({store,identity,webauthn,passwordHasher,rateLimiter,clock:clock.now,config,organizations:port,connectionsSeverAccount:async()=>{}});
  await store.commit({writes:{catalog:CATALOG}});
  const contexts=new Map();let marker=0;
- /** An internal (system-marked) account with a passkey and a password, its roles, and a signed-in console session. */
+ /** An internal (system-marked) account with a passkey (user passwords were dropped 2026-10-28), its roles, and a signed-in console session. */
  async function operator(id,{roles=['admin','support-operator'],internal=true}={}){
-  const assignmentId=crypto.randomUUID(),account={id,handle:'n.'+String(1000+contexts.size),assignmentId,revision:1,status:'active',createdAt:clock.now(),security:{epoch:1,changedAt:null},credentials:[{id:'passkey',publicKey:'local'}],passwordHash:'hash:long local operator password',recoveryHash:'recovery',sessions:[],challenges:[],audit:[],emailLoginEnabled:false};
+  const assignmentId=crypto.randomUUID(),account={id,handle:'n.'+String(1000+contexts.size),assignmentId,revision:1,status:'active',createdAt:clock.now(),security:{epoch:1,changedAt:null},credentials:[{id:'passkey',publicKey:'local'}],recoveryHash:'recovery',sessions:[],challenges:[],audit:[],emailLoginEnabled:false};
   if(internal){const m=account.systemIdentity={version:1,handle:MARKERS[marker++%MARKERS.length],role:'system',bootstrapId:crypto.randomUUID(),assignmentId,claimDigest:String(marker).padStart(64,'a')};
    const claims={version:1,purpose:'bindle-system-account-setup',issuer:ISS,owner:id,assignmentId,handle:m.handle,role:m.role,nonce:m.bootstrapId,issuedAt:clock.now(),expiresAt:clock.now()+DAY},binding='b'.repeat(43);
    await repository.reserveSystemIdentity(claims,m.claimDigest,binding);await repository.setSystemAdmission(m.handle,m.claimDigest,binding);await repository.setSystemCanonical(m.handle,m.claimDigest,binding,account.handle);}
@@ -56,7 +56,7 @@ export async function orgCasesWorld(seed=1,{keyEncryptionKey=KEY,...options}={})
  }
  /** A new console session with a passkey step-up (the clock in these tests jumps by days; sessions do not). */
  const signedAt=new Map();
- async function signIn(id){const active=await repository.get(id),session=await identity.session(active);await identity.save(active,active.revision);
+ async function signIn(id){const active=await repository.get(id),session=await identity.session(active,{credentialId:'passkey'});await identity.save(active,active.revision);
   contexts.set(id,{actor:'admin',origin:ISS,sessionToken:session.sessionToken,csrfToken:session.csrfToken,remoteIP:contexts.get(id)?.remoteIP??'192.0.2.'+(contexts.size+10)});signedAt.set(id,clock.now());await stepUp(id);}
  const renew=async id=>{if(clock.now()-(signedAt.get(id)??-Infinity)>=10*60000)await signIn(id);};
  async function stepUp(id,method='passkey'){const context=contexts.get(id);await identity.stepUpBegin({},context);return identity.stepUp(method==='passkey'?{method:'passkey',response:{id:'passkey',ok:true}}:{method:'password',password:'long local operator password'},context);}

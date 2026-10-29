@@ -1,3 +1,4 @@
+import {noticeEmail} from '../identity/emails.mjs';
 // DX-7 deletion port for AdminService (`config.deletion`), composed identically by the Worker and Node adapters.
 // Account mutations reach the owner's account object through internal RPCs (packages/runtime/account/deletion.mjs);
 // mail goes only to the account's own verified address. Acceptance means a provider accepted, not delivery.
@@ -15,12 +16,12 @@ export function adminDeletionPorts({accounts,repository,mailer}){
   async sendConfirmation(input){return {accepted:await mail('sendAdminDeletionConfirmation',input)};},
   // The executor's own scheduled notice already went to the email and push snapshot; this adds the export window.
   async notifyClosure({owner,handle,exportUntil,executeAfter}){
-   const account=await repository.get(owner),email=account?.verifiedEmail&&Number.isSafeInteger(account.emailVerifiedAt)?account.verifiedEmail:null;
+   const account=await repository.get(owner),email=noticeEmail(account);
    const mailed=email?await mail('sendClosureNotice',{email,handle,exportUntil,executeAfter}):false;
    let scheduledNotice=false;try{scheduledNotice=(await call(owner,'deletionSystemStatus'))?.notice?.accepted===true;}catch{}
    return {accepted:mailed||scheduledNotice};
   },
   // Reopening is the safe direction: with no address on file there is nothing to send, and it never strands the owner.
-  async notifyReopen({owner,handle}){const account=await repository.get(owner),email=account?.verifiedEmail&&Number.isSafeInteger(account.emailVerifiedAt)?account.verifiedEmail:null;return {accepted:email?await mail('sendReopenNotice',{email,handle}):true,...email?{}:{channel:'none'}};},
+  async notifyReopen({owner,handle}){const account=await repository.get(owner),email=noticeEmail(account);return {accepted:email?await mail('sendReopenNotice',{email,handle}):true,...email?{}:{channel:'none'}};},
  });
 }

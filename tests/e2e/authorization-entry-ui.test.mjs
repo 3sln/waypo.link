@@ -6,17 +6,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {launch,baseURL,screenshot} from './browser.mjs';
+import {launch,baseURL,screenshot,passkeyAccount,passkeySignIn,requestSender} from './browser.mjs';
 const appOrigin='https://bindle-client.example',clientId=appOrigin+'/client',redirectUri=appOrigin+'/callback',embedOrigin=baseURL.replace('localhost','127.0.0.1');
-const password='Authorization entry UI password 2026!',sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const passkeys=new Map(),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let browser;
 test.before(async()=>{const config=await(await fetch(`${baseURL}/api/config`)).json();assert.equal(config.localDevelopment,true,'local Worker required');browser=await launch();});
 test.after(async()=>{await browser?.close();});
 // Each request family gets its own documentation-range pseudonym, so no two signups in this suite ever share the
 // per-IP signup cooldown (random picks collided by chance). The suite makes well under 245 calls.
 let host=10;const ip=()=>`198.51.100.${host++}`;
-async function signup(context){const headers={Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':ip()};const pending=await(await context.request.post(baseURL+'/api/auth/signup',{headers,data:{method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));const file=await(await context.request.post(baseURL+'/api/auth/recovery/download',{headers,data:{pendingToken:pending.pendingToken}})).json();const done=await context.request.post(baseURL+'/api/auth/recovery/confirm',{headers,data:{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true}});assert.equal(done.status(),200);return (await done.json()).account;}
-const login=async(context,handle)=>{const response=await context.request.post(baseURL+'/api/auth/login/password',{headers:{Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':ip()},data:{handle,password,turnstileToken:'local-browser-test-token'}});assert.equal(response.status(),200,await response.text());};
+async function signup(context){const created=await passkeyAccount(context.request,{headers:{'Content-Type':'application/json','CF-Connecting-IP':ip()}});passkeys.set(created.account.handle,created.authenticator);return created.account;}
+const login=async(context,handle)=>{await passkeySignIn(passkeys.get(handle),requestSender(context.request,{headers:{'Content-Type':'application/json','CF-Connecting-IP':ip()}}),handle,{turnstileToken:'local-browser-test-token'});};
 // The fixture app: PKCE entry creation from its own origin (real CORS), an explicit popup button, and a callback
 // page. It records every message it receives so the test can prove nothing arrives before approval.
 const appPage=`<!doctype html><meta charset="utf-8"><title>Fixture app</title><button id="open">Sign in</button><div id="slot"></div><script>

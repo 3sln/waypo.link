@@ -15,12 +15,12 @@ const authMethods={
  '/api/auth/system/bootstrap':'bootstrapSystem',
  '/api/auth/setup/billing/checkout':'setupBillingCheckout','/api/auth/setup/billing/status':'setupBillingStatus','/api/auth/setup/status':'setupStatus','/api/auth/setup/email/start':'setupEmailStart','/api/auth/setup/email/confirm':'setupEmailConfirm','/api/auth/setup/push/start':'setupPushStart','/api/auth/setup/push/confirm':'setupPushConfirm',
  '/api/auth/handles/claim':'claimHandle','/api/auth/handles/certificate':'handleCertificate',
- '/api/auth/signup':'signup','/api/auth/passkey/register/begin':'beginPasskeyRegistration','/api/auth/passkey/register':'registerPasskey','/api/auth/password/pending':'setPendingPassword',
- '/api/auth/recovery/download':'downloadRecovery','/api/auth/recovery/reissue/begin':'reissueRecoveryBegin','/api/auth/recovery/reissue/confirm':'reissueRecoveryConfirm','/api/auth/recovery/reissue/cancel':'reissueRecoveryCancel','/api/auth/recovery/reissue/cancel-email':'reissueRecoveryCancelEmail','/api/auth/recovery/reissue/cancel-file':'reissueRecoveryCancelFile','/api/auth/recovery/confirm':'confirmRecovery','/api/auth/login/password':'loginPassword','/api/auth/login/passkey/begin':'beginPasskeyLogin',
+ '/api/auth/signup':'signup','/api/auth/passkey/register/begin':'beginPasskeyRegistration','/api/auth/passkey/register':'registerPasskey',
+ '/api/auth/recovery/download':'downloadRecovery','/api/auth/recovery/reissue/begin':'reissueRecoveryBegin','/api/auth/recovery/reissue/confirm':'reissueRecoveryConfirm','/api/auth/recovery/reissue/cancel':'reissueRecoveryCancel','/api/auth/recovery/reissue/cancel-email':'reissueRecoveryCancelEmail','/api/auth/recovery/reissue/cancel-file':'reissueRecoveryCancelFile','/api/auth/recovery/confirm':'confirmRecovery','/api/auth/login/passkey/begin':'beginPasskeyLogin',
  '/api/auth/login/passkey/finish':'finishPasskeyLogin','/api/auth/recover':'recover','/api/auth/logout':'logout','/api/auth/email/start':'emailStart','/api/auth/email/confirm':'emailConfirm','/api/auth/email/login/start':'emailLoginStart','/api/auth/email/login/confirm':'emailLoginConfirm'
  ,'/api/auth/passkeys/begin':'credentialBegin','/api/auth/passkeys/finish':'credentialFinish','/api/auth/passkeys/remove':'removePasskey','/api/auth/passkeys/rename':'renamePasskey','/api/auth/devices/rename':'renameSession','/api/auth/devices/revoke':'revokeSession','/api/auth/devices/revoke-others':'revokeOtherSessions'
  ,'/api/auth/device/start':'createDeviceLogin','/api/auth/device/approve':'approveDeviceLogin','/api/auth/device/deny':'denyDeviceLogin','/api/auth/device/poll':'pollDeviceLogin','/api/auth/device/cancel':'cancelDeviceLogin'
- ,'/api/auth/email/login/settings':'configureEmailLogin'
+ ,'/api/auth/email/login/settings':'configureEmailLogin','/api/auth/email/notices':'emailNotices'
  // DX-6 email removal (account-deletion-export.md §3): CSRF here, step-up and EMAIL_REMOVAL_ENABLED in IdentityService.
  ,'/api/auth/email/remove':'emailRemove'
 };
@@ -113,7 +113,7 @@ export const stages={
     context.ageLocation=requestAgeLocation(request,env);
     if(path==='/api/auth/terms/accept'){if(request.method!=='POST')return json({error:'method_not_allowed'},405);return json((await engine.dispatch(new AcceptTerms(await body(request),context)).next('result')).detail);}
     if(accountPath)return await accountSessionRoutes({request,env,local,engine,context,body,json,legacyCleared:cookie('',local,0)});
-    if(['/api/auth/signup','/api/auth/recover','/api/auth/login/password','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();
+    if(['/api/auth/signup','/api/auth/recover','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();
     if(path==='/api/auth/device/start')context.deviceBinding=crypto.randomUUID()+crypto.randomUUID();
     if((path==='/api/auth/linked/start'?flagGlobal(env,'DEVICE_AUTHORIZATION_ENABLED'):flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED'))&&(LINKED_REQUESTER[path]||LINKED_MEMBER.includes(path)))return await linkedRoutes({request,env,path,local,engine,context,vault});
     // QR codes carry a locator, never a code (LA-5): the legacy /device#request= form, and with the flag on the
@@ -129,7 +129,7 @@ export const stages={
       const input=await body(request);
       // Sign-out also forgets this device's push subscription for that account (best effort).
       if(path==='/api/auth/logout'&&Object.hasOwn(input,'pushSubscription')){const id=input.pushSubscription;delete input.pushSubscription;if(typeof id==='string'&&/^[A-Za-z0-9_-]{43}$/.test(id))try{const signedIn=await engine.query(new OwnerQuery(context)).peek();await accountHandle(env,signedIn.account.id).removeSubscription(signedIn.account.id,id);}catch{}}
-      if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin','emailRemove'].includes(authMethods[path])){
+      if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin','emailNotices','emailRemove'].includes(authMethods[path])){
         const authenticated=await engine.query(new OwnerQuery(context)).peek();
         if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
         await accountHandle(env,authenticated.account.id).touch(authenticated.account.id);

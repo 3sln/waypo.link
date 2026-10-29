@@ -17,7 +17,7 @@ import {jwkThumbprint} from '../packages/identity/delegation.mjs';
 import {digestJSON,versionRecord,parseEnvelope} from '../packages/core/artefacts.mjs';
 import {signMessage} from '../packages/signaling/certificates.mjs';
 import {offerDigest} from '../packages/signaling/messages.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 import {lifecycleIdentityPort} from '../packages/identity/lifecycle-tombstone.mjs';
 import {purgeBatch} from '../packages/runtime/lifecycle-storage.mjs';
 import {signalingEngine} from '../packages/runtime/account/signaling.mjs';
@@ -25,7 +25,7 @@ import {LIMIT_VALUES} from '../packages/app/domains/signaling.mjs';
 import {SqliteMetadata} from '../apps/node/resources.mjs';
 import {kindBody} from './helpers/signaling-fixture.mjs';
 
-const ORIGIN='https://signaling-runtime.example',PASSWORD='Signaling runtime password, long enough to pass!',APP='https://app.example/client';
+const ORIGIN='https://signaling-runtime.example',APP='https://app.example/client';
 const LINE='https://chat.example/kinds/callback/v1';
 const BODY=kindBody({line:LINE,parties:'other',profiles:{webrtc:{}},bases:['offer']});
 const ENVELOPE={bindle_artefact:1,id:LINE,kind:'intent',versions:[{version:1,prev:null,body:BODY}]};
@@ -40,10 +40,11 @@ async function runtime(t,{flags=FLAGS}={}){
  const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true'}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11'}});
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11'}});
  const env={...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts},base={origin:ORIGIN,remoteIP:'127.0.0.1'};
  const person=async({approve=true}={})=>{
-  const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']},owner={kind:'owner',owner:id,parties:[APP]};

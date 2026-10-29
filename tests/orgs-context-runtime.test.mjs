@@ -13,9 +13,9 @@ import {identityBackupPort} from '../packages/runtime/identity-backup.mjs';
 import {accountHandle} from '../packages/runtime/routes/shared.mjs';
 import {stages,allowedMethods} from '../packages/runtime/routes/orgs.mjs';
 import {personActor} from '../packages/orgs/authority.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeHasher,fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 
-const ORIGIN='http://localhost:8788',PASSWORD='Organization context runtime password!',FRAGMENT='https://schema.example/org-settings/v1';
+const ORIGIN='http://localhost:8788',FRAGMENT='https://schema.example/org-settings/v1';
 const SCHEMA={id:FRAGMENT,title:'Organization settings',description:'Settings the organization shares with its apps.',publisher:'https://schema.example',fields:{displayName:{title:'Display name',type:'string',maxLength:100}}};
 async function fixture(t,{enabled=true}={}){
  const directory=await mkdtemp(join(tmpdir(),'orgs-context-'));
@@ -23,11 +23,11 @@ async function fixture(t,{enabled=true}={}){
  const app=await createNodeServer({directory,config:{...flags,ORGANIZATION_PLANS:{check:async()=>({paid:true,plan:'organization-internal',source:'test'})},FEDERATION_SCHEMAS:JSON.stringify({[FRAGMENT]:SCHEMA}),FEDERATION_CLIENTS:JSON.stringify([{id:'https://app.example/client',name:'Example app',origin:'https://app.example',redirectUris:['https://app.example/callback']}])}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const base={origin:ORIGIN,remoteIP:'127.0.0.1'};
  const env={APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,FEDERATION_AUTHORITY:app.resources.federation,...flags};
  const person=async()=>{
-  const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   const session=await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),context={origin:ORIGIN,sessionToken:session.sessionToken,csrfToken:session.csrfToken,expectedOwner:id,remoteIP:'127.0.0.1'};

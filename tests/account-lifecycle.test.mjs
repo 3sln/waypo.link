@@ -57,7 +57,7 @@ test('paid protection still takes precedence over and survives an administrator 
 });
 
 test('the lifecycle planner retains held accounts and requires fresh notice after a hold is released',async()=>{
- const {planAccountLifecycle}=await import('../packages/identity/lifecycle.mjs');const now=2000*DAY,account={status:'active',createdAt:0,lastActiveAt:DAY,shelvedAt:DAY,verifiedEmail:'owner@example.example',deletionNotice:{deliveredAt:1000*DAY,deliveryReceipt:'r'}};
+ const {planAccountLifecycle}=await import('../packages/identity/lifecycle.mjs');const now=2000*DAY,account={status:'active',createdAt:0,lastActiveAt:DAY,shelvedAt:DAY,verifiedEmail:'owner@example.example',emailVerifiedAt:DAY,deletionNotice:{deliveredAt:1000*DAY,deliveryReceipt:'r'}};
  const options={now,deletionEnabled:true,deletionSignoff:{reviewer:'r',date:'d',outcome:'approved'},paymentProtection:{status:'unpaid'}};
  assert.equal(planAccountLifecycle(account,options).action,'eligible-for-deletion-review');
  assert.equal(planAccountLifecycle(account,{...options,adminHold:{held:true}}).action,'retain');assert.equal(planAccountLifecycle(account,{...options,adminHold:{}}).action,'retain');

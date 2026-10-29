@@ -24,7 +24,7 @@ export function recoveryFilePanel(state){
   view.fileId&&!required?h('p','File ID',': ',h('code',view.fileId).attrs({translate:'no'})).classes('field-help','recovery-file-id'):null,
   view.transferEligibleAt&&!required?h('p',interfaceText('It can authorize moving your identity from {date}.',{date:date(view.transferEligibleAt)})).classes('field-help'):null,
   required||view.pendingReissue?null:reminderNote(view,date),
-  view.reissueEligible===false?h('p',view.reissueEligibleAt?interfaceText('You can replace your recovery file from {date}.',{date:date(view.reissueEligibleAt)}):'Add a password or passkey and keep it for 7 days before replacing your recovery file.').classes('field-help').attrs({role:'status'}):null,
+  view.reissueEligible===false?h('p',view.reissueEligibleAt?interfaceText('You can replace your recovery file from {date}.',{date:date(view.reissueEligibleAt)}):'Add a passkey and keep it for 7 days before replacing your recovery file.').classes('field-help').attrs({role:'status'}):null,
   h('p','Replacing it makes every copy of your current recovery file stop working. Your sign-in, data and connected apps stay the same.').classes('field-help'),
   view.pendingReissue?null:view.reissueAvailable?btn([icon('download'),required?'Create a new recovery file':'Replace recovery file'],{kind:'open-modal',modal:{kind:'reissue-recovery'}},required?'button primary':'button secondary',view.reissueEligible===false):h('p','Recovery files cannot be replaced on this service right now.').classes('field-help'),
   view.fileId||view.pendingReissue?.previousFileId?btn('Check my recovery file',{kind:'open-recovery-check'},'button secondary'):null
@@ -40,8 +40,7 @@ export function recoveryReissueDialog(state){
    h('li','For 7 days after you confirm, the new file cannot recover your account. During that time the replacement can be cancelled from a device that was signed in before it started, from the link in the email notice, or with your old file if you confirm without a passkey. This protects you if someone else started it.'),
    h('li','A pending move of your identity to another provider will be cancelled.'),
    h('li','Your email and devices will be notified.')).classes('recovery-reissue-warnings'),
-  h('p','You will confirm with a password or passkey you have had for at least 7 days, choose your questions, save the new file, test your answers, then select the saved file again. Until you confirm, your current file keeps working.').classes('field-help'),
-  h('p','If your account has a passkey, confirm with the passkey; a password is not enough.').classes('field-help'),
+  h('p','You will confirm with a passkey you have had for at least 7 days, choose your questions, save the new file, test your answers, then select the saved file again. Until you confirm, your current file keeps working.').classes('field-help'),
   checkbox('acknowledged',required?'I understand I need to save this new file somewhere safe.':'I understand my old recovery file will stop working.')
  ],{kind:'begin-recovery-reissue'},'Continue')};
 }

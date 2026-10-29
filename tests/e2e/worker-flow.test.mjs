@@ -59,7 +59,7 @@ async function ownerAPI(page,path,body,method='POST'){
 }
 test('real passkey signup, confirmation gate, sign out and assertion login',async t=>{
   const {page,context}=await setup(t);await virtualAuthenticator(context,page);
-  await page.locator('.auth-card').getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Good to see you.',exact:true}).waitFor();await page.getByRole('button',{name:'Create a 3sln.me account',exact:true}).click();await page.getByRole('heading',{name:'How would you like to sign in?',exact:true}).waitFor();
+  await page.locator('.auth-card').getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Good to see you.',exact:true}).waitFor();await page.getByRole('button',{name:'Create a 3sln.me account',exact:true}).click();await page.locator('.signup-wizard').waitFor();assert.equal(await page.getByRole('heading',{name:'How would you like to sign in?',exact:true}).count(),0,'no sign-in method step');
   assert.equal(await page.getByLabel('Your handle').count(),0);assert.equal(await page.locator('input[type=email]').count(),0);
   await completeSignupQuestions(page);await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();
@@ -90,10 +90,12 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   }
 
 });
-test('real password setup resumes, recovery rotates, the profile saves, and private APIs never cache',async t=>{
-  const {page,context}=await setup(t);
-  await page.getByRole('button',{name:'Password',exact:true}).click();assert.equal(await page.getByLabel('Your handle').count(),0);
-  await completeSignupQuestions(page);await page.getByLabel('Password',{exact:true}).fill('Test only long password 2026!');await page.getByRole('button',{name:'Create my account'}).click();
+// Formerly the password variant; passwords were dropped (owner approval 2026-10-28), so setup and the recovery's
+// replacement credential use a passkey.
+test('real passkey setup resumes, recovery rotates, the profile saves, and private APIs never cache',async t=>{
+  const {page,context}=await setup(t);await virtualAuthenticator(context,page);
+  await page.locator('.signup-wizard').waitFor();assert.equal(await page.getByLabel('Your handle').count(),0);
+  await completeSignupQuestions(page);assert.equal(await page.locator('input[name=password]').count(),0);await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();await page.reload();
   const recovery=await finishRecoveryDownload(page);
   const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);
@@ -101,8 +103,8 @@ test('real password setup resumes, recovery rotates, the profile saves, and priv
   await page.getByRole('button',{name:'Continue to recovery',exact:true}).click();
   await page.getByLabel('Encrypted recovery file',{exact:true}).setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recovery))});
   await page.getByRole('button',{name:'Read recovery questions',exact:true}).click();
-  await page.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(recoveryAnswer);await page.getByRole('button',{name:'Unlock recovery file',exact:true}).click();await page.getByLabel('Or choose a password').fill('Rotated test password 2026!');
-  await page.getByRole('button',{name:'Set password & continue'}).click();const rotated=await finishRecoveryDownload(page);assert.notEqual(rotated.ciphertext,recovery.ciphertext);
+  await page.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(recoveryAnswer);await page.getByRole('button',{name:'Unlock recovery file',exact:true}).click();assert.equal(await page.locator('input[name=password]').count(),0);
+  await page.getByRole('button',{name:'Set up a passkey'}).click();const rotated=await finishRecoveryDownload(page);assert.notEqual(rotated.ciphertext,recovery.ciphertext);
   const recovered=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assert.equal(recovered.id,assigned.id);assert.equal(recovered.handle,assigned.handle);
   const replayPage=await context.newPage();await replayPage.goto(`${baseURL}/recovery/restore`);
   await replayPage.getByLabel('Encrypted recovery file',{exact:true}).setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recovery))});

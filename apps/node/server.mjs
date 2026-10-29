@@ -25,6 +25,7 @@ import application from '../../packages/runtime/http.mjs';
 import {createNodeMetadataFetch} from '../../packages/apps/node-metadata-fetch.mjs';
 import {parseClients} from '../../packages/mcp/service.mjs';
 import { createIdentityEngine, createArgon2Hasher, createWebAuthnAdapter } from '../../packages/identity/index.mjs';
+import { retireAllPasswords } from '../../packages/identity/password-retirement.mjs';
 import {accountChannelsPort} from '../../packages/runtime/account-channels.mjs';
 import {adminDeletionPorts} from '../../packages/runtime/admin-deletion-ports.mjs';
 import {closureWindowPort} from '../../packages/identity/lifecycle-tombstone.mjs';
@@ -100,6 +101,9 @@ export async function createNodeServer({directory=resolve('.data'),config={},mai
  ports.TRANSFER_IN_DOCUMENT=({request,packageJSON})=>transferDocument({request,env:ports,url:new URL(request.url)},'in',packageJSON);
  ports.REGION_LOCATION_SOURCE=request=>({country:request.headers.get(NODE_COUNTRY_HEADER)??undefined});
  ports.IDENTITY_ENGINE=()=>createIdentityEngine(identityResources);
+ // Password retirement reset `passwords-retired-v1` (sign-in and intents spike §6.3; packages/identity/password-retirement.mjs):
+ // one background sweep per data directory, marked complete in the identity metadata; failures retry at the next boot.
+ {const metadata=resources.repository.metadata;void retireAllPasswords(new IdentityService(identityResources),{marker:metadata&&{get:key=>metadata.get(key),put:(key,value)=>metadata.put(key,value)}}).then(result=>{if(result.stripped||result.reset||result.failed)console.log(JSON.stringify({event:'password-retirement',...result}));}).catch(error=>console.error(JSON.stringify({event:'password-retirement-failed',code:error?.code??'unknown'})));}
  // Device grant (LA3): only with the flag and every dependency of its declared members (runtime/device-grant.mjs).
  // The same DPoP provider also serves member-token RPC (ORG-4 §7.2) under the organization/member flags, so it is built
  // with a DPoP key even without refresh; the runner's `mounted` and `memberRpcMounted` gate each path at request time.

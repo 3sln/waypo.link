@@ -4,9 +4,9 @@
 // The organization's single writer (packages/orgs/break-glass.mjs) asks this port, outside its transactions, for:
 //   snapshot(owner, {org, at}) -> {status, lastInteractiveAt, channels:[{id, kind, enrolledAt, domainHashes?}]}
 //     the owner's person-account channels as they stood at T1: confirmed emails (the current one and any replaced in the
-//     30 days before), push subscriptions, passkeys and the password (known credentials), and live sessions created
+//     30 days before), push subscriptions, passkeys (known credentials), and live sessions created
 //     before `at` (known sessions); plus the last interactive sign-in (`lastInteractiveAt`, written by the identity
-//     service on password, passkey and email sign-in and on step-up; null when unknown, which means Track S).
+//     service on passkey and email sign-in and on step-up; null when unknown, which means Track S).
 //     Email and push come first because the engine keeps at most 16 channels.
 //   domains({org, principals}) -> [{hashes:[hex]}]
 //     the email domains the organization and the named local principals control, as suffix hashes.
@@ -27,6 +27,7 @@
 //   mailer    {sendBreakGlassNotice({email, event, orgHandle, abortUrl})} | null
 //   secret    the deployment secret (KEY_ENCRYPTION_KEY), at least 16 characters
 import {emailDomainHashes} from '../orgs/break-glass.mjs';
+import {confirmedEmails,noticeEmail} from './emails.mjs';
 
 const DAY=86400000,LOOKBACK_MS=30*DAY,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN=/^bg1\.[0-9a-f-]{36}\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/,HANDLE=/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -52,7 +53,7 @@ export function ownerChannelsAdapter({origin,identity,push=null,mailer=null,secr
  const local=p=>plain(p)&&(p.iss??null)===origin&&UUID.test(p.sub??'');
  const record=async sub=>{try{const r=await identity(sub);return r&&r.id===sub?r:null;}catch{return undefined;}};
  /** Confirmed emails of a person record: the current one, and replaced ones still retained (replaced after `since`). */
- const emails=(r,since)=>{const out=[];if(typeof r?.verifiedEmail==='string'&&safe(r.emailVerifiedAt))out.push({email:r.verifiedEmail,verifiedAt:r.emailVerifiedAt});
+ const emails=(r,since)=>{const out=[];for(const entry of confirmedEmails(r))if(safe(entry.verifiedAt))out.push({email:entry.address,verifiedAt:entry.verifiedAt});
   for(const e of Array.isArray(r?.previousEmails)?r.previousEmails:[])if(typeof e?.email==='string'&&safe(e.verifiedAt)&&safe(e.replacedAt)&&e.replacedAt>since&&!out.some(x=>x.email===e.email))out.push({email:e.email,verifiedAt:e.verifiedAt});
   return out;};
  const pushRows=async sub=>{if(typeof push?.list!=='function')return [];try{const rows=await push.list(sub);return Array.isArray(rows)?rows.filter(x=>typeof x?.id==='string'&&safe(x.createdAt)).slice(0,10):[];}catch{return [];}};
@@ -66,13 +67,12 @@ export function ownerChannelsAdapter({origin,identity,push=null,mailer=null,secr
    for(const e of emails(r,now-LOOKBACK_MS))if(e.verifiedAt<now)channels.push({id:await id('email',owner.sub,e.email),kind:'email',enrolledAt:e.verifiedAt,domainHashes:await emailDomainHashes(domainOf(e.email))});
    for(const row of await pushRows(owner.sub))if(row.createdAt<now)channels.push({id:await id('push',owner.sub,row.id),kind:'push',enrolledAt:row.createdAt});
    for(const c of Array.isArray(r.credentials)?r.credentials:[])if(typeof c?.id==='string'&&safe(c.createdAt)&&c.createdAt<now)channels.push({id:await id('passkey',owner.sub,c.id),kind:'credential',enrolledAt:c.createdAt});
-   if(r.passwordHash&&safe(r.passwordSetAt)&&r.passwordSetAt<now)channels.push({id:await id('password',owner.sub,'password'),kind:'credential',enrolledAt:r.passwordSetAt});
    for(const s of Array.isArray(r.sessions)?r.sessions:[])if(s&&s.scope===undefined&&safe(s.createdAt)&&s.createdAt<now&&Number.isSafeInteger(s.expiresAt)&&s.expiresAt>now&&typeof s.id==='string')channels.push({id:await id('session',owner.sub,s.id),kind:'session',enrolledAt:s.createdAt});
    return {status:typeof r.status==='string'?r.status:'unknown',lastInteractiveAt:safe(r.lastInteractiveAt)?r.lastInteractiveAt:null,channels};
   },
   async domains({org,principals=[]}={}){
    const out=[];const add=async email=>{const hashes=await emailDomainHashes(domainOf(email));if(hashes.length)out.push({hashes});};
-   if(UUID.test(org??'')){const r=await record(org);if(r&&typeof r.verifiedEmail==='string')await add(r.verifiedEmail);}
+   if(UUID.test(org??'')){const r=await record(org);if(r&&noticeEmail(r))await add(noticeEmail(r));}
    for(const p of (Array.isArray(principals)?principals:[]).slice(0,16)){if(!local(p))continue;const r=await record(p.sub);if(!r)continue;for(const e of emails(r,Date.now()-LOOKBACK_MS))await add(e.email);}
    return out.slice(0,64);
   },

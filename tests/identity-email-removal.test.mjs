@@ -4,7 +4,8 @@
 // the in-memory, Node (SQLite IdentityRepository) and Worker (ShardedIdentityRepository) repositories.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { identityEngine, MemoryAccounts, MemoryMetadata, memoryShards, signupInput, sessionContext, PASSWORD } from './helpers/identity-engine.mjs';
+import { identityEngine, MemoryAccounts, MemoryMetadata, memoryShards, signupInput, sessionContext, passkeyResponse, stepUpPasskey, signInPasskey } from './helpers/identity-engine.mjs';
+import { noticeEmail, accountEmails, signInEmails } from '../packages/identity/emails.mjs';
 import { fakeClock, forEachSeed, createScheduler, injectFaults } from './helpers/chaos.mjs';
 import { identitySecurityPort } from '../packages/identity/service.mjs';
 import { createFlags } from '../packages/flags/evaluate.mjs';
@@ -37,18 +38,23 @@ function harness(t, kind = 'memory', { clock = fakeClock(), flags = ON, accountC
 }
 const mailToken = (h, purpose) => h.mail.filter(m => m.purpose === purpose).at(-1).token;
 async function activeAccount(h, input = signupInput()) {
-  const pending = await h.act('signup', input), file = await h.act('downloadRecovery', pending);
+  const pending = await h.act('signup', input); await h.act('registerPasskey', { pendingToken: pending.pendingToken, response: passkeyResponse(pending, KEY) });
+  const file = await h.act('downloadRecovery', pending);
   const owner = await h.act('confirmRecovery', { ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true });
-  const ctx = sessionContext(owner); await h.service.stepUp({ method: 'password', password: input.password }, ctx);
+  const ctx = sessionContext(owner); await stepUpPasskey(h.act, ctx, KEY);
   return { id: pending.account.id, handle: pending.account.handle, ctx };
 }
 async function withEmail(h, email = OLD, input) {
   const account = await activeAccount(h, input);
-  await h.act('emailStart', { email }, account.ctx); await h.act('emailConfirm', { token: mailToken(h, 'link'), confirmed: true }, account.ctx);
+  await h.act('emailStart', { email }, account.ctx); await h.service.settleBackground(); await h.act('emailConfirm', { token: mailToken(h, 'link'), confirmed: true }, account.ctx);
   return account;
 }
+// Every test account's passkey (credential ids are per account). Passwords were dropped (2026-10-28).
+const KEY = 'owner-passkey', step = (h, ctx) => stepUpPasskey(h.act, ctx, KEY);
+/** The notice address of a stored record (legacy fields or the emails model). */
+const notice = record => noticeEmail(record);
 const remove = (h, input, ctx) => h.service.emailRemove(input, ctx);
-const unchanged = async (h, id, before) => { const after = await h.record(id); assert.equal(after.verifiedEmail, before.verifiedEmail); assert.deepEqual(after.security, before.security); assert.equal(after.noticeWaiver, before.noticeWaiver); };
+const unchanged = async (h, id, before) => { const after = await h.record(id); assert.deepEqual(accountEmails(after), accountEmails(before)); assert.deepEqual(after.security, before.security); assert.equal(after.noticeWaiver, before.noticeWaiver); };
 const shardRows = (shards, prefix) => [...shards.controllers.values()].flatMap(c => [...c.metadata.rows].filter(([key]) => key.startsWith(prefix)));
 
 test('EMAIL_REMOVAL_ENABLED: off without a flags port, when the port says off, and with the real evaluator before any rollout', async t => {
@@ -73,21 +79,23 @@ test('authority: origin, CSRF, a fresh step-up, explicit confirmation and an exa
   await assert.rejects(remove(h, { confirmed: true }, { ...ctx, sessionToken: undefined }), { code: 'unauthorized' });
   h.clock.advance(5 * MINUTE);
   await assert.rejects(remove(h, { confirmed: true, waiveNotice: true }, ctx), { code: 'step_up_required' }, 'a five-minute-old step-up is not enough');
-  await h.service.stepUp({ method: 'password', password: PASSWORD }, ctx);
+  await step(h, ctx);
   for (const input of [{}, { confirmed: 'true' }, { confirmed: false }]) await assert.rejects(remove(h, input, ctx), { code: 'confirmation_required' });
   for (const input of [{ confirmed: true, email: OLD }, { confirmed: true, waiveNotice: 'yes' }, null]) await assert.rejects(remove(h, input, ctx), { code: 'invalid_request' });
   await assert.rejects(remove(h, { confirmed: true, waiveNotice: true, expectedEmail: 'other@mail.example' }, ctx), { code: 'email_changed', status: 409 });
   await unchanged(h, id, before);
   // A session that only signed in recently (no step-up) cannot remove the email.
-  const fresh = sessionContext(await h.act('loginPassword', { handle: (await h.record(id)).handle, password: PASSWORD, turnstileToken: 'verified' }));
+  const fresh = sessionContext(await signInPasskey(h.act, (await h.record(id)).handle, KEY));
   await assert.rejects(remove(h, { confirmed: true, waiveNotice: true }, fresh), { code: 'step_up_required' });
   const noEmail = harness(t), plain = await activeAccount(noEmail);
   await assert.rejects(remove(noEmail, { confirmed: true, waiveNotice: true }, plain.ctx), { code: 'email_not_linked', status: 409 });
 });
 
-test('last notice channel: refused without a waiver; the waiver is recorded, email sign-in and every email link die, a notice goes to the removed address', async t => {
+test('last notice channel: refused without a waiver; the waiver is recorded, email sign-in and links for the address die, a notice goes to the removed address', async t => {
   const h = harness(t, 'memory', { accountChannels: undefined }), { id, ctx } = await withEmail(h);
   await h.act('configureEmailLogin', { enabled: true }, ctx);
+  // Removing a recent sign-in email needs a passkey enrolled 7 days or more earlier (removal process RM-2, 2026-10-28).
+  { const record = await h.record(id); record.credentials[0].createdAt = h.clock.now() - 8 * DAY; h.repository.records.set(id, record); }
   await h.act('emailLoginStart', { email: OLD, turnstileToken: 'verified' }); await h.service.settleBackground(); const loginLink = mailToken(h, 'login');
   await h.act('emailStart', { email: NEW }, ctx); const pendingLink = mailToken(h, 'link');
   const before = await h.record(id);
@@ -96,22 +104,24 @@ test('last notice channel: refused without a waiver; the waiver is recorded, ema
   await unchanged(h, id, before); assert.equal((await h.repository.findByEmail(OLD))?.id, id);
   h.clock.advance(1000);
   const result = await remove(h, { confirmed: true, waiveNotice: true, expectedEmail: OLD }, ctx);
-  assert.deepEqual({ removed: result.removed, noticeWaived: result.noticeWaived, email: result.account.verifiedEmail, login: result.account.emailLoginEnabled }, { removed: true, noticeWaived: true, email: null, login: false });
+  assert.deepEqual({ removed: result.removed, noticeWaived: result.noticeWaived, email: result.account.noticeEmail, login: result.account.signInEmail }, { removed: true, noticeWaived: true, email: null, login: false });
   const after = await h.record(id);
   assert.deepEqual(after.noticeWaiver, { at: h.clock.now(), termsVersion: h.resources.config.termsVersion });
-  assert.deepEqual([after.verifiedEmail, after.emailVerifiedAt, after.emailLoginEnabled, after.emailChallenges], [null, null, false, []]);
+  assert.deepEqual([notice(after), accountEmails(after).filter(entry => entry.state !== 'unverified'), after.emailChallenges.filter(c => c.email === OLD)], [null, [], []]);
   assert.equal(after.audit.at(-1).type, 'email-removed');
   assert.deepEqual(after.security, { epoch: before.security.epoch + 1, changedAt: h.clock.now() });
-  assert.equal(after.passwordHash, before.passwordHash, 'credentials are untouched'); assert.equal(after.recoveryHash, before.recoveryHash, 'recovery is untouched');
+  assert.deepEqual(after.credentials.map(c => c.id), before.credentials.map(c => c.id), 'credentials are untouched'); assert.equal(after.recoveryHash, before.recoveryHash, 'recovery is untouched');
   assert.equal((await h.repository.findByEmail(OLD)) ?? null, null);
   await assert.rejects(h.act('emailLoginConfirm', { token: loginLink, confirmed: true }), { code: 'unauthorized' }, 'outstanding login links fail');
-  await assert.rejects(h.act('emailConfirm', { token: pendingLink, confirmed: true }, ctx), { code: 'invalid_challenge' }, 'outstanding link confirmations fail');
-  assert.deepEqual(h.alerts, [{ email: OLD, type: 'email-removed', owner: id }]);
+  assert.deepEqual(after.emailChallenges.filter(c => c.email === OLD), [], 'every link for the removed address is gone');
+  // Turning sign-in on and the removal's end of sign-in are notices too (2026-10-28), then the removal alert itself.
+  assert.deepEqual(h.alerts, ['email-sign-in-enabled', 'email-sign-in-removed', 'email-removed'].map(type => ({ email: OLD, type, owner: id })));
   assert.deepEqual(result.notified, { email: true, push: false });
   await assert.rejects(remove(h, { confirmed: true, waiveNotice: true }, ctx), { code: 'email_not_linked' }, 'a replay changes nothing');
-  // Verifying an address again ends the waiver: a later removal must waive again.
-  await h.act('emailStart', { email: NEW }, ctx); await h.act('emailConfirm', { token: mailToken(h, 'link'), confirmed: true }, ctx);
-  assert.equal((await h.record(id)).noticeWaiver, undefined);
+  // An unverified address added before the removal is a separate entry (2026-10-28), so its link still verifies it;
+  // verifying an address again ends the waiver: a later removal must waive again.
+  await h.act('emailConfirm', { token: pendingLink, confirmed: true }, ctx);
+  assert.equal((await h.record(id)).noticeWaiver, undefined); assert.equal(notice(await h.record(id)), NEW);
 });
 
 test('waiver rules: needs current terms; never recorded when push remains; an unreadable channel state refuses even with a waiver', async t => {
@@ -141,7 +151,7 @@ test('waiver rules: needs current terms; never recorded when push remains; an un
     const h = harness(t, 'memory', { accountChannels: { state: async () => ({ ready: true, count: 1, revision: 'p' }), notify: async () => { throw new Error('push down'); } } }), { id, ctx } = await withEmail(h);
     h.resources.mailer.sendSecurityAlert = async () => { throw new Error('mail down'); };
     const result = await remove(h, { confirmed: true }, ctx);
-    assert.deepEqual(result.notified, { email: false, push: false }); assert.equal((await h.record(id)).verifiedEmail, null);
+    assert.deepEqual(result.notified, { email: false, push: false }); assert.equal(notice(await h.record(id)), null);
   }
 });
 
@@ -173,7 +183,7 @@ test('index release: Worker shards release the lookup claim; stale lookups after
     // The claim may still exist, but it never resolves to the account.
     assert.equal((await h.repository.findByEmail(OLD)) ?? null, null, `${phase}: stale lookup resolved`);
     const after = await h.record(id);
-    assert.equal(after.verifiedEmail, null, `${phase}: the identity write settles to the removal`);
+    assert.equal(notice(after), null, `${phase}: the identity write settles to the removal`);
     assert.equal((await h.security(id)).epoch, epoch + 1, `${phase}: exactly one bump`);
     assert.equal(shardRows(h.shards, `identity-lookup/email/${OLD}`).length, 0, `${phase}: the stale claim was released`);
     const other = await withEmail(h, OLD, signupInput({ handle: 'carol' }));
@@ -203,18 +213,18 @@ test('seeded chaos: lookups racing a sharded removal only ever resolve an accoun
   const { id, ctx } = await withEmail(h);
   const results = await scheduler.run([() => remove(h, { confirmed: true, waiveNotice: true }, ctx), () => h.repository.findByEmail(OLD), () => h.repository.findByEmail(OLD), () => h.repository.findByEmail(OLD)]);
   assert.equal(results[0].status, 'fulfilled', results[0].reason?.stack);
-  for (const r of results.slice(1)) { assert.equal(r.status, 'fulfilled', r.reason?.stack); if (r.value) { assert.equal(r.value.id, id); assert.equal(r.value.verifiedEmail, OLD, 'a resolved lookup always names a record that holds the address'); } }
+  for (const r of results.slice(1)) { assert.equal(r.status, 'fulfilled', r.reason?.stack); if (r.value) { assert.equal(r.value.id, id); assert.equal(notice(r.value), OLD, 'a resolved lookup always names a record that holds the address'); } }
   assert.equal((await h.repository.findByEmail(OLD)) ?? null, null);
   assert.equal(shardRows(h.shards, `identity-lookup/email/${OLD}`).length, 0);
 }));
 
 for (const kind of REPOSITORIES) {
-  test(`${kind}: seeded chaos — concurrent email change and removal linearize; index, epoch and challenges stay consistent`, async t => forEachSeed(kind === 'memory' ? 60 : 20, async random => {
+  test(`${kind}: seeded chaos — concurrent email addition and removal linearize; index, epoch and challenges stay consistent`, async t => forEachSeed(kind === 'memory' ? 60 : 20, async random => {
     const scheduler = createScheduler(random), guarded = random.chance(0.5);
     const h = harness(t, kind, { wrap: repository => scheduler.wrap(repository, 'identity'), accountChannels: channels({ ready: random.chance(0.5) }) });
     const { id, ctx } = await withEmail(h);
     await h.act('emailStart', { email: NEW }, ctx); const token = mailToken(h, 'link');
-    await h.service.stepUp({ method: 'password', password: PASSWORD }, ctx);
+    await step(h, ctx);
     const initial = (await h.security(id)).epoch;
     const results = await scheduler.run([
       () => h.act('emailConfirm', { token, confirmed: true }, ctx),
@@ -224,16 +234,18 @@ for (const kind of REPOSITORIES) {
     const [confirm, removal] = results, label = `guarded=${guarded} ${results.map(r => r.status === 'fulfilled' ? 'ok' : r.reason.code).join(',')}\n${scheduler.trace.join('\n')}`;
     for (const r of results) if (r.status === 'rejected') assert(['conflict', 'email_changed', 'invalid_challenge'].includes(r.reason.code), `${r.reason.stack}\n${label}`);
     const record = await h.record(id), confirmed = confirm.status === 'fulfilled', removed = removal.status === 'fulfilled';
-    // A removal clears every challenge, so a confirmation can never land after it.
-    const final = removed ? null : confirmed ? NEW : OLD;
-    if (guarded) assert(!(confirmed && removed), `a guarded removal never removes the newer address\n${label}`);
-    assert.equal(record.verifiedEmail, final, label);
+    // Confirming a second address adds it beside the first (2026-10-28); the removal names the notice address OLD
+    // (explicitly when guarded), so it never removes NEW and the two commute.
+    const held = address => address === OLD ? !removed : confirmed, owned = address => accountEmails(record).some(entry => entry.address === address && entry.state !== 'unverified');
+    for (const address of [OLD, NEW]) assert.equal(owned(address), held(address), `${address} held\n${label}`);
+    assert.equal(notice(record), removed ? confirmed ? NEW : null : OLD, label);
     assert.equal((await h.security(id)).epoch, initial + Number(confirmed) + Number(removed), label);
-    assert.equal(record.emailLoginEnabled, false);
-    if (removed) assert.deepEqual(record.emailChallenges, []);
-    for (const address of [OLD, NEW]) assert.equal((await h.repository.findByEmail(address))?.id ?? null, final === address ? id : null, `${address} index\n${label}`);
-    if (kind === 'node') for (const address of [OLD, NEW]) assert.equal(await h.metadata.get(`email/${address}`), final === address ? id : undefined, `raw ${address}`);
-    if (kind === 'worker') for (const address of [OLD, NEW]) assert.equal(shardRows(h.shards, `identity-lookup/email/${address}`).length, final === address ? 1 : 0, `claim ${address}\n${label}`);
+    assert.equal(signInEmails(record).length, 0);
+    if (removed) assert.deepEqual(record.emailChallenges.filter(c => c.email === OLD), []);
+    const final = address => held(address);
+    for (const address of [OLD, NEW]) assert.equal((await h.repository.findByEmail(address))?.id ?? null, final(address) ? id : null, `${address} index\n${label}`);
+    if (kind === 'node') for (const address of [OLD, NEW]) assert.equal(await h.metadata.get(`email/${address}`), final(address) ? id : undefined, `raw ${address}`);
+    if (kind === 'worker') for (const address of [OLD, NEW]) assert.equal(shardRows(h.shards, `identity-lookup/email/${address}`).length, final(address) ? 1 : 0, `claim ${address}\n${label}`);
   }));
 }
 
@@ -295,8 +307,8 @@ test('Node integration: removal with a push device keeps a channel, and the open
   const warned = await controller.lifecycleTick(owner); assert.equal(warned.action, 'notice-recorded', JSON.stringify(warned));
   assert.equal(mails.at(-1).email, OLD);
   // The setup session expired during the two days; the owner signs in again and steps up.
-  const ctx = sessionContext(await service.act('loginPassword', { handle, password: PASSWORD, turnstileToken: 'verified' }));
-  await service.service.stepUp({ method: 'password', password: PASSWORD }, ctx);
+  const ctx = sessionContext(await signInPasskey(service.act, handle, KEY));
+  await step(service, ctx);
   const result = await service.service.emailRemove({ confirmed: true }, ctx);
   assert.deepEqual({ noticeWaived: result.noticeWaived, notified: result.notified }, { noticeWaived: false, notified: { email: true, push: true } });
   assert.deepEqual(pushes.at(-1), { type: 'bindle-security-notice', owner, event: 'email-removed', path: `/console?account=${owner}&security=review` });

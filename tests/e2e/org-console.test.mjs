@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {launch,baseURL,waitForApp,screenshot} from './browser.mjs';
 let browser;test.before(async()=>{browser=await launch();});test.after(async()=>browser?.close());
-const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'orgfixture',status:'active',hasPassword:true},org='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',other='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'orgfixture',status:'active'},org='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',other='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const invitationToken=()=>'e30.'+Buffer.from(JSON.stringify({aud:baseURL+'/identity/'+other,exp:2000000000,jti:'fixture-invitation'})).toString('base64url')+'.sig';
 // API fixture only: the app document, modules and styles are the real built assets served by the ephemeral Worker.
 async function fixture(context,{locale,signedIn=()=>true,routes={},accountData={}}){const page=await context.newPage(),errors=[],calls=[];page.on('pageerror',e=>errors.push(e.message));await context.addInitScript(locale=>{if(!localStorage.getItem('personal-space-preferences'))localStorage.setItem('personal-space-preferences',JSON.stringify({locale}));},locale);

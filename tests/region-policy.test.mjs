@@ -55,7 +55,7 @@ test('Node adapter: unknown locations are allowed by default (self-hosting polic
 test('Node adapter: block-unknown without a trusted header blocks signup, even with spoofed country headers',async t=>{
  const n=await node(t,{APP_ORIGIN:'http://localhost:8788',REGION_POLICY:'block-unknown'});
  const r=await n.requirement({...spoofed,'x-bindle-node-country':'US'});assert.equal(r.blocked,true);assert.equal(r.blockedReason,'region-unknown');
- const response=await n.call('/api/auth/signup',{method:'POST',headers:{origin:'http://localhost:8788','x-bindle-node-country':'US'},body:{handle:'region_node',method:'password',password:'isolated test account password',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token',ageConfirmed:18}});
+ const response=await n.call('/api/auth/signup',{method:'POST',headers:{origin:'http://localhost:8788','x-bindle-node-country':'US'},body:{handle:'region_node',method:'passkey',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token',ageConfirmed:18}});
  assert.equal(response.status,403,JSON.stringify(response.body));assert.equal(response.body.error,'signup_region_blocked');
 });
 test('Node adapter: an operator-configured trusted country header supplies the location',async t=>{

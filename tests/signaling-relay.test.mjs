@@ -624,9 +624,9 @@ test('seeded chaos: sessions, claims, ends, revocations, approval changes, flag 
 test('runtime: the relay resource is declared and dispatchable only with every flag and a configured relay; the drain revokes',async t=>{
  const {createNodeServer}=await import('../apps/node/server.mjs');const {federationDeclarations,federationControllerOptions}=await import('../packages/runtime/federation.mjs');
  const {IdentityService}=await import('../packages/identity/service.mjs');const {identityBackupPort}=await import('../packages/runtime/identity-backup.mjs');
- const {accountHandle}=await import('../packages/runtime/routes/shared.mjs');const {fakeHasher}=await import('./helpers/identity-engine.mjs');
+ const {accountHandle}=await import('../packages/runtime/routes/shared.mjs');const {fakeWebAuthn,passkeyResponse}=await import('./helpers/identity-engine.mjs');
  const {digestJSON,versionRecord,parseEnvelope}=await import('../packages/core/artefacts.mjs');const {signalingEngine,signalingRelayResourceMethod}=await import('../packages/runtime/account/signaling.mjs');
- const ORIGIN='https://signaling-relay-runtime.example',PASSWORD='Signaling relay runtime password, long enough!';
+ const ORIGIN='https://signaling-relay-runtime.example';
  const LINE=CALLBACK,BODY=kindBody({line:LINE,parties:'other',profiles:{webrtc:{}},bases:['offer']}),ENVELOPE_DOC={bindle_artefact:1,id:LINE,kind:'intent',versions:[{version:1,prev:null,body:BODY}]};
  const KIND={artefact:LINE,version:1,digest:await digestJSON(versionRecord(parseEnvelope(ENVELOPE_DOC,{id:LINE}),ENVELOPE_DOC.versions[0]))};
  const BASE={EXTENSIONS_ENABLED:'true',ARTEFACT_VERSIONS_ENABLED:'true',SESSION_KINDS_ENABLED:'true',SIGNALING_ENABLED:'true',FEDERATION_CONTRACTS:JSON.stringify({[LINE]:ENVELOPE_DOC,[LINE+'/envelope']:ENVELOPE_DOC})};
@@ -655,10 +655,11 @@ test('runtime: the relay resource is declared and dispatchable only with every f
  const app=await createNodeServer({directory,config});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const env={...config,RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts},base={origin:ORIGIN,remoteIP:'127.0.0.1'};
  const person=async()=>{
-  const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']},owner={kind:'owner',owner:id,parties:[APP]};

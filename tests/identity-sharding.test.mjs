@@ -25,7 +25,9 @@ function fixture(){
   const repo=()=>new ShardedIdentityRepository({shard,layout:IDENTITY_LAYOUT,clock:()=>now});
   return {repository:repo(),repo,shards,calls,fail:value=>{failure=value;},advance:value=>{now=value;}};
 }
-const account=(id,handle=id.toLowerCase())=>({id,handle,revision:0,status:'active',verifiedEmail:null});
+// Legacy single-address fields; the emails model reads them as one entry only with a verification time (2026-10-28).
+const mailed=email=>({verifiedEmail:email,emailVerifiedAt:email?1:null});
+const account=(id,handle=id.toLowerCase())=>({id,handle,revision:0,status:'active',...mailed(null)});
 
 test('versioned routing has independent 64 bucket families and rejects implicit migration',async()=>{
   assert.throws(()=>new ShardedIdentityRepository({shard:()=>{}}),/legacy identity data/);
@@ -48,13 +50,13 @@ test('concurrent handle registration has one winner and session reads/CAS stay o
 
 test('concurrent email claims preserve unique authoritative ownership and release on change',async()=>{
   const {repository:r}=fixture();const a=account('a'),b=account('b');await r.create(a);await r.create(b);
-  const results=await Promise.all([a,b].map(value=>r.compareAndSwap(value.id,0,{...value,revision:1,verifiedEmail:'shared@example.example'})));
+  const results=await Promise.all([a,b].map(value=>r.compareAndSwap(value.id,0,{...value,revision:1,...mailed('shared@example.example')})));
   assert.equal(results.filter(Boolean).length,1);
   const owner=await r.findByEmail('shared@example.example');assert(owner);
   const loser=owner.id==='a'?b:a;assert.equal((await r.get(loser.id)).verifiedEmail,null);
-  assert(await r.compareAndSwap(owner.id,1,{...owner,revision:2,verifiedEmail:'next@example.example'}));
+  assert(await r.compareAndSwap(owner.id,1,{...owner,revision:2,...mailed('next@example.example')}));
   assert.equal(await r.findByEmail('shared@example.example'),null);
-  assert(await r.compareAndSwap(loser.id,0,{...loser,revision:1,verifiedEmail:'shared@example.example'}));
+  assert(await r.compareAndSwap(loser.id,0,{...loser,revision:1,...mailed('shared@example.example')}));
   assert.equal((await r.findByEmail('shared@example.example')).id,loser.id);
 });
 
@@ -80,12 +82,12 @@ test('bounded lifecycle pages recover operation interrupted before lookup claim'
 
 test('interrupted email cleanup cannot publish an old email or delete a replacement owner claim',async()=>{
   const f=fixture(),r=f.repository;let a=account('a'),b=account('b');await r.create(a);await r.create(b);
-  a={...a,revision:1,verifiedEmail:'first@example.example'};await r.compareAndSwap('a',0,a);
+  a={...a,revision:1,...mailed('first@example.example')};await r.compareAndSwap('a',0,a);
   f.fail({method:'shardRelease'});
-  await assert.rejects(r.compareAndSwap('a',1,{...a,revision:2,verifiedEmail:'second@example.example'}));
+  await assert.rejects(r.compareAndSwap('a',1,{...a,revision:2,...mailed('second@example.example')}));
   const resumed=f.repo();assert.equal(await resumed.findByEmail('first@example.example'),null);
   assert.equal((await resumed.findByEmail('second@example.example')).id,'a');
-  assert(await resumed.compareAndSwap('b',0,{...b,revision:1,verifiedEmail:'first@example.example'}));
+  assert(await resumed.compareAndSwap('b',0,{...b,revision:1,...mailed('first@example.example')}));
   const stale={kind:'email',value:'first@example.example',owner:'a',token:'wrong'};
   assert.equal(await resumed.release(stale),false);
   assert.equal((await resumed.findByEmail('first@example.example')).id,'b');
@@ -103,9 +105,9 @@ test('device code uniqueness, direct request CAS, expiry reuse, and immutable ex
 });
 
 test('an email conflict aborts a new account and permanently burns its admitted handle',async()=>{
-  const f=fixture(),r=f.repository,owner={...account('owner'),verifiedEmail:'taken@example.example'};
+  const f=fixture(),r=f.repository,owner={...account('owner'),...mailed('taken@example.example')};
   assert(await r.create(owner));
-  assert.equal(await r.create({...account('loser','free-handle'),verifiedEmail:owner.verifiedEmail}),false);
+  assert.equal(await r.create({...account('loser','free-handle'),...mailed(owner.verifiedEmail)}),false);
   assert.equal(await r.get('loser'),null);assert.equal(await r.findByHandle('free-handle'),null);
   assert.equal(await r.create(account('replacement','free-handle')),false);
   assert.equal((await r.findByEmail(owner.verifiedEmail)).id,owner.id);
@@ -113,7 +115,7 @@ test('an email conflict aborts a new account and permanently burns its admitted 
 
 test('concurrent recovery of one pending email operation commits once and preserves later CAS',async()=>{
   const f=fixture(),r=f.repository,a=account('parallel');assert(await r.create(a));
-  f.fail({method:'shardClaim',after:true});await assert.rejects(r.compareAndSwap(a.id,0,{...a,revision:1,verifiedEmail:'parallel@example.example'}));
+  f.fail({method:'shardClaim',after:true});await assert.rejects(r.compareAndSwap(a.id,0,{...a,revision:1,...mailed('parallel@example.example')}));
   const values=await Promise.all(Array.from({length:20},()=>f.repo().get(a.id)));
   assert(values.every(value=>value.revision===1&&value.verifiedEmail==='parallel@example.example'));
   const results=await Promise.all(Array.from({length:20},(_,i)=>f.repo().compareAndSwap(a.id,1,{...values[0],revision:2,status:`update-${i}`})));

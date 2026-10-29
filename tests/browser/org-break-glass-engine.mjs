@@ -106,9 +106,9 @@ test('ORG-12e owner stop: owner_proof_required asks for a step-up once, then ret
  for(const refuseAgain of [false,true]){let attempts=0;
   const c=await client(t,{view:{claim:adminClaim(['abort']),decisions:[],contest:null},powers:['admin','owner-of-record'],calls:(a,v,o,reply)=>a==='break-glass'?o.api.request('/api/orgs/'+org+'/break-glass',v):reply(a,v)});
   c.api.routes['POST /api/orgs/'+org+'/break-glass']=()=>{if(++attempts===1||refuseAgain)throw Object.assign(Error('Owner proof required'),{code:'owner_proof_required',status:401});return {claim:{state:'aborted'}};};
-  c.api.routes['POST /api/auth/step-up/begin']=()=>({password:true});c.api.routes['POST /api/auth/step-up']=()=>({ok:true});
+  c.api.routes['POST /api/auth/step-up/begin']=()=>({passkey:true,authenticationOptions:{challenge:'step-up'}});c.api.routes['POST /api/auth/step-up']=()=>({ok:true});
   await c.act('select',{org});const pending=c.act('bg-abort');while(!(await c.snapshot()).stepUp)await turn();
-  const prompt=(await c.snapshot()).stepUp;await c.dispatch(new ConfirmOwner({id:prompt.id,method:'password',values:{password:'test-only'}}));await pending;
+  const prompt=(await c.snapshot()).stepUp;c.browser.authenticatePasskey=async()=>({id:'test-passkey'});await c.dispatch(new ConfirmOwner({id:prompt.id,method:'passkey'}));await pending;
   const s=await c.snapshot();assert.deepEqual(s.session,session,'never signed out');assert.equal(attempts,2);assert.equal(c.api.calls.filter(x=>x.path==='/api/auth/step-up/begin').length,1);
   if(refuseAgain)assert.equal(organizationsModel(s).error,'owner_proof_required');else assert.equal(organizationsModel(s).notice,'break_glass_aborted');
  }

@@ -1,6 +1,7 @@
 // Domain-owned export projections. Generation sees pages, never metadata keys.
 // No generic "dump record" fallback: adding a persisted family needs an explicit
 // projection or a reasoned exclusion, and the inventory test pins that choice.
+import {accountEmails} from '../identity/emails.mjs';
 import {FLAGS} from '../flags/registry.mjs';
 import {fault} from '../app/faults.mjs';
 import {exportPath} from './export-tar.mjs';
@@ -126,10 +127,11 @@ const matches=(key,prefix)=>EXPORT_SINGLETON_KEYS.has(prefix)?key===prefix:key.s
 export function exportInventory(prefixes){return prefixes.map(prefix=>{const claimed=Object.keys(EXPORT_CLAIMED_PREFIXES).filter(p=>matches(prefix,p)).sort((a,b)=>b.length-a.length)[0];if(claimed)return {prefix,contributor:EXPORT_CLAIMED_PREFIXES[claimed]};const excluded=Object.keys(EXPORT_EXCLUDED_PREFIXES).filter(p=>matches(prefix,p)).sort((a,b)=>b.length-a.length)[0];return {prefix,...excluded?{reason:EXPORT_EXCLUDED_PREFIXES[excluded]}:{}};});}
 const stable=value=>{if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(value))fault('invalid_export_id','A stable archive identifier is required.',409);return value;};
 export function identityExportRow(row){
- const value=pick(row,fields('id handle aliases assignmentId createdAt status termsVersion termsAcceptedAt verifiedEmail emailVerifiedAt emailLoginEnabled audit lineage nameCertificate'));
- value.passwordPresent=!!(row.passwordPresent??row.passwordHash??row.password);
+ const value=pick(row,fields('id handle aliases assignmentId createdAt status termsVersion termsAcceptedAt audit lineage nameCertificate'));
+ // Email addresses and their states (sign-in and intents spike §3.2); a pre-model record reads as one entry.
+ value.emails=accountEmails(row).map(entry=>pick(entry,fields('address state verifiedAt signInSince notices expiresAt')));
  value.passkeys=(row.passkeys??row.credentials??[]).map(v=>pick(v,fields('id label createdAt lastUsed backedUp')));
- value.sessions=(row.sessions??[]).map(v=>pick(v,fields('label source createdAt lastUsed expiresAt')));value.audit=publicValue((value.audit??[]).slice(-100));const safe=publicValue(value);safe.passwordPresent=value.passwordPresent;return safe;
+ value.sessions=(row.sessions??[]).map(v=>pick(v,fields('label source createdAt lastUsed expiresAt')));value.audit=publicValue((value.audit??[]).slice(-100));return publicValue(value);
 }
 /** Read-only ports: identity(owner), keys(owner), grants.page({owner,cursor,limit}),
  * externalStorage.page(...) (the decrypted host-held mapping, NEVER external

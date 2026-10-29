@@ -1,3 +1,4 @@
+import {createContinuation} from './shared/continuation.mjs';
 // Remove the capability before importing the UI or making any request. Only `bintent` is accepted (query, fragment,
 // server POST substitution, or the web+bindle scheme substitution); the legacy contact-url forms were removed in
 // contacts phase 4.
@@ -10,7 +11,8 @@ if(!hidden&&(query.has('bintent')||rawHash))try{
  if(/^(?:web|web%|%77)/i.test(rawHash))({value,placement}=codec.parseProtocolIntent(rawHash,{now:0}));
  else ({value,placement}=codec.parseIntentURL(rawURL.replace(/^http:/,'https:'),{now:0}));
 }catch{invalid=true;value=null;}
-if(!value&&!invalid)try{const saved=JSON.parse(sessionStorage.getItem('3sln-intent-continuation'));sessionStorage.removeItem('3sln-intent-continuation');if(saved?.expires>Date.now()&&typeof saved.value==='string'){value=saved.value;placement=saved.placement;expiresAt=saved.expires;}}catch{}
+// The sign-in continuation (shared/continuation.mjs, SI-8): an intent kept by this tab before sign-in, at most 1 hour old.
+if(!value&&!invalid){let storage=null;try{storage=sessionStorage;}catch{}const saved=createContinuation({storage}).takeIntent();if(saved){value=saved.value;placement=saved.placement;expiresAt=saved.expiresAt;}}
 rawURL=null;rawHash=null;for(const key of [...query.keys()])if(!['lang','settings'].includes(key))query.delete(key);for(const key of [...fragment.keys()])fragment.delete(key);
 const {mountIntent}=await import('./ui/intent-entry.mjs');mountIntent({value:invalid?null:value,placement,expiresAt,locale:query.get('lang')==='es'||!query.has('lang')&&navigator.language.startsWith('es')?'es':'en',settings:query.has('settings'),navigation:document.querySelector('meta[name="intent-navigation"]')?.content});
 

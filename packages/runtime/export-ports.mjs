@@ -1,3 +1,4 @@
+import {noticeEmail} from '../identity/emails.mjs';
 // DX-1 export ports composed by the Worker and Node adapters (account-deletion-export.md §1.1, §1.4).
 // Every projection here hands DX-1's contributors records that its own redaction (export-contributors.mjs) filters
 // again: tokens, JTIs, hashes and credentials are never copied in the first place.
@@ -21,7 +22,7 @@ export function exportNoticePort({repository,mailer,clock=()=>Date.now()}){
    if(attempt>=3)throw Object.assign(new Error('The security log is busy.'),{code:'export_unavailable',status:503});
   }
   let mailed=false;
-  if(NOTIFIED.has(type)&&typeof account.verifiedEmail==='string'&&Number.isSafeInteger(account.emailVerifiedAt)&&typeof mailer?.sendSecurityAlert==='function')try{mailed=accepted(await mailer.sendSecurityAlert({email:account.verifiedEmail,type:type==='export-grant-created'?'export-created':type,owner}));}catch{mailed=false;}
+  if(NOTIFIED.has(type)&&noticeEmail(account)&&typeof mailer?.sendSecurityAlert==='function')try{mailed=accepted(await mailer.sendSecurityAlert({email:noticeEmail(account),type:type==='export-grant-created'?'export-created':type,owner}));}catch{mailed=false;}
   return {recorded:true,mailed};
  };
 }

@@ -5,6 +5,7 @@ import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { mkdtemp, rm, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { softAuthenticator, signupBody } from '../helpers/soft-passkey.mjs';
 
 const harness = `
 import worker, { AdminAuthority, IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject, LifecycleScheduler, EventBusWaiter } from './apps/worker/index.mjs';
@@ -65,15 +66,30 @@ async function request(route, { method = 'GET', value, headers = {}, raw, form }
   return mf.dispatchFetch(`${origin}${route}`, { method, headers: { ...(value !== undefined || raw !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },
     ...(form ? { body:form } : value !== undefined || raw !== undefined ? { body: raw ?? JSON.stringify(value) } : {}) });
 }
+// Test accounts sign up and sign in with a soft passkey (passwords were dropped for user accounts, owner approval 2026-10-28).
+const authenticator = softAuthenticator({ origin });
+const sendJson = (headers = {}) => async (route, value) => { const response = await request(route, { method: 'POST', value, headers: { Origin: origin, ...headers } }); const text = await response.text(); assert.ok(response.ok, `${route} ${response.status} ${text}`); return JSON.parse(text); };
 async function signup(handle = `test_${crypto.randomUUID().slice(0, 8)}`) {
-  const start = await request('/api/auth/signup', { method: 'POST', value: { handle, method: 'password', password: 'isolated test account password', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }, headers: { Origin: origin } });
+  const start = await request('/api/auth/signup', { method: 'POST', value: signupBody({ handle, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }), headers: { Origin: origin } });
   assert.equal(start.status, 200,start.status===200?'':await start.text()); const pending = await start.json();
+  const response = await authenticator.register(pending.registrationOptions), credentialId = response.id; await sendJson()('/api/auth/passkey/register', { pendingToken: pending.pendingToken, response });
   const download = await request('/api/auth/recovery/download', { method: 'POST', value: { pendingToken: pending.pendingToken }, headers: { Origin: origin } });
   assert.equal(download.status, 200); const file = await download.json();
   const activation = await request('/api/auth/recovery/confirm', { method: 'POST', value: { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true }, headers: { Origin: origin } });
   assert.equal(activation.status, 200); const result = await activation.json();
-  return { result, pending, file, cookie: activation.headers.get('Set-Cookie').split(';')[0] };
+  return { result, pending, file, credentialId, cookie: activation.headers.get('Set-Cookie').split(';')[0] };
+}
+/** Passkey sign-in for `handle`: the finish Response (status, Set-Cookie and body for the caller to read). */
+async function passkeyLogin(handle, { headers = {}, credentialId, extra = {} } = {}) {
+  const begin = await sendJson(headers)('/api/auth/login/passkey/begin', { handle, turnstileToken: 'local-browser-test-token', ...extra });
+  return request('/api/auth/login/passkey/finish', { method: 'POST', value: { challengeToken: begin.challengeToken, response: await authenticator.authenticate(begin.authenticationOptions, credentialId) }, headers: { Origin: origin, ...headers } });
+}
+/** Passkey step-up on the session `cookie` (with optional CSRF header); the step-up Response. */
+async function stepUp(cookie, { headers = {}, credentialId } = {}) {
+  const auth = { Cookie: cookie, ...headers };
+  const begin = await sendJson(auth)('/api/auth/step-up/begin', {});
+  return request('/api/auth/step-up', { method: 'POST', value: { method: 'passkey', response: await authenticator.authenticate(begin.authenticationOptions, credentialId) }, headers: { Origin: origin, ...auth } });
 }
 
-return {mf,origin,directory,accounts,abuse,archives,request,signup,close:async()=>{await mf?.dispose();if(temporary)await rm(temporary,{recursive:true,force:true});}};
+return {mf,origin,directory,accounts,abuse,archives,request,signup,authenticator,passkeyLogin,stepUp,close:async()=>{await mf?.dispose();if(temporary)await rm(temporary,{recursive:true,force:true});}};
 }

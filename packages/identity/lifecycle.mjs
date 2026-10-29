@@ -1,3 +1,4 @@
+import { noticeEmail } from './emails.mjs';
 const DAY = 86400000;
 
 /** Compute a reviewable maintenance plan without changing data. Activity must
@@ -17,7 +18,7 @@ export function planAccountLifecycle(account, { now, shelfAfterDays = 180, delet
   if (!deletionEnabled || !deletionSignoff?.reviewer || !deletionSignoff.date || deletionSignoff.outcome !== 'approved') return { action: 'retain-shelved', reason: 'Destructive retention policy has no explicit approval.' };
   if (paymentProtection?.status!=='unpaid')return {action:'retain-shelved',reason:'Paid history or uncertain payment protection prohibits automatic warning, suspension and deletion.'};
   if (now - activity < deleteAfterDays * DAY) return { action: 'retain-shelved', reason: 'Long-term retention has not elapsed.' };
-  if (!account.verifiedEmail && !account.verifiedPhone) return { action: 'retain-shelved', reason: 'No verified channel can deliver advance deletion notice.' };
+  if (!noticeEmail(account) && !account.verifiedPhone) return { action: 'retain-shelved', reason: 'No verified channel can deliver advance deletion notice.' };
   const notice = account.deletionNotice;
   if (!notice || notice.deliveredAt < activity || !notice.deliveryReceipt || !Number.isFinite(notice.deliveredAt)) return { action: 'notify', reason: 'Deliver a notice with a verifiable receipt before starting the grace period.' };
   if (now < notice.deliveredAt + graceDays * DAY) return { action: 'retain-shelved', reason: 'The advance-notice grace period is still open.' };

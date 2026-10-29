@@ -2,7 +2,7 @@
 // signaling-owner.mjs; packages/signaling/owner-pages.mjs; release gate "Signaling", owner pages): the JSON routes are
 // reachable only as the pages' adapters. A widening action needs the session, Origin and CSRF of the console page, a
 // review taken first and the review's server-side arming time; a cross-entity pairing needs recent authentication,
-// which a password step-up restores. The organization route is checked as an adapter over a recording writer. Local
+// which a passkey step-up restores. The organization route is checked as an adapter over a recording writer. Local
 // behaviour only; reserved .example hosts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,8 +17,9 @@ import {stages,allowedMethods,splitReview} from '../packages/runtime/routes/sign
 import {PAGE_REVIEW} from '../packages/signaling/owner-pages.mjs';
 import {kindBody,CHAT,SYNC} from './helpers/signaling-fixture.mjs';
 import {reviewedHTTP} from './helpers/signaling-owner-review.mjs';
+import {softAuthenticator,registerPending,passkeyStepUp} from './helpers/soft-passkey.mjs';
 
-const ORIGIN='https://signaling-pages.example',APP='https://app.example/client',APP2='https://other.example/client',PASSWORD='Signaling owner page fixture password, long!';
+const ORIGIN='https://signaling-pages.example',APP='https://app.example/client',APP2='https://other.example/client';
 const envelope=spec=>({bindle_artefact:1,id:spec.line,kind:'intent',versions:[{version:1,prev:null,body:kindBody(spec)}]});
 const KINDS=[{line:CHAT,parties:'any'},{line:SYNC,parties:'self'}],ENVELOPES=Object.fromEntries(KINDS.flatMap(k=>{const e=envelope(k);return [[k.line,e],[k.line+'/envelope',e]];}));
 const REF=Object.fromEntries(await Promise.all(KINDS.map(async k=>{const e=ENVELOPES[k.line];return [k.line,{artefact:k.line,version:1,digest:await digestJSON(versionRecord(parseEnvelope(e,{id:k.line}),e.versions[0]))}];})));
@@ -34,10 +35,11 @@ async function host(t){
  const call=async(user,method,path,value,options={})=>{const r=await fetch(path,{user,method,value,...options});const text=await r.text();let body;try{body=JSON.parse(text);}catch{body=text;}return {status:r.status,body};};
  const person=async handle=>{
   const post=(path,value)=>fetch(path,{method:'POST',value});
-  const pending=await (await post('/api/auth/signup',{handle,method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+  const pending=await (await post('/api/auth/signup',{handle,method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+  const authenticator=softAuthenticator({origin:ORIGIN});await registerPending(authenticator,async(path,value)=>(await post(path,value)).json(),pending);
   const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
   const r=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}),session=await r.json();
-  return {id:session.account.id,handle:session.account.handle,cookie:r.headers.get('Set-Cookie').split(';')[0],csrf:session.csrfToken,principal:{iss:ORIGIN,sub:session.account.id}};
+  return {id:session.account.id,handle:session.account.handle,cookie:r.headers.get('Set-Cookie').split(';')[0],csrf:session.csrfToken,authenticator,principal:{iss:ORIGIN,sub:session.account.id}};
  };
  const grant=async(user,clientId=APP)=>{const id='g'+Math.random().toString(36).slice(2);await app.resources.federationShard(user.id).metadata.transaction(tx=>tx.set('federation/grant/'+id,{id,active:true,subject:`${ORIGIN}/entities/${user.id}`,clientId,fragment:SIGNALING_FRAGMENT,fields:['signaling'],resources:{},methods:{},createdAt:Date.now()}));};
  return {app,fetch,call,person,grant};
@@ -69,7 +71,7 @@ test('owner pages over HTTP: the review and the decision need the console sessio
  assert.deepEqual((await h.call(a,'POST','/api/intents/session-unapprove',{clientId:APP,kind:CHAT})).body,{removed:true,ended:0});
 });
 
-test('owner pages over HTTP: a cross-entity pairing needs recent authentication; a password step-up restores it; the pairing page read and the by-peer data',async t=>{
+test('owner pages over HTTP: a cross-entity pairing needs recent authentication; a passkey step-up restores it; the pairing page read and the by-peer data',async t=>{
  const h=await host(t),a=await h.person('sig_fresh_a'),b=await h.person('sig_fresh_b');await h.grant(a);
  const post=(path,value)=>h.call(a,'POST',path,value);
  await reviewedHTTP(post,[{path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP,kind:CHAT}}]);
@@ -77,7 +79,7 @@ test('owner pages over HTTP: a cross-entity pairing needs recent authentication;
  // Six minutes later the session is no longer fresh.
  const realNow=Date.now;Date.now=()=>realNow()+360000;t.after(()=>{Date.now=realNow;});
  const stale=await post('/api/signaling/review',cross);assert.deepEqual([stale.status,stale.body.error],[403,'reauthentication_required']);
- const confirmed=await post('/api/auth/step-up',{method:'password',password:PASSWORD});assert.equal(confirmed.status,200,JSON.stringify(confirmed.body));
+ const confirmed=await passkeyStepUp(a.authenticator,async(path,value)=>{const r=await post(path,value);assert.equal(r.status,200,JSON.stringify(r.body));return r.body;});assert.ok(Number.isSafeInteger(confirmed.stepUpUntil));
  const r=await post('/api/signaling/review',cross);assert.equal(r.status,200,JSON.stringify(r.body));
  assert.deepEqual(r.body.disclosure.peer,{principal:b.principal,issuerOrigin:ORIGIN,handle:b.handle,sameProvider:true});assert.equal(r.body.disclosure.activateNow,true);
  await sleep(Math.max(0,r.body.armAt-Date.now())+10);

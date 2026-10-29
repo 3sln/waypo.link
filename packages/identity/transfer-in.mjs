@@ -573,7 +573,7 @@ export function transferInIdentityPort(repository, { clock = () => Date.now(), c
         if (typeof repository.allocateFreeHandle !== 'function') return { ok: false, status: 'unsupported' };
         const assignmentId = webCrypto.randomUUID(), handle = await repository.allocateFreeHandle(null, sub, assignmentId);
         const account = { id: sub, assignmentId, nameAssignmentId: assignmentId, revision: 0, handle, status: 'pending-transfer', kind: input.kind === 'organization' ? 'organization' : 'person',
-          admission: { version: 1, kind: 'transfer-in', plan: 'free' }, createdAt: now, lastActiveAt: now, security: { epoch: 0, changedAt: now }, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false, passwordHash: null,
+          admission: { version: 1, kind: 'transfer-in', plan: 'free' }, createdAt: now, lastActiveAt: now, security: { epoch: 0, changedAt: now }, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null,
           transferIn: marker({ ...input, now }) };
         audit(account, 'transfer-in-reserved');
         if (await repository.create(account)) return { ok: true, reservation: input.reservation, handle };

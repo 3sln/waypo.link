@@ -1,5 +1,5 @@
 // ORG-12b/12e on workerd: the Worker composition mounts the owner-channels adapter, the sign-in hook and the break-glass
-// routes. A password sign-in runs the hook (one read of the person's hint rows; nothing to signal); the abort page has
+// routes. A passkey sign-in runs the hook (one read of the person's hint rows; nothing to signal); the abort page has
 // strict headers and changes nothing on GET; the abort POST needs no session, answers a well-formed unknown link with the
 // same {received:true}, refuses another origin and keeps its own per-address budget; the organization routes refuse an
 // unknown organization with the uniform 404. Creating an organization needs paid checkout or an allowlisted creator id,
@@ -12,8 +12,8 @@ const GHOST='12345678-1234-4123-8123-123456789abc',TOKEN=`bg1.${GHOST}.${GHOST}.
 test('Worker: sign-in hook, the abort page and POST, and break-glass routes for an unknown organization',async t=>{
  const h=await createHarness({bindings:{ORGANIZATIONS_ENABLED:'true',ORG_BREAK_GLASS_ENABLED:'true'}});t.after(()=>h.close());
  const {cookie,result}=await h.signup(),handle=result.account.handle;
- // Sign in again with the password: the hook runs in the background and the sign-in succeeds as before.
- const login=await h.request('/api/auth/login/password',{method:'POST',value:{handle,password:'isolated test account password',turnstileToken:'local-browser-test-token'},headers:{Origin:h.origin}});assert.equal(login.status,200,await login.clone().text());
+ // Sign in again with the passkey: the hook runs in the background and the sign-in succeeds as before.
+ const login=await h.passkeyLogin(handle);assert.equal(login.status,200,await login.clone().text());
  const items=await h.request('/api/orgs/break-glass',{headers:{Cookie:cookie}});assert.equal(items.status,200);assert.deepEqual(await items.json(),{items:[]});
  for(const path of [`/api/orgs/${GHOST}/break-glass`])assert.equal((await h.request(path,{headers:{Cookie:cookie}})).status,404);
  const page=await h.request('/org-claim/abort');assert.equal(page.status,200);assert.match(page.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.equal(page.headers.get('Referrer-Policy'),'no-referrer');assert.match(await page.text(),/Stop this claim/);

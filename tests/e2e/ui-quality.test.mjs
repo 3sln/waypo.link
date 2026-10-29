@@ -5,7 +5,7 @@ let browser;
 test.before(async()=>{browser=await launch();});test.after(async()=>browser?.close());
 for(const locale of ['en','es'])for(const colorScheme of ['light','dark'])for(const [width,height] of [[390,844],[1280,900]])test(`UI quality ${locale} ${colorScheme} ${width}x${height}: account retry, offline shell and layout`,async t=>{
  const context=await browser.newContext({viewport:{width,height},colorScheme});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(12000);
- const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'quality',status:'active',hasPassword:true};let requests=0,fail=true;
+ const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'quality',status:'active'};let requests=0,fail=true;
  await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname;let value={};
  if(path==='/api/config')value={origin:baseURL,providers:{},localDevelopment:true,integrationsEnabled:false};
  if(path==='/api/session')value={account,sessionContext:'quality',csrfToken:'csrf'};

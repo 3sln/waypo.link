@@ -15,6 +15,7 @@ import {OrganizationService,ORG_RECORD,ORG_DELETION_DELAY_MS,ORG_CREATION_LIMIT,
 import {OrganizationCreation} from '../packages/orgs/creation.mjs';
 import {identityBackupPort} from '../packages/runtime/identity-backup.mjs';
 import {organizationIdentityPort,interactiveIdentity} from '../packages/identity/organizations.mjs';
+import {signInEmails} from '../packages/identity/emails.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick} from '../packages/app/domains/orgs.mjs';
 import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
 import {transferIdentityPort} from '../packages/identity/transfer-out.mjs';
@@ -97,7 +98,7 @@ test('ORG-1: creation needs the flag, a fresh authentication and a paid plan; it
  assert.equal(created.recoveryFile.fileName,`3sln-organization-recovery-${org}.json`);assert.equal(JSON.parse(created.recoveryFile.content).entity,org);
  const identity=await w.identity.get(org);
  assert.equal(identity.kind,'organization');assert.equal(identity.status,'active');assert.equal(identity.handle,created.organization.handle);assert.ok(identity.recovery.issuedAt>0);assert.equal(identity.recovery.fileId,JSON.parse(created.recoveryFile.content).fileId);assert.equal(created.recoveryFile.content.includes('keychain'),false);
- const stored=await w.repository.get(org);assert.deepEqual([stored.credentials,stored.sessions,stored.passwordHash,stored.emailLoginEnabled],[[],[],null,false],'no interactive login');assert.equal(interactiveIdentity(stored),false);
+ const stored=await w.repository.get(org);assert.deepEqual([stored.credentials,stored.sessions,'passwordHash' in stored,signInEmails(stored)],[[],[],false,[]],'no interactive login (no passkey, session, password field or sign-in email)');assert.equal(interactiveIdentity(stored),false);
  assert.equal((await transferIdentityPort(w.repository).get(org)).kind,'organization','portability sees the kind and keeps refusing organization moves');
  const list=await w.dispatch(ALICE,{operation:'orgs.list',actor:w.self(w.person(ALICE))});assert.deepEqual(list.organizations.map(o=>o.id),[org]);assert.deepEqual(list.pending,[]);
  const view=await w.dispatch(org,{operation:'orgs.get',actor:w.as(w.person(ALICE),org)});assert.deepEqual(view.powers,['admin','owner-of-record']);assert.equal(view.state,'active');

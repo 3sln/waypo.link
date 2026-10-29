@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {launch,baseURL,screenshot} from './browser.mjs';
+import {launch,baseURL,screenshot,passkeyAccount} from './browser.mjs';
 // Real local Worker, real cookies and real identity sessions. Accounts are created
 // through the same HTTP signup/recovery endpoints as the UI, inside the browser
 // context's own cookie jar; only Turnstile uses the explicit local test token.
@@ -10,7 +10,7 @@ test.after(async()=>{await browser?.close();});
 // One random offset per run, plus the signup index: every signup in this file has its own address, so two signups in
 // the same second never share the per-IP cooldown (independent random picks collided about 1 run in 150).
 const network=20+Math.floor(Math.random()*150);
-async function signup(context,index){const headers={Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':`198.51.100.${network+index}`};const pending=await (await context.request.post(baseURL+'/api/auth/signup',{headers,data:{method:'password',password:'Multi account browser password 2026!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));const file=await (await context.request.post(baseURL+'/api/auth/recovery/download',{headers,data:{pendingToken:pending.pendingToken}})).json();const response=await context.request.post(baseURL+'/api/auth/recovery/confirm',{headers,data:{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true}});assert.equal(response.status(),200);return (await response.json()).account;}
+async function signup(context,index){return (await passkeyAccount(context.request,{headers:{'Content-Type':'application/json','CF-Connecting-IP':`198.51.100.${network+index}`}})).account;}
 const shell=(page,handle)=>page.locator('.user-summary strong').filter({hasText:handle}).waitFor();
 const row=(page,handle)=>page.locator('.account-row').filter({hasText:handle+'@'});
 test('real Worker console: switch, per-tab selection, cross-tab sign-out, notification destination, add account and sign out all',async t=>{

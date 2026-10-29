@@ -25,6 +25,7 @@ import {createNodeServer} from '../apps/node/server.mjs';
 import {digestJSON,versionRecord,parseEnvelope} from '../packages/core/artefacts.mjs';
 import {SIGNALING_FRAGMENT,SIGNALING_CONTRACT,SIGNALING_METHODS} from '../packages/signaling/extension.mjs';
 import {kindBody,CHAT,SYNC} from './helpers/signaling-fixture.mjs';
+import {softAuthenticator,registerPending} from './helpers/soft-passkey.mjs';
 
 const ORIGIN='https://signaling-default.example',APP={id:'https://app.example/client',name:'Default wiring app',origin:'https://app.example',redirectUris:['https://app.example/callback']};
 const envelope=spec=>({bindle_artefact:1,id:spec.line,kind:'intent',versions:[{version:1,prev:null,body:kindBody(spec)}]});
@@ -50,7 +51,8 @@ async function boot(t,extra={}){
 }
 
 async function connect(w,kinds=[CHAT]){
- const pending=await (await w.post('/api/auth/signup',{method:'password',password:'A durable default wiring test password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+ const pending=await (await w.post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();
+ await registerPending(softAuthenticator({origin:ORIGIN}),async(path,data)=>(await w.post(path,data)).json(),pending);
  const recovery=await (await w.post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
  const activation=await w.post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});
  assert.equal(activation.status,200,'signup');

@@ -4,7 +4,7 @@
 // 390 and 1280 px, light and dark, English and Spanish. Screenshots: artifacts/browser/org-break-glass-e2e-*.
 import test from 'node:test';import assert from 'node:assert/strict';import {firefox} from 'playwright';import {launch,baseURL,screenshot} from './browser.mjs';
 const browsers={};test.before(async()=>{browsers.chromium=await launch();browsers.firefox=await firefox.launch({headless:true});});test.after(async()=>{for(const b of Object.values(browsers))await b?.close();});
-const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'bgowner',status:'active',hasPassword:true},org='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',claimId='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const account={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',handle:'bgowner',status:'active'},org='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',claimId='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const GHOST='12345678-1234-4123-8123-123456789abc',TOKEN=`bg1.${GHOST}.${GHOST}.${'A'.repeat(43)}`;
 const ownerClaim={id:claimId,state:'held-for-support',createdAt:Date.UTC(2026,9,1),earliestEffectAt:null,closedReason:null,track:'S',frozen:false,channels:[{kind:'email',enrolledAt:1,excluded:false}],decisions:['abort']};
 /** The organization API as a fixture: an owner with one open claim against "Acme <img>", or an admin who may start one. */

@@ -74,7 +74,7 @@ export class CreateExportWithHooks extends CreateExport {
   const owner=authority(this.actor,['owner']),input=this.input,s=new AccountExport({...r,...r.config.exportPorts}),now=r.clock.now();
   try{if(typeof s.issuer!=='string'||new URL(s.issuer).origin!==s.issuer)unavailable();}catch{unavailable();}
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['operationId','purpose','episodeId'].includes(k))||!UUID.test(input.operationId??'')||!['owner','over-quota'].includes(input.purpose??'owner')||(input.purpose==='over-quota'?!UUID.test(input.episodeId??''):input.episodeId!==undefined))fault('invalid_export','Provide an export operation ID and purpose.',400);
-  const actor=this.actor;if(!int(actor.stepUpAt)||actor.stepUpAt>now||now-actor.stepUpAt>=300000||actor.stepUpMethod!==undefined&&!['password','passkey'].includes(actor.stepUpMethod))fault('step_up_required','Verify your password or passkey again.',401);
+  const actor=this.actor;if(!int(actor.stepUpAt)||actor.stepUpAt>now||now-actor.stepUpAt>=300000||actor.stepUpMethod!==undefined&&actor.stepUpMethod!=='passkey')fault('step_up_required','Verify with your passkey again.',401);
   const purpose=input.purpose??'owner',fingerprint=canonical({purpose,...purpose==='over-quota'?{episodeId:input.episodeId}:{}}),security=await s.security(owner),id=r.random.uuid();
   const job=await r.accountStore.transaction(async tx=>{
    await s.fence(tx,owner);const history=await tx.get('export/history')??[],receipt=history.find(h=>h.operationId===input.operationId);

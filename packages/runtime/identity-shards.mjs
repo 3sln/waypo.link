@@ -1,3 +1,4 @@
+import {indexedEmails} from '../identity/emails.mjs';
 import {validateHostAlias,configuredReservedName} from '../identity/badge-policy.mjs';
 import {onboardingMarker,onboardingAlias,sameOnboardingIdentity} from '../identity/onboarding.mjs';
 import {systemMarker,systemBadge,sameSystemIdentity} from '../identity/system-bootstrap.mjs';
@@ -61,7 +62,7 @@ const lookupKey = (kind, value) => `identity-lookup/${kind}/${value}`;
 const sameClaim = (a, b) => Boolean(a && b && a.owner === b.owner && a.token === b.token);
 const sameLink = (a,b) => a.kind === b.kind && a.value === b.value && sameClaim(a,b);
 const linksFor = (kind, value) => kind === 'account'
-  ? [{kind:'handle', value:value.handle}, ...(value.verifiedEmail ? [{kind:'email', value:value.verifiedEmail}] : [])]
+  ? [{kind:'handle', value:value.handle}, ...indexedEmails(value).map(email => ({kind:'email', value:email}))]
   : [{kind:'device-code', value:value.userCodeHash, expiresAt:value.pendingUntil??value.expiresAt}];
 
 // These short transactions are the only cross-request atomic sections. They
@@ -299,8 +300,8 @@ export class ShardedIdentityRepository {
   async getDevice(id){return (await this.read('device',id))?.value || null;}
   async find(kind,value,recordKind,field){
     const bucket=await this.bucket(kind,value),link=await bucket.shardLookup(kind,value);if(!link)return null;
-    const state=await this.read(recordKind,link.owner);
-    if(!this.active(state,link)||state.value?.[field]!==value){
+    const state=await this.read(recordKind,link.owner),matches=typeof field==='function'?Boolean(state?.value)&&field(state.value,value):state?.value?.[field]===value;
+    if(!this.active(state,link)||!matches){
       // A pending operation may still own this claim; leave it for recovery.
       if(!state?.pending?.links.some(old=>sameLink(old,link))){
         if(kind==='handle')await (await this.bucket('namespace',value)).shardHandleGrandfather(value,link.owner,state?.value?.assignmentId,link.token);
@@ -347,7 +348,7 @@ export class ShardedIdentityRepository {
   async setSystemAdmission(handle,digest,binding){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'admitted');}
   async setSystemCanonical(handle,digest,binding,canonical){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'canonical',canonical);}
   async finishSystemIdentity(handle,digest,binding){const claim=await (await this.bucket('namespace',handle)).shardHandleLookup(handle),account=claim&&await this.get(claim.owner);if(!account||account.assignmentId!==claim.assignmentId||account.handle!==claim.bootstrap?.canonical||!sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker))return null;return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'consumed');}
-  findByEmail(email){return this.find('email',email,'account','verifiedEmail');}
+  findByEmail(email){return this.find('email',email,'account',(account,address)=>indexedEmails(account).includes(address));}
   findDeviceByCode(code){return this.find('device-code',code,'device','userCodeHash');}
   async write(kind,id,revision,value){
     await this.read(kind,id);
@@ -368,7 +369,7 @@ export class ShardedIdentityRepository {
     const bucket=this.shard(`identity-v1/account/${String(shard).padStart(2,'0')}`);
     const page=await bucket.shardPage('account',{cursor:after,limit});
     const accounts=[];
-    for(const row of page.rows){const a=await this.get(row.id);if(a)accounts.push({cursor:row.key,id:a.id,status:a.status,createdAt:a.createdAt,lastActiveAt:a.lastActiveAt,verifiedEmail:Boolean(a.verifiedEmail)});}
+    for(const row of page.rows){const a=await this.get(row.id);if(a)accounts.push({cursor:row.key,id:a.id,status:a.status,createdAt:a.createdAt,lastActiveAt:a.lastActiveAt,verifiedEmail:indexedEmails(a).length>0});}
     return {accounts,cursor:page.cursor?JSON.stringify({shard,after:page.cursor}):shard+1<IDENTITY_SHARDS?JSON.stringify({shard:shard+1}):null};
   }
 }

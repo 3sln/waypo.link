@@ -83,8 +83,8 @@ test('a lost reply after passkey enrollment resumes only with a passkey assertio
  const x=fixture();let lose=false;const save=x.identity.save.bind(x.identity);x.identity.save=async(...args)=>{await save(...args);if(lose){lose=false;throw Object.assign(Error('lost HTTP response'),{code:'temporarily_unavailable'});}};
  const opts=await options(x);lose=true;await assert.rejects(finish(x,opts),{code:'temporarily_unavailable'});
  const enrolled=x.rows.get(OWNER);assert.equal(enrolled.credentials.length,1);
- // A password start cannot take over a passkey enrollment.
- await assert.rejects(x.run('start',{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)}),{code:'intake_conflict'});
+ // A password start cannot take over a passkey enrollment: passwords were dropped (2026-10-28), so it is refused outright.
+ await assert.rejects(x.run('start',{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)}),{code:'invalid_method'});assert.equal(x.rows.get(OWNER).credentials.length,1);
  const resume=await options(x);assert.equal(resume.resume,true);assert(resume.authenticationOptions.challenge);
  await assert.rejects(x.run('start',{method:'passkey',package:pkgOf(OWNER),passkeyTicket:resume.passkeyTicket,response:assertion(resume.authenticationOptions,OTHER)}),{code:'invalid_passkey'});
  await assert.rejects(x.run('start',{method:'passkey',package:pkgOf(OWNER),passkeyTicket:resume.passkeyTicket,response:assertion(resume.authenticationOptions,OWNER)}),{code:'invalid_challenge'},'a failed assertion spends the challenge');
@@ -93,27 +93,31 @@ test('a lost reply after passkey enrollment resumes only with a passkey assertio
  assert.deepEqual(await x.run('status',{transferToken:result.transferToken}),{state:'pending'});
 });
 
-test('reachability gate applies to passkey enrollment exactly as to password enrollment',async()=>{
+test('reachability gate applies to passkey enrollment',async()=>{
  const x=fixture({contact:true}),opts=await options(x),result=await finish(x,opts);
  assert.equal(result.contactRequired,true);assert(!x.calls.includes('import'));
 });
 
-test('password path is unchanged, and a password start supersedes an abandoned passkey challenge on the same reservation',async()=>{
- const x=fixture();await options(x);
- const result=await x.run('start',{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)});
- assert.deepEqual(result.transfer,{state:'awaiting-source'});const account=x.rows.get(OWNER);assert.equal(account.passwordHash,'hash:a sufficiently long password');assert.equal(account.transferPasskey,undefined);assert.equal(account.credentials.length,0);
- assert.equal((await x.run('start',{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)})).resumed,true);
- await assert.rejects(options(x),{code:'intake_conflict'},'a password enrollment cannot be resumed through the passkey path');
+// Passwords were dropped (owner approval 2026-10-28): password enrollment is refused before any gate, reservation or
+// admission, and never disturbs an abandoned passkey challenge on the same reservation.
+test('password enrollment is refused before any gate or reservation and leaves a pending passkey challenge intact',async()=>{
+ const fresh=fixture();
+ for(const value of [{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)},{...gates,method:undefined,package:pkgOf(OWNER)},{...gates,method:'email',package:pkgOf(OWNER)}])await assert.rejects(fresh.run('start',value),{code:'invalid_method'});
+ assert.deepEqual(fresh.calls,[]);assert.equal(fresh.rows.size,0);
+ const x=fixture(),opts=await options(x),before=[...x.calls],challenge=x.rows.get(OWNER).transferPasskey.value;
+ await assert.rejects(x.run('start',{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)}),{code:'invalid_method'});
+ assert.deepEqual(x.calls,before);const account=x.rows.get(OWNER);assert.equal(account.passwordHash,undefined);assert.equal(account.transferPasskey.value,challenge);assert.equal(account.transferEnrollment,undefined);
+ assert.equal((await finish(x,opts)).owner,OWNER);assert.equal(x.rows.get(OWNER).credentials.length,1);
 });
 
-test('seeded concurrent passkey and password enrollment of one identity yields one credential kind and one import',async()=>{
+test('seeded concurrent passkey enrollments (and a refused password start) of one identity yield one credential and one import',async()=>{
  await forEachSeed(12,async random=>{
   const x=fixture(),opts=await options(x),scheduler=createScheduler(random);x.identity.repository=scheduler.wrap(x.identity.repository,'repository');
   const results=await scheduler.run([()=>finish(x,opts),()=>finish(x,opts),()=>x.run('start',{...gates,method:'password',password:'a sufficiently long password',package:pkgOf(OWNER)})]);
   const account=x.rows.get(OWNER),winners=results.filter(r=>r.status==='fulfilled');
-  assert(winners.length>=1);assert.equal(Boolean(account.passwordHash)&&account.credentials.length>0,false,'never both a password and a passkey from racing enrollments');
-  assert.equal(x.calls.filter(c=>c==='import').length,winners.filter(r=>!r.value.resumed).length);
-  assert(x.calls.filter(c=>c==='import').length<=2);
+  assert.equal(results[2].status,'rejected');assert.equal(results[2].reason.code,'invalid_method');
+  assert.equal(winners.length,1,'one registration wins; the challenge is single-use');assert.equal(account.passwordHash,undefined);assert.equal(account.credentials.length,1);
+  assert.equal(x.calls.filter(c=>c==='import').length,1);
  });
 });
 

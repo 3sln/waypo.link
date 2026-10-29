@@ -226,7 +226,7 @@ test('cross-slice: real DX-1 generation interleaved with request, commit and E6 
   const exporter=new AccountExport({accountStore:sStore,archives:sArchives,blobs,clock,random:{uuid:()=>crypto.randomUUID()},flags,config:{APP_ORIGIN:'https://issuer.example'},identitySecurity:async()=>({epoch:0,changedAt:0}),digest:createExportDigest(),quota:async()=>1000000,notice:async()=>{},contributors});
   const ports={identity:lifecycleIdentityPort(repository,{clock:clock.now}),security:async()=>({epoch:1,changedAt:null}),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,notices:{deliver:async()=>({accepted:true})},erasure:{federation:null,mcp:null,operatorApps:null},exports:{cancelAll:(owner,options)=>exporter.cancelAll(owner,options)}};
   const service=new DeletionService({executor:{metadata:sStore,blobs,archives:sArchives,config:{}},ports,flags,clock,random:{uuid:()=>crypto.randomUUID(),bytes:n=>crypto.getRandomValues(new Uint8Array(n))},budget:8});
-  const owner={kind:'owner',owner:OWNER,sessionId:'s1',stepUpAt:clock.now(),stepUpMethod:'password'};
+  const owner={kind:'owner',owner:OWNER,sessionId:'s1',stepUpAt:clock.now(),stepUpMethod:'passkey'};
   // A ready export first in some seeds (E6 must remove it), a generating one in others.
   const ready=random.chance(0.5);
   if(ready){await exporter.create(OWNER,{operationId:crypto.randomUUID()},owner);for(let i=0;i<20;i++){const out=await exporter.step(OWNER);if(out.wakeAt>clock.now()+2000)break;}}

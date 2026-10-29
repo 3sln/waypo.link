@@ -223,7 +223,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    if(!REQUEST_ID.test(requestId??'')||!Array.isArray(approved))fault('invalid_request');
    const view=await linked.resolve({code,locator:requestId},context);if(view.kind!=='app')fault('invalid_request','Approve device sessions through the linked approval operation.');
    // Checked before any owner-shard write, so an obvious refusal leaves no grants behind; linkedApprove re-checks.
-   if(view.freshness?.satisfied!==true)fault('reauthentication_required','Confirm your password or passkey before approving this sign-in.');
+   if(view.freshness?.satisfied!==true)fault('reauthentication_required','Confirm with your passkey before approving this sign-in.');
    if(choice!==undefined&&!view.durations.some(option=>option.choice===choice))fault('invalid_choice','Choose how long this sign-in lasts.');
    const client=eligible(view.app.clientId),owner=view.account.id,service=serviceOf(owner),target={owner,linkedRequestId:view.requestId};
    if(!featureAllowed({owner,clientId:client.id}))fault('access_denied');await sweepDeviceFamilies(service,owner);

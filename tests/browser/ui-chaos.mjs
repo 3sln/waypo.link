@@ -136,12 +136,12 @@ test('a View create retried after a lost reply reuses its operation ID; a new cr
 test('a request that never answers ends in an honest timeout and releases the sign-in form',async t=>{
  const f=consoleFixture(3,{faults:false},{timeout:40});try{
   f.server.expire(A);f.server.expire(B);f.act(new release.InitializeSpace());await f.drain();
-  await f.engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,{auth:'login',authMethod:'password'})));
+  await f.engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,{auth:'login'})));
   // The login request is parked and never answered: only the client deadline can end it.
-  const signin=f.act(new release.SignIn({values:{handle:'n.alpha',password:'Correct horse battery staple'}}));await until(()=>f.server.calls.some(call=>call.path==='/api/auth/login/password'));
+  const signin=f.act(new release.SignIn({values:{handle:'n.alpha'}}));await until(()=>f.server.calls.some(call=>call.path==='/api/auth/login/passkey/begin'));
   assert.equal([...f.render().querySelectorAll('button')].some(button=>button.textContent==='Please wait…'),true,'busy while pending');
   await signin;const root=f.render(),submit=root.querySelector('.auth-card form button[type=submit]');
-  assert.equal(f.state().busy,false);assert.equal(submit.textContent,'Sign in with password');assert.equal(submit.disabled,false);assert.match(root.querySelector('[role=alert]').textContent,/did not respond in time\. Check whether your request went through/);assert.equal(f.state().session,null);
+  assert.equal(f.state().busy,false);assert.equal(submit.textContent,'Sign in with a passkey');assert.equal(submit.disabled,false);assert.match(root.querySelector('[role=alert]').textContent,/did not respond in time\. Check whether your request went through/);assert.equal(f.state().session,null);
  }finally{f.server.parked.length=0;await f.close();}
  const fetchBefore=globalThis.fetch;t.after(()=>{globalThis.fetch=fetchBefore;});globalThis.fetch=(path,{signal}={})=>new Promise((_,reject)=>signal?.addEventListener('abort',()=>reject(signal.reason),{once:true}));
  for(const [method,expected] of [['GET',/did not respond in time\. Please try again/],['POST',/did not respond in time\. Check whether your request went through/]]){

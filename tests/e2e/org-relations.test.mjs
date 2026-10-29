@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {launch,baseURL} from './browser.mjs';
 let browser;test.before(async()=>{browser=await launch();});test.after(async()=>browser?.close());
-const org='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',person='cccccccc-cccc-4ccc-8ccc-cccccccccccc',account={id:person,handle:'member',status:'active',hasPassword:true};
+const org='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',person='cccccccc-cccc-4ccc-8ccc-cccccccccccc',account={id:person,handle:'member',status:'active'};
 for(const locale of ['en','es'])test(`ORG-10g built shell ${locale}: Relationships tab, default-off notice and member imports`,async()=>{
  for(const member of [false,true]){
  const context=await browser.newContext({viewport:{width:390,height:844}}),page=await context.newPage(),calls=[],errors=[];page.on('pageerror',e=>errors.push(e.message));

@@ -17,10 +17,10 @@ import { personActor } from '../packages/orgs/authority.mjs';
 import { MEMBER_PURPOSES, signMemberPop, parseMemberCertificate } from '../packages/identity/member-certificates.mjs';
 import { JWT_BEARER } from '../packages/orgs/certificates.mjs';
 import { federationEpoch } from '../packages/runtime/federation.mjs';
-import { fakeHasher } from './helpers/identity-engine.mjs';
+import { fakeHasher, fakeWebAuthn, passkeyResponse } from './helpers/identity-engine.mjs';
 import { holder, dpop } from './helpers/member-certificates.mjs';
 
-const ORIGIN = 'http://localhost:8788', PASSWORD = 'Member certificates runtime test password!';
+const ORIGIN = 'http://localhost:8788';
 const ERP = { client_id: 'https://erp.example/client.json', origin: 'https://erp.example' }, ACCESS = [MEMBER_PURPOSES.access];
 const flagsOn = { ORGANIZATIONS_ENABLED: 'true', MEMBER_CERTIFICATES_ENABLED: 'true', DIRECTORY_ENABLED: 'true', FEDERATION_ENABLED: 'true' };
 
@@ -29,9 +29,9 @@ async function fixture(t, { flags = flagsOn } = {}) {
   const app = await createNodeServer({ directory, config: { ...flags, FEDERATION_CLIENTS: JSON.stringify([{ id: ERP.client_id, name: 'ERP', origin: ERP.origin, redirectUris: ['https://erp.example/callback'] }]), ORGANIZATION_PLANS: { check: async () => ({ paid: true, plan: 'organization-internal', source: 'test' }) } } });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
   const RECOVERY_SIGNING_KEY = await readFile(join(directory, 'recovery-signing-key'), 'utf8'), repository = app.resources.repository, accounts = app.resources.accounts;
-  const identity = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: ORIGIN, RECOVERY_SIGNING_KEY }, accounts }), turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: fakeHasher, config: { origin: ORIGIN, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
+  const identity = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: ORIGIN, RECOVERY_SIGNING_KEY }, accounts }), turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: fakeWebAuthn(), passwordHasher: fakeHasher, config: { origin: ORIGIN, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
   const base = { origin: ORIGIN, remoteIP: '127.0.0.1' };
-  const signup = async () => { const pending = await identity.signup({ method: 'password', password: PASSWORD, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'ok' }, base); const downloaded = await identity.downloadRecovery({ pendingToken: pending.pendingToken }, base); await identity.confirmRecovery({ pendingToken: pending.pendingToken, recoveryToken: downloaded.recoveryToken, downloadConfirmed: true }, base); return pending.account.id; };
+  const signup = async () => { const pending = await identity.signup({ method: 'passkey', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'ok' }, base); await identity.registerPasskey({ pendingToken: pending.pendingToken, response: passkeyResponse(pending, 'passkey-' + pending.account.id) }, base); const downloaded = await identity.downloadRecovery({ pendingToken: pending.pendingToken }, base); await identity.confirmRecovery({ pendingToken: pending.pendingToken, recoveryToken: downloaded.recoveryToken, downloadConfirmed: true }, base); return pending.account.id; };
   const env = { APP_ORIGIN: ORIGIN, RECOVERY_SIGNING_KEY, IDENTITY_REPOSITORY: repository, ACCOUNTS: accounts, ...flags };
   const owner = (id, method, path, input) => orgRoutes.owner({ request: new Request(ORIGIN + path, { method, headers: input ? { 'Content-Type': 'application/json' } : {}, ...input ? { body: JSON.stringify(input) } : {} }), env, path, id, object: accountHandle(env, id), actor: personActor({ owner: id, iss: ORIGIN, authTime: Date.now() }) });
   const memberOwner = (id, method, path, input) => memberRoutes.owner({ request: new Request(ORIGIN + path, { method, headers: input ? { 'Content-Type': 'application/json' } : {}, ...input ? { body: JSON.stringify(input) } : {} }), env, path, id, object: accountHandle(env, id), actor: personActor({ owner: id, iss: ORIGIN, authTime: Date.now() }) });

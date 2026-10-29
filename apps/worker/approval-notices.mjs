@@ -1,3 +1,4 @@
+import {noticeEmail} from '../../packages/identity/emails.mjs';
 import {siteGlobal} from '../../packages/flags/read.mjs';
 // LA7: injected after-approval port. The integrator supplies verified owner contacts;
 // no account lookup, production delivery, or notification on pending requests is implied.
@@ -39,6 +40,6 @@ export function hostApprovalNotices({config,repository,accounts,mail,push}){
  return createApprovalNotices({enabled:true,origin:config.APP_ORIGIN,mail,push,owner:async id=>{
   const owner=await repository.get(id);if(owner?.status!=='active')return null;
   const result=await accounts.get(id).invoke({method:'approvalNoticeContacts',args:[id]});if(result?.$fault)throw new Error('Notice contacts unavailable.');
-  return {verifiedEmail:owner.emailVerifiedAt?owner.verifiedEmail:null,locale:owner.locale??'en',subscriptions:result?.subscriptions??[]};
+  return {verifiedEmail:noticeEmail(owner),locale:owner.locale??'en',subscriptions:result?.subscriptions??[]};
  }});
 }

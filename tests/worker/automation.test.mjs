@@ -31,7 +31,7 @@ test('actual Worker browser automation enforces HTTP owner/CSRF and exact grants
 
 test('actual Worker browser grant remains device-bound and dies on app disconnect and logout',async t=>{const f=await signed(t),{h,headers,collectionId}=f,permissions=[{collectionId,tools:['collections_list']}];
  await read(await h.request('/api/automation/grant',{method:'PUT',headers,value:{permissions}}));
- const login=await h.request('/api/auth/login/password',{method:'POST',headers:{Origin:h.origin},value:{handle:f.owner.account.handle,password:'isolated test account password',turnstileToken:'local-browser-test-token'}});assert.equal(login.status,200);const second=await login.json(),secondHeaders={Origin:h.origin,Cookie:login.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':second.csrfToken};
+ const login=await h.passkeyLogin(f.owner.account.handle);assert.equal(login.status,200);const second=await login.json(),secondHeaders={Origin:h.origin,Cookie:login.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':second.csrfToken};
  const operation={name:'collections_list',args:{}};
  assert.equal((await h.request('/api/automation/invoke',{method:'POST',headers:secondHeaders,value:operation})).status,403);
  const apps=await read(await h.request('/api/apps',{headers})),connection=apps.apps.find(a=>a.transport==='browser');assert(connection);assert.equal(connection.provenance.kind,'owner-browser-consent');

@@ -55,7 +55,7 @@ async function client(t,{powers=['admin'],state={},ops={},routes={},landing=null
    if(o==='create')return {instance:ORIGIN+'/entities/'+org+'/relations/new',relation:pin,slots:call.body.slots};
    if(o==='invite'||o==='admit')return {invitation:OTHER_META,jti:'jti-new',expiresAt:Date.UTC(2026,10,1),instance,slot:'recipient'};
    return {ok:true};},
-  'POST /api/auth/step-up/begin':()=>({password:true}),'POST /api/auth/step-up':()=>({ok:true})};
+  'POST /api/auth/step-up/begin':()=>({passkey:true,authenticationOptions:{challenge:'step-up'}}),'POST /api/auth/step-up':()=>({ok:true})};
  const c=await createClientEngine({state:{...initial,...state},browser,routes:{...defaults,...routes},providers:{organizationsConsole:Provider.fromSingleton(port),recoveryFile:Provider.fromSingleton({})}});t.after(()=>c.dispose());
  const act=(action,detail={})=>c.dispatch(new OrganizationsIntent({action,...detail}));
  const opCalls=()=>c.api.calls.filter(x=>x.method==='POST'&&x.path===REL).map(x=>x.body);
@@ -104,7 +104,7 @@ test('ORG-10g step-up: reauthentication_required prompts the existing security c
  let invites=0;const c=await client(t,{ops:{invite:()=>{if(++invites===1)throw Object.assign(Error('Fresh authentication required.'),{status:401,code:'reauthentication_required'});if(invites===2)throw Object.assign(Error('Limited'),{status:429,code:'relation_invitation_pending'});return {invitation:OTHER_META,jti:'j2',expiresAt:Date.UTC(2026,10,1),instance,slot:'recipient'};}}});
  await open(c);await c.act('rel-wizard-open');await c.act('rel-wizard-relation',{values:{relation:'share'}});await c.act('rel-wizard-slot',{values:{slot:'owner'}});await c.act('rel-wizard-find',{values:{handle:'acme'}});await c.act('rel-wizard-counterparty');await c.act('rel-wizard-values',{values:{'res:0:0:0':true}});
  const pending=c.act('rel-wizard-create',{values:{confirm:true}});while(!(await c.snapshot()).stepUp)await turn();
- const prompt=(await c.snapshot()).stepUp;await c.dispatch(new ConfirmOwner({id:prompt.id,method:'password',values:{password:'test-only'}}));await pending;
+ const prompt=(await c.snapshot()).stepUp;c.browser.authenticatePasskey=async()=>({id:'test-passkey'});await c.dispatch(new ConfirmOwner({id:prompt.id,method:'passkey'}));await pending;
  const s=await c.snapshot();assert.deepEqual(s.session,session,'the session survives');assert.equal(s.stepUp,null);assert.equal(c.api.calls.filter(x=>x.path==='/api/auth/step-up/begin').length,1);
  assert.equal(invites,2);assert.equal(organizationsModel(s).relationError,'relation_invitation_pending');assert.equal((await c.model()).relationWizard.step,'review','a refusal keeps the reviewed wizard');
  await c.act('rel-wizard-create',{values:{confirm:true}});assert.equal(invites,3);assert.equal(c.opCalls().filter(b=>b.operation==='create').length,1,'the created instance is reused');

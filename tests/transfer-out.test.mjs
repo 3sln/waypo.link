@@ -47,7 +47,7 @@ test('commit effects: identity moved, sessions and recovery ended, keys destroye
  const fx=await transferFixture(t);
  assert.equal((await committedFlow(fx)).status,'attested');
  const account=await fx.identityRecord();
- assert.equal(account.status,'moved');assert.deepEqual(account.sessions,[]);assert.equal(account.recoveryHash,null);assert.equal(account.recoveryIssuedAt,undefined);assert.equal(account.emailLoginEnabled,false);
+ assert.equal(account.status,'moved');assert.deepEqual(account.sessions,[]);assert.equal(account.recoveryHash,null);assert.equal(account.recoveryIssuedAt,undefined);assert.deepEqual(account.emails.map(e=>[e.address,e.state,e.signInSince]),[['owner@mover.example','verified',undefined]],'a moved identity keeps its email only as verified, never sign-in');
  // Credentials stay for the read-only export window; the moved record carries the target and proof.
  assert.equal(account.credentials.length,2);assert.equal(account.passwordHash,'hash');
  const record=await fx.get();
@@ -175,10 +175,10 @@ test('elevated proof by the disputing side aborts, invalidates the recovery file
  await assert.rejects(fx.begin({},{stepUpCredentialId:'pk-two'}),{code:'transfer_locked'});
 });
 
-test('P17 compares the step-up credential: a session signed in with the aborting passkey but stepped up with a password is another credential',async t=>{
+test('P17 compares the step-up credential: a session signed in with the aborting passkey but stepped up with another passkey is another credential',async t=>{
  const fx=await transferFixture(t);await fx.start();await fx.dispute({choice:'hold',token:fx.tokenFor('email')});
  await fx.elevate({side:'disputer'},{credentialId:'pk-two',stepUpCredentialId:'pk-two',sessionId:'s-two'});
- await assert.rejects(fx.begin({},{credentialId:'pk-two',stepUpCredentialId:'password',sessionId:'s-three'}),{code:'transfer_contested'});
+ await assert.rejects(fx.begin({},{credentialId:'pk-two',stepUpCredentialId:'pk-old',sessionId:'s-three'}),{code:'transfer_contested'});
  assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
 });
 
@@ -195,7 +195,7 @@ test('elevated proof by the requester removes named devices and emails and resta
  const view=await fx.elevate({side:'requester',remove:{sessions:['s-two'],passkeys:['pk-two'],push:['p1'],emails:['owner@mover.example']}});
  assert.equal(view.state,'pending');assert.equal(view.freshDelay,true);
  const account=await fx.identityRecord();
- assert.deepEqual(account.sessions.map(s=>s.id),['s-old']);assert.deepEqual(account.credentials.map(c=>c.id),['pk-old']);assert.equal(account.verifiedEmail,null);assert.equal(account.removedEmails[0].address,'owner@mover.example');
+ assert.deepEqual(account.sessions.map(s=>s.id),['s-old']);assert.deepEqual(account.credentials.map(c=>c.id),['pk-old']);assert.deepEqual(account.emails,[]);assert.equal(account.removedEmails[0].address,'owner@mover.example');
  assert.equal(await fx.metadata.get('push-subscription/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/p1/'),undefined);
  const record=await fx.get();assert.equal(record.delay,72*HOUR);assert.equal(record.securityEpoch,account.security.epoch);assert.equal(record.round,2);
  // The removed push device's token is gone; the detached email is re-notified and can only escalate.
@@ -354,7 +354,7 @@ test('moved purge through the shared executor: plan, reason, connections vocabul
  const tombstone=await fx.metadata.get(TOMBSTONE_KEY);assert.equal(tombstone.reason,'moved');assert.equal(tombstone.basis,'moved');
  // The identity keeps status `moved` and its record while the redirect runs; credentials, email and keys are gone.
  const account=await fx.identityRecord();
- assert.equal(account.status,'moved');assert.deepEqual(account.credentials,[]);assert.equal(account.passwordHash,null);assert.equal(account.verifiedEmail,undefined);assert.equal(await fx.idDb.get('email/owner@mover.example'),undefined);
+ assert.equal(account.status,'moved');assert.deepEqual(account.credentials,[]);assert.equal('passwordHash' in account,false);assert.equal(account.verifiedEmail,undefined);assert.equal(account.emails,undefined);assert.equal(await fx.idDb.get('email/owner@mover.example'),undefined);
  assert.equal(account.moved.redirectBase,REDIRECT);assert.ok(Number.isSafeInteger(account.movedPurgedAt));assert.equal(deletionReason(account),'moved');
  // Idempotent, and never with another reason.
  assert.equal(await identity.tombstone(OWNER,{reason:'moved'}),true);await assert.rejects(identity.tombstone(OWNER,{reason:'owner'}),{code:'lifecycle_identity_conflict'});

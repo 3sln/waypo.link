@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {launch,baseURL,virtualAuthenticator,screenshot} from './browser.mjs';
+import {launch,baseURL,virtualAuthenticator,screenshot,passkeyAccount} from './browser.mjs';
 const bootToken=process.env.E2E_BOOT_TOKEN||(process.env.E2E_BOOT_TOKEN_FILE?JSON.parse(readFileSync(process.env.E2E_BOOT_TOKEN_FILE,'utf8')).token:'');
 export const shimmed=[];
 const BOOT_PASSWORD='correct horse battery staple boot';
@@ -21,7 +21,6 @@ async function claimThroughOnboarding(browser,link,name){
  await page.route(baseURL+'/api/config',async route=>{try{const response=await route.fetch(),config=JSON.parse(await response.text());if(config.tokenOnboardingEnabled!==true){shimmed.push(name);config.tokenOnboardingEnabled=true;}await route.fulfill({status:response.status(),headers:response.headers(),body:JSON.stringify(config)});}catch{await route.continue().catch(()=>{});}});
  await page.goto(link);await page.getByRole('button',{name:'Use invitation',exact:true}).click();
  await page.selectOption('[name=onboardingName]',name);await page.getByRole('button',{name:'Continue',exact:true}).click();
- await page.getByRole('button',{name:'Passkey',exact:true}).click();await page.getByRole('button',{name:'Continue',exact:true}).click();
  for(let step=0;step<6;step++){const create=page.getByRole('button',{name:'Create my account',exact:true}),terms=page.locator('[name=termsAccepted]');await create.or(terms).first().waitFor();if(await create.count())break;await page.locator('[name=ageConfirmed]').check();await terms.check();await page.getByRole('button',{name:'Continue',exact:true}).click();await terms.waitFor({state:'detached'});}
  await page.getByRole('button',{name:'Create my account',exact:true}).click();await page.waitForURL(/\/recovery\/setup/);
  const pendingToken=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('3sln-setup')??'null')?.token);assert.ok(pendingToken,'onboarding produced a pending setup');
@@ -82,8 +81,7 @@ test('boot setup, administrator step-up, reservation, claim, onboarding and audi
  // ---- dark mode, ordinary accounts ----
  const dark=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark'}),darkPage=await dark.newPage();await darkPage.goto(baseURL+'/console?boot');await darkPage.getByRole('heading',{name:/Sign in as boot|Boot token already used/}).waitFor();assert.equal(await noOverflow(darkPage),true);await screenshot(darkPage,'admin-boot-signin-dark');await dark.close();
  const ordinary=await browser.newContext({viewport:{width:1280,height:900}}),post=(path,data)=>ordinary.request.post(baseURL+path,{headers:{Origin:baseURL},data});const config=await (await ordinary.request.get(baseURL+'/api/config')).json();
- const pending=await (await post('/api/auth/signup',{method:'password',password:'ordinary account password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'})).json();
- if(pending.pendingToken){const file=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true});
+ await passkeyAccount(ordinary.request,{body:{termsVersion:config.termsVersion}});{
   const page=await ordinary.newPage(),loaded=[];page.on('request',request=>loaded.push(request.url()));
   await page.goto(baseURL+'/console');await page.locator('.app-shell').waitFor();assert.equal(loaded.some(url=>/admin-/.test(url)),false,'the ordinary console never loads administration code');
   await page.goto(baseURL+'/console?admin');await page.getByRole('heading',{name:'Not available for this account'}).waitFor();assert.equal(loaded.some(url=>/admin-console\./.test(url)),false,'ordinary accounts never load the operations module');}

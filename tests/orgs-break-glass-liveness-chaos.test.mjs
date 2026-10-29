@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import {forEachSeed} from './helpers/chaos.mjs';
 import {A,B,C,E,DAY} from './helpers/break-glass-world.mjs';
 import {channelWorld,identityFor,H} from './helpers/break-glass-channels-world.mjs';
-import {PASSWORD,sessionContext} from './helpers/identity-engine.mjs';
+import {sessionContext,stepUpPasskey} from './helpers/identity-engine.mjs';
 import {BREAK_GLASS_OPEN} from '../packages/orgs/break-glass.mjs';
 
 const ADMINS=[B,C,E],SEEN=new Set(),OUTCOMES=new Set();
@@ -45,7 +45,7 @@ async function chaos(random,{steps=90}={}){
  const owned=async()=>{const c=await w.claim();return c&&BREAK_GLASS_OPEN.includes(c.state)?c:null;};
  const signIn=async kind=>{
   const before=await owned(),hints=await w.hints(A),writes=(await w.personStats(A)).writes,summary=JSON.stringify(await w.summary());
-  if(kind==='sign-in')session=await id.login();else{try{await id.act('stepUp',{method:'password',password:PASSWORD},sessionContext(session));}catch(error){if(error?.code!=='unauthorized')throw error;/* the 24 h session ended: sign in instead */session=await id.login();}await id.service.settleBackground();}
+  if(kind==='sign-in')session=await id.login();else{try{await stepUpPasskey(id.act,sessionContext(session),id.credentialId);}catch(error){if(error?.code!=='unauthorized')throw error;/* the 24 h session ended: sign in instead */session=await id.login();}await id.service.settleBackground();}
   const after=await w.claim();
   if(before)stops.set(before.id,true);
   if(before&&!signalsDropped&&hints.some(h=>h.role==='owner'&&h.claim===before.id)){

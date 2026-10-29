@@ -2,17 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createHash, sign } from 'node:crypto';
 import { isoCBOR } from '@simplewebauthn/server/helpers';
-import { IdentityService, createArgon2Hasher, createWebAuthnAdapter, planAccountLifecycle } from '../packages/identity/index.mjs';
+import { IdentityService, createWebAuthnAdapter, planAccountLifecycle } from '../packages/identity/index.mjs';
+import { indexedEmails } from '../packages/identity/emails.mjs';
 import { encode, decode } from '../packages/identity/crypto.mjs';
 
 class Repository {
   records = new Map();
   async get(id) { return structuredClone(this.records.get(id)); }
   async findByHandle(handle) { return structuredClone([...this.records.values()].find(a => a.handle === handle)); }
-  async findByEmail(email) { return structuredClone([...this.records.values()].find(a => a.verifiedEmail === email)); }
+  async findByEmail(email) { return structuredClone([...this.records.values()].find(a => indexedEmails(a).includes(email))); }
   async create(account) { if (this.records.has(account.id) || [...this.records.values()].some(a => a.handle === account.handle)) return false; this.records.set(account.id, structuredClone(account)); return true; }
   async compareAndSwap(id, revision, account) {
-    if (this.records.get(id)?.revision !== revision || (account.verifiedEmail && [...this.records.values()].some(a => a.id !== id && a.verifiedEmail === account.verifiedEmail))) return false;
+    if (this.records.get(id)?.revision !== revision || indexedEmails(account).some(email => [...this.records.values()].some(a => a.id !== id && indexedEmails(a).includes(email)))) return false;
     this.records.set(id, structuredClone(account)); return true;
   }
 }
@@ -25,33 +26,45 @@ class DeviceRepository {
 }
 const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11', linkedCodeKey: 'test-linked-code-key-0001' };
 const context = { origin: config.origin, remoteIP: '192.0.2.1' };
-const signup = { handle: 'alice', method: 'password', password: 'correct horse battery staple', ageConfirmed: 18, termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified' };
+// Passwords were dropped (owner approval 2026-10-28): accounts sign up and sign in with a real (software) passkey.
+const signup = { handle: 'alice', method: 'passkey', ageConfirmed: 18, termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified' };
 async function fixture() {
   let now = Date.now(); const messages = []; const repository = new Repository();
   const resources = { repository, deviceRequests: new DeviceRepository(), clock: () => now, config,
     turnstile: { verify: async ({ token }) => token === 'verified' }, rateLimiter: { check: async () => true },
-    passwordHasher: await createArgon2Hasher(), webauthn: await createWebAuthnAdapter(),
+    webauthn: await createWebAuthnAdapter(),
     mailer: { sendVerification: async value => { messages.push(value); } } };
   return { service: new IdentityService(resources), repository, resources, messages, advance: ms => { now += ms; } };
 }
 async function activate(service, input = signup) {
-  const pending = await service.signup(input, context);
+  const pending = await service.signup(input, context), device = register(authenticator(), pending.account.id);
+  await service.registerPasskey({ ...pending, response: device.registration(pending.registrationOptions.challenge) }, context);
   const file = await service.downloadRecovery(pending, context);
   const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
-  await service.stepUp({method:'password',password:input.password},{...context,...owner});
-  return { pending, file, owner, ownerContext: { ...context, sessionToken: owner.sessionToken, csrfToken: owner.csrfToken } };
+  const ownerContext = { ...context, sessionToken: owner.sessionToken, csrfToken: owner.csrfToken };
+  await stepUp(service, device, ownerContext);
+  return { pending, file, owner, ownerContext, device };
 }
+/** Binds a test authenticator to the account it signs for (the assertion's user handle). */
+const register = (device, accountId) => Object.assign(device, { accountId });
+/** A real passkey step-up (counter 0: a synced credential, so repeated assertions stay valid). */
+async function stepUp(service, device, ctx) { const begin = await service.stepUpBegin({}, ctx); return service.stepUp({ method: 'passkey', response: device.assertion(begin.authenticationOptions.challenge, device.accountId, { counter: 0 }) }, ctx); }
+/** A real passkey sign-in; resolves the session result. */
+async function signIn(service, device, { handle = signup.handle, label } = {}) { const begin = await service.beginPasskeyLogin({ handle, turnstileToken: 'verified' }, context); return service.finishPasskeyLogin({ challengeToken: begin.challengeToken, response: device.assertion(begin.authenticationOptions.challenge, device.accountId, { counter: 0 }), ...label ? { label } : {} }, context); }
 
 test('signup requires Turnstile, terms and mandatory proved recovery download before activation', async () => {
   const { service, repository } = await fixture();
   await assert.rejects(service.signup({ ...signup, turnstileToken: 'invalid' }, context), { code: 'challenge_failed' });
   await assert.rejects(service.signup({ ...signup, termsAccepted: false }, context), { code: 'terms_required' });
-  const pending = await service.signup(signup, context);
+  await assert.rejects(service.signup({ ...signup, method: 'password', password: 'correct horse battery staple' }, context), { code: 'invalid_method' });
+  const pending = await service.signup(signup, context); assert.equal(pending.readyForRecovery, false);
   await assert.rejects(service.confirmRecovery({ ...pending, downloadConfirmed: true }, context), { code: 'recovery_confirmation_required' });
+  await assert.rejects(service.downloadRecovery(pending, context), { code: 'credential_required' });
+  const device = authenticator(); await service.registerPasskey({ ...pending, response: device.registration(pending.registrationOptions.challenge) }, context);
   const file = await service.downloadRecovery(pending, context);
   assert.equal(JSON.parse(file.content).recoveryToken, file.recoveryToken);
   const stored = JSON.stringify(await repository.get(pending.account.id));
-  assert(!stored.includes(signup.password)); assert(!stored.includes(pending.pendingToken)); assert(!stored.includes(file.recoveryToken));
+  assert(!stored.includes(pending.pendingToken)); assert(!stored.includes(file.recoveryToken));
   await assert.rejects(service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: false }, context), { code: 'recovery_confirmation_required' });
   const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
   assert.equal(owner.account.status, 'active');await service.recent({...context,...owner});assert.equal((await service.authorized({...context,...owner})).session.stepUpAt,undefined);
@@ -67,31 +80,34 @@ test('owner sessions have exact-origin CSRF checks, expiration and hashed at-res
   advance(86400001); await assert.rejects(service.owner({}, ownerContext), { code: 'unauthorized' });
 });
 
-test('password login verifies real Argon2id and rejects unknown/wrong/pending accounts', async () => {
-  const { service } = await fixture(); await activate(service);
-  const logged = await service.loginPassword({ ...signup }, context); assert.equal(logged.account.handle, 'alice');
-  await assert.rejects(service.loginPassword({ ...signup, password: 'this is the wrong password' }, context), { code: 'unauthorized' });
-  await assert.rejects(service.loginPassword({ ...signup, handle: 'unknown' }, context), { code: 'unauthorized' });
-  await service.signup({ ...signup, handle: 'pending' }, context);
-  await assert.rejects(service.loginPassword({ ...signup, handle: 'pending' }, context), { code: 'unauthorized' });
+test('password sign-in is gone; passkey sign-in rejects unknown and pending accounts', async () => {
+  const { service } = await fixture(); const { device } = await activate(service);
+  assert.equal(typeof service.loginPassword, 'undefined'); assert.equal(typeof service.setPendingPassword, 'undefined');
+  const logged = await signIn(service, device); assert.equal(logged.account.handle, 'alice');
+  await assert.rejects(signIn(service, device, { handle: 'unknown' }), { code: 'unauthorized' });
+  const pending = await service.signup({ ...signup, handle: 'pending' }, context), other = register(authenticator(), pending.account.id);
+  await service.registerPasskey({ ...pending, response: other.registration(pending.registrationOptions.challenge) }, context);
+  await assert.rejects(signIn(service, other, { handle: 'pending' }), { code: 'unauthorized' });
 });
 
-test('recovery starts one atomic transaction and revokes old sessions, passwords and email challenges', async () => {
+test('recovery starts one atomic transaction and revokes old sessions, passkeys and email challenges', async () => {
   const { service, repository } = await fixture(); const { file, owner, ownerContext } = await activate(service);
   const results = await Promise.allSettled([service.recover({ recoveryToken: file.recoveryToken, turnstileToken: 'verified' }, context), service.recover({ recoveryToken: file.recoveryToken, turnstileToken: 'verified' }, context)]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   await assert.rejects(service.owner({}, ownerContext), { code: 'unauthorized' });
-  const account = await repository.get(owner.account.id); assert.equal(account.passwordHash, null); assert.equal(account.sessions.length, 0);
+  const account = await repository.get(owner.account.id); assert.deepEqual(account.credentials, []); assert.equal(account.sessions.length, 0);
   const pending = results.find(r => r.status === 'fulfilled').value;
   await assert.rejects(service.downloadRecovery(pending, context), { code: 'credential_required' });
-  await service.setPendingPassword({ ...pending, password: 'new correct horse battery staple' }, context);
+  const options = await service.beginPasskeyRegistration(pending, context), replacementDevice = authenticator();
+  await service.registerPasskey({ ...pending, response: replacementDevice.registration(options.registrationOptions.challenge) }, context);
   const replacement = await service.downloadRecovery(pending, context);
   await service.confirmRecovery({ ...pending, recoveryToken: replacement.recoveryToken, downloadConfirmed: true }, context);
   await assert.rejects(service.recover({ recoveryToken: file.recoveryToken, turnstileToken: 'verified' }, context), { code: 'unauthorized' });
 });
 
 test('parallel activation has one winner and recovery-file reissue invalidates older files', async () => {
-  const { service } = await fixture(); const pending = await service.signup(signup, context);
+  const { service } = await fixture(); const pending = await service.signup(signup, context), device = authenticator();
+  await service.registerPasskey({ ...pending, response: device.registration(pending.registrationOptions.challenge) }, context);
   const old = await service.downloadRecovery(pending, context); const fresh = await service.downloadRecovery(pending, context);
   await assert.rejects(service.confirmRecovery({ ...pending, recoveryToken: old.recoveryToken, downloadConfirmed: true }, context), { code: 'recovery_confirmation_required' });
   const results = await Promise.allSettled(Array.from({ length: 2 }, () => service.confirmRecovery({ ...pending, recoveryToken: fresh.recoveryToken, downloadConfirmed: true }, context)));
@@ -121,7 +137,7 @@ function authenticator() {
 
 test('real WebAuthn registration enforces challenge, origin, RP, presence, verification and top-level use', async () => {
   const { service } = await fixture(); const device = authenticator();
-  const pending = await service.signup({ ...signup, method: 'passkey', password: undefined }, context);
+  const pending = await service.signup(signup, context);
   await assert.rejects(service.downloadRecovery(pending, context), { code: 'credential_required' });
   for (const options of [{ origin: 'https://evil.example' }, { rpID: 'evil.example' }, { flags: 0x41 }, { flags: 0x44 }, { extra: { crossOrigin: true } }]) {
     await assert.rejects(service.registerPasskey({ ...pending, response: device.registration(pending.registrationOptions.challenge, options) }, context), { code: 'invalid_passkey' });
@@ -133,7 +149,7 @@ test('real WebAuthn registration enforces challenge, origin, RP, presence, verif
 
 test('real signed WebAuthn assertion rejects signatures, wrong account, UV, origin and replay', async () => {
   const { service } = await fixture(); const device = authenticator();
-  const pending = await service.signup({ ...signup, method: 'passkey', password: undefined }, context);
+  const pending = await service.signup(signup, context);
   await service.registerPasskey({ ...pending, response: device.registration(pending.registrationOptions.challenge) }, context);
   const file = await service.downloadRecovery(pending, context);
   await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
@@ -147,18 +163,18 @@ test('real signed WebAuthn assertion rejects signatures, wrong account, UV, orig
 });
 
 test('email linking binds owner session, tokens stay in mail only, confirmation is single-use and email login explicit', async () => {
-  const { service, messages } = await fixture(); const { ownerContext } = await activate(service);
-  assert.deepEqual(await service.emailStart({ email: 'Alice@MAIL.example' }, ownerContext), { sent: true });
+  const { service, messages } = await fixture(); const { ownerContext, device } = await activate(service);
+  assert.equal((await service.emailStart({ email: 'Alice@MAIL.example' }, ownerContext)).sent, true); await service.settleBackground();
   const token = messages[0].token;
   await assert.rejects(service.emailConfirm({ token, confirmed: false }, ownerContext), { code: 'confirmation_required' });
-  const otherSession = await service.loginPassword(signup, context);
+  const otherSession = await signIn(service, device);
   await assert.rejects(service.emailConfirm({ token, confirmed: true }, { ...context, ...otherSession }), { code: 'invalid_challenge' });
-  const linked = await service.emailConfirm({ token, confirmed: true }, ownerContext); assert.equal(linked.account.verifiedEmail, 'Alice@mail.example');
-  assert.equal(linked.account.emailLoginEnabled, false);
+  const linked = await service.emailConfirm({ token, confirmed: true }, ownerContext); assert.equal(linked.account.noticeEmail, 'Alice@mail.example');
+  assert.equal(linked.account.signInEmail, false);
   await assert.rejects(service.emailConfirm({ token, confirmed: true }, ownerContext), { code: 'invalid_challenge' });
   assert.deepEqual(await service.emailLoginStart({ email: 'unknown@mail.example', turnstileToken: 'verified' }, context), { sent: true });
   assert.equal(messages.length, 1);
-  await service.emailLoginStart({ email: 'Alice@mail.example', turnstileToken: 'verified' }, context);
+  await service.emailLoginStart({ email: 'Alice@mail.example', turnstileToken: 'verified' }, context); await service.settleBackground();
   assert.equal(messages.length, 1, 'verified contact alone cannot issue login mail');
   await service.configureEmailLogin({ enabled: true }, ownerContext);
   await service.emailLoginStart({ email: 'Alice@mail.example', turnstileToken: 'verified' }, context); await service.settleBackground();
@@ -172,13 +188,16 @@ test('parallel signup reserves one handle and concurrent email claims never merg
   const { service, messages } = await fixture();
   const race = await Promise.allSettled([service.signup(signup, context), service.signup(signup, context)]);
   assert.equal(race.filter(r => r.status === 'fulfilled').length, 1);
-  const pending = race.find(r => r.status === 'fulfilled').value; const file = await service.downloadRecovery(pending, context);
+  const pending = race.find(r => r.status === 'fulfilled').value, device = register(authenticator(), pending.account.id);
+  await service.registerPasskey({ ...pending, response: device.registration(pending.registrationOptions.challenge) }, context);
+  const file = await service.downloadRecovery(pending, context);
   const alice = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
   const bob = await activate(service, { ...signup, handle: 'bob' });
-  const aliceContext = { ...context, ...alice };await service.stepUp({method:'password',password:signup.password},aliceContext);
+  const aliceContext = { ...context, ...alice }; await stepUp(service, device, aliceContext);
   await service.emailStart({ email: 'same@mail.example' }, aliceContext);
-  await service.emailStart({ email: 'same@mail.example' }, bob.ownerContext);
-  const claims = await Promise.allSettled([service.emailConfirm({ token: messages[0].token, confirmed: true }, aliceContext), service.emailConfirm({ token: messages[1].token, confirmed: true }, bob.ownerContext)]);
+  await service.emailStart({ email: 'same@mail.example' }, bob.ownerContext); await service.settleBackground();
+  const tokenFor = id => messages.find(m => m.token.startsWith(id + '.')).token;
+  const claims = await Promise.allSettled([service.emailConfirm({ token: tokenFor(alice.account.id), confirmed: true }, aliceContext), service.emailConfirm({ token: tokenFor(bob.owner.account.id), confirmed: true }, bob.ownerContext)]);
   assert.equal(claims.filter(r => r.status === 'fulfilled').length, 1);
   assert.notEqual(alice.account.id, bob.owner.account.id);
 });
@@ -208,7 +227,7 @@ test('dormant lifecycle preserves no-contact accounts and requires signoff, actu
   assert.equal(planAccountLifecycle(account, policy).action, 'retain-shelved');
   const approved = { ...policy,paymentProtection:{status:'unpaid'}, deletionEnabled: true, deletionSignoff: { reviewer: 'actual reviewer fixture', date: '2026-10-11', outcome: 'approved' } };
   assert.equal(planAccountLifecycle(account, approved).action, 'retain-shelved');
-  account.verifiedEmail = 'owner@mail.example'; assert.equal(planAccountLifecycle(account, approved).action, 'notify');
+  account.verifiedEmail = 'owner@mail.example'; account.emailVerifiedAt = day; assert.equal(planAccountLifecycle(account, approved).action, 'notify');
   account.deletionNotice = { deliveredAt: 950 * day, deliveryReceipt: 'verified-test-receipt' };
   assert.equal(planAccountLifecycle(account, approved).action, 'retain-shelved');
   assert.equal(planAccountLifecycle(account, { ...approved, now: 1041 * day }).action, 'eligible-for-deletion-review');
@@ -217,22 +236,24 @@ test('dormant lifecycle preserves no-contact accounts and requires signoff, actu
 });
 
 test('multiple real passkeys can be enrolled, renamed and removed with session-bound recent authorization', async () => {
-  const { service } = await fixture(); const { ownerContext } = await activate(service); const first = authenticator(); const second = authenticator();
+  const { service } = await fixture(); const { ownerContext, device } = await activate(service); const first = authenticator(); const second = authenticator();
   const beginning = await service.credentialBegin({ label: 'Phone passkey' }, ownerContext);
-  const anotherSession = await service.loginPassword(signup, context);
+  const anotherSession = await signIn(service, device);
   await assert.rejects(service.credentialFinish({ challengeId: beginning.challengeId, response: first.registration(beginning.registrationOptions.challenge) }, { ...context, ...anotherSession }), { code: 'invalid_challenge' });
   await service.credentialFinish({ challengeId: beginning.challengeId, response: first.registration(beginning.registrationOptions.challenge) }, ownerContext);
   const next = await service.credentialBegin({ label: 'Security key' }, ownerContext);
   const input = { challengeId: next.challengeId, response: second.registration(next.registrationOptions.challenge) };
   const race = await Promise.allSettled([service.credentialFinish(input, ownerContext), service.credentialFinish(input, ownerContext)]);
   assert.equal(race.filter(result => result.status === 'fulfilled').length, 1);
-  let owner = await service.owner({}, ownerContext); assert.equal(owner.credentials.length, 2); assert.equal(owner.credentials[0].label, 'Phone passkey');
+  const label = (owner, id) => owner.credentials.find(credential => credential.id === id).label;
+  let owner = await service.owner({}, ownerContext); assert.equal(owner.credentials.length, 3, 'the sign-up passkey and two more'); assert.equal(label(owner, first.id), 'Phone passkey');
   assert(!JSON.stringify(owner.credentials).includes('publicKey'));
   await assert.rejects(service.renamePasskey({ credentialId: first.id, label: 'Updated' }, { ...ownerContext, csrfToken: 'wrong' }), { code: 'csrf' });
   await service.renamePasskey({ credentialId: first.id, label: 'Personal phone' }, ownerContext);
-  owner = await service.owner({}, ownerContext); assert.equal(owner.credentials[0].label, 'Personal phone');
+  owner = await service.owner({}, ownerContext); assert.equal(label(owner, first.id), 'Personal phone');
   await service.removePasskey({ credentialId: first.id }, ownerContext); await service.removePasskey({ credentialId: second.id }, ownerContext);
-  assert.equal((await service.owner({}, ownerContext)).credentials.length, 0);
+  assert.deepEqual((await service.owner({}, ownerContext)).credentials.map(c => c.id), [device.id]);
+  await assert.rejects(service.removePasskey({ credentialId: device.id }, ownerContext), { code: 'credential_required' }, 'the last passkey stays (no sign-in email)');
 });
 
 test('last passkey cannot be removed without another login method and recovery; removed passkeys stop authenticating', async () => {
@@ -254,15 +275,15 @@ test('last passkey cannot be removed without another login method and recovery; 
 });
 
 test('session device lists expose stable safe IDs, targeted/all-other revocation and persisted last-use', async () => {
-  const { service, repository, advance } = await fixture(); const { ownerContext, owner } = await activate(service);
-  const second = await service.loginPassword({ ...signup, label: 'Laptop' }, context); const secondContext = { ...context, ...second };
+  const { service, repository, advance } = await fixture(); const { ownerContext, owner, device } = await activate(service);
+  const second = await signIn(service, device, { label: 'Laptop' }); const secondContext = { ...context, ...second };
   let snapshot = await service.owner({}, ownerContext); assert.equal(snapshot.devices.length, 2); assert.equal(snapshot.devices.filter(device => device.current).length, 1);
   const currentID = snapshot.devices.find(device => device.current).id; const otherID = snapshot.devices.find(device => !device.current).id;
   assert.equal((await service.owner({}, ownerContext)).devices.find(device => device.current).id, currentID);
   assert(!JSON.stringify(snapshot.devices).includes('hash')); assert(!JSON.stringify(snapshot.devices).includes('csrf')); assert(!JSON.stringify(snapshot.devices).includes(owner.sessionToken));
   advance(61000); await service.owner({}, ownerContext); assert((await repository.get(owner.account.id)).sessions.find(session => session.id === currentID).lastUsedAt > owner.account.createdAt);
   await service.revokeSession({ sessionId: otherID }, ownerContext); await assert.rejects(service.owner({}, secondContext), { code: 'unauthorized' });
-  const third = await service.loginPassword(signup, context); await service.revokeOtherSessions({}, ownerContext);
+  const third = await signIn(service, device); await service.revokeOtherSessions({}, ownerContext);
   await assert.rejects(service.owner({}, { ...context, ...third }), { code: 'unauthorized' });
   assert.equal((await service.owner({}, ownerContext)).devices.length, 1);
   await service.revokeSession({ sessionId: currentID }, ownerContext); await assert.rejects(service.owner({}, ownerContext), { code: 'unauthorized' });
@@ -292,14 +313,14 @@ test('QR device sign-in keeps polling secrets out of QR, needs explicit matching
 });
 
 test('device denial, cancellation, expiry and revoked approving sessions never issue owner credentials', async () => {
-  const { service, advance } = await fixture(); const { ownerContext } = await activate(service);
+  const { service, advance } = await fixture(); const { ownerContext, device } = await activate(service);
   const create = () => service.createDeviceLogin({ label: 'New browser', turnstileToken: 'verified' }, context);
   const denied = await create(); await service.denyDeviceLogin(denied, ownerContext); assert.deepEqual(await service.pollDeviceLogin(denied, context), { status: 'access_denied' });
   const cancelled = await create(); await service.cancelDeviceLogin(cancelled, context); assert.deepEqual(await service.pollDeviceLogin(cancelled, context), { status: 'access_denied' });
   const expired = await create(); advance(300000); assert.deepEqual(await service.pollDeviceLogin(expired, context), { status: 'expired_token' });
   await assert.rejects(service.deviceRequest(expired, ownerContext), { code: 'invalid_device_request' });
   // Approval needs credential evidence from the last 5 minutes (linked approval LA-7), so the owner steps up again.
-  const revoked = await create(); await service.stepUp({ method: 'password', password: signup.password }, ownerContext); await service.approveDeviceLogin({ ...revoked, accountHandle: 'alice', approved: true }, ownerContext);
+  const revoked = await create(); await stepUp(service, device, ownerContext); await service.approveDeviceLogin({ ...revoked, accountHandle: 'alice', approved: true }, ownerContext);
   await service.logout({}, ownerContext); advance(5000); assert.deepEqual(await service.pollDeviceLogin(revoked, context), { status: 'access_denied' });
 });
 
@@ -336,35 +357,39 @@ test('original recovery file resumes lost responses and expired setup without re
   const resumed = await service.recover(recoveryInput, context); assert.equal(resumed.resumed, true); assert.equal(resumed.sessionToken, undefined);
   assert.equal(resumed.account.id, lostResponse.account.id); assert.notEqual(resumed.pendingToken, lostResponse.pendingToken);
   await assert.rejects(service.downloadRecovery(lostResponse, context), { code: 'unauthorized' });
-  await service.setPendingPassword({ ...resumed, password: 'replacement password must survive retry' }, context);
+  const options = await service.beginPasskeyRegistration(resumed, context), replacementDevice = register(authenticator(), resumed.account.id);
+  await service.registerPasskey({ ...resumed, response: replacementDevice.registration(options.registrationOptions.challenge) }, context);
   const replacement = await service.downloadRecovery(resumed, context);
   const before = await repository.get(resumed.account.id); advance(1800001);
   await assert.rejects(service.downloadRecovery(resumed, context), { code: 'unauthorized' });
   const renewed = await service.recover(recoveryInput, context); assert.equal(renewed.resumed, true); assert.equal(renewed.credentialRequired, false); assert.equal(renewed.readyForRecovery, true);
-  const after = await repository.get(renewed.account.id); assert.equal(after.passwordHash, before.passwordHash); assert.equal(after.recoveryHash, before.recoveryHash);
+  const after = await repository.get(renewed.account.id); assert.deepEqual(after.credentials.map(c => c.id), before.credentials.map(c => c.id)); assert.equal(after.recoveryHash, before.recoveryHash);
   assert(!JSON.stringify(after).includes(renewed.pendingToken)); assert(!JSON.stringify(after).includes(file.recoveryToken)); assert(!JSON.stringify(after.audit).includes('pendingToken'));
   await assert.rejects(service.owner({}, ownerContext), { code: 'unauthorized' });
   await assert.rejects(service.confirmRecovery({ ...renewed, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context), { code: 'recovery_confirmation_required' });
   const activated = await service.confirmRecovery({ ...renewed, recoveryToken: replacement.recoveryToken, downloadConfirmed: true }, context);
   assert.equal(activated.account.status, 'active'); assert.equal((await repository.get(activated.account.id)).recoveryResumeHash, undefined);
   await assert.rejects(service.recover(recoveryInput, context), { code: 'unauthorized' });
-  assert.equal((await service.loginPassword({ ...signup, password: 'replacement password must survive retry' }, context)).account.handle, 'alice');
+  assert.equal((await signIn(service, replacementDevice)).account.handle, 'alice');
 });
 
 test('verified contact requires explicit email-login opt-in; opt-out invalidates pending links and re-enable cannot revive them', async () => {
-  const { service, messages, advance } = await fixture(); const { ownerContext, file } = await activate(service);
+  const { service, messages, advance, repository } = await fixture(); const { ownerContext, file, owner } = await activate(service);
   await assert.rejects(service.configureEmailLogin({ enabled: true }, ownerContext), { code: 'verified_email_required' });
-  await service.emailStart({ email: 'owner@mail.example' }, ownerContext); await service.emailConfirm({ token: messages[0].token, confirmed: true }, ownerContext);
+  // Turning a recent sign-in email off needs a step-up from a passkey enrolled 7 days or more earlier (removal process, 2026-10-28).
+  { const record = repository.records.get(owner.account.id); record.credentials[0].createdAt -= 8 * 86400000; }
+  await service.emailStart({ email: 'owner@mail.example' }, ownerContext); await service.settleBackground(); await service.emailConfirm({ token: messages[0].token, confirmed: true }, ownerContext);
   const start = { email: 'owner@mail.example', turnstileToken: 'verified' };
-  await service.emailLoginStart(start, context); assert.equal(messages.length, 1);
+  await service.emailLoginStart(start, context); await service.settleBackground(); assert.equal(messages.length, 1);
   await assert.rejects(service.configureEmailLogin({ enabled: true }, { ...ownerContext, csrfToken: 'wrong' }), { code: 'csrf' });
   await service.configureEmailLogin({ enabled: true }, ownerContext); await service.emailLoginStart(start, context); await service.settleBackground(); const pendingToken = messages.at(-1).token;
   await service.configureEmailLogin({ enabled: false }, ownerContext);
   await assert.rejects(service.emailLoginConfirm({ token: pendingToken, confirmed: true }, context), { code: 'unauthorized' });
   await service.configureEmailLogin({ enabled: true }, ownerContext);
   await assert.rejects(service.emailLoginConfirm({ token: pendingToken, confirmed: true }, context), { code: 'unauthorized' });
-  await service.emailStart({ email: 'replacement@mail.example' }, ownerContext); await service.emailConfirm({ token: messages.at(-1).token, confirmed: true }, ownerContext);
-  assert.equal((await service.owner({}, ownerContext)).account.emailLoginEnabled, false);
-  advance(900001); await assert.rejects(service.configureEmailLogin({ enabled: true }, ownerContext), { code: 'reauthentication_required' });
+  // A second address is added beside the sign-in one (2026-10-28); it is verified, not a sign-in email.
+  await service.emailStart({ email: 'replacement@mail.example' }, ownerContext); await service.settleBackground(); await service.emailConfirm({ token: messages.at(-1).token, confirmed: true }, ownerContext);
+  assert.deepEqual((await service.owner({}, ownerContext)).account.emails.map(e => [e.address, e.state]), [['owner@mail.example', 'sign-in'], ['replacement@mail.example', 'verified']]);
+  advance(900001); await assert.rejects(service.configureEmailLogin({ address: 'replacement@mail.example', enabled: true }, ownerContext), { code: 'step_up_required' });
   const recovery = await service.recover({ recoveryToken: file.recoveryToken, turnstileToken: 'verified' }, context); assert.equal(recovery.account.status, 'recovering');
 });

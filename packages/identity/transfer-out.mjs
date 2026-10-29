@@ -37,6 +37,7 @@ import { recoveryCredential, securityState, queuePushEndsOn } from './service.mj
 import {raiseAuthorityEpoch,authorityEpoch} from './authority-epoch.mjs';
 import { revokeAllLineage, revokeLineage, pruneLineage } from './linked-approval.mjs';
 import { movedWindow, MOVED_AUDIT } from './lifecycle-tombstone.mjs';
+import { noticeEntry, confirmedEmails, migrateEmails } from './emails.mjs';
 import { attestorFromConfig } from './attestation-keys.mjs';
 import { movedAudit, settlementMarker, REMINDER_LEAD, REDIRECT_TIMING } from './redirect-records.mjs';
 
@@ -803,7 +804,7 @@ export class TransferOutService {
 }
 
 function ownerActor(actor) { if (actor?.kind !== 'owner' || !isUUID(actor.owner)) fail('unauthorized', 'Sign in to continue.', 401); return actor.owner; }
-function stepUp(actor, now) { if (!time(actor.stepUpAt) || actor.stepUpAt > now || now - actor.stepUpAt >= TIMING.stepUp) fail('step_up_required', 'Confirm your password or passkey to continue.', 401); }
+function stepUp(actor, now) { if (!time(actor.stepUpAt) || actor.stepUpAt > now || now - actor.stepUpAt >= TIMING.stepUp) fail('step_up_required', 'Confirm with your passkey to continue.', 401); }
 const requester = actor => ({ sessionId: typeof actor.sessionId === 'string' ? actor.sessionId : null, credentialId: typeof actor.credentialId === 'string' ? actor.credentialId : null });
 /** Whether a recorded disputer is the move's own requester (same session or passkey). Such entries never count as
  * tier-0 disputes for elevation or an elevated restart (review follow-up 1); legacy records may still hold them. */
@@ -828,11 +829,10 @@ const restartBlock = (record, at, reason) => {
   for (const entry of record.disputes ?? []) { const by = entry?.by; const name = `${by?.kind}:${by?.id}`; if (!by || seen.has(name) || fromRequester(by, record.requester)) continue; seen.add(name); disputers.push({ kind: by.kind, id: by.id, ...by.credentialId ? { credentialId: by.credentialId } : {} }); }
   return { ref: record.credential.ref, at, reason, begunAt: record.begunAt ?? null, requester: record.requester ? { sessionId: record.requester.sessionId ?? null, credentialId: record.requester.credentialId ?? null } : null, disputers: disputers.slice(-MAX_DISPUTES) };
 };
-/** Whether `actor` authenticates with the same credential that made an elevated-proof abort (the session's passkey,
- * or the same session for a password session). A step-up's own credential is not recorded by the identity service. */
+/** Whether `actor` authenticates with the same credential that made an elevated-proof abort (the session's passkey). A step-up's own credential is not recorded by the identity service. */
 /** P17: whether `actor` acts with the credential that made the elevated abort. Both sides are the credential that
- * confirmed the STEP-UP (a passkey id or 'password'), never the one the session signed in with (wargame 2026-10-23):
- * a session signed in with the aborting passkey but stepped up with a password is another credential. */
+ * confirmed the STEP-UP (a passkey id), never the one the session signed in with (wargame 2026-10-23):
+ * a session signed in with the aborting passkey but stepped up with another passkey is another credential. */
 const sameCredential = (entry, actor) => entry.credentialId ? entry.credentialId === actor?.stepUpCredentialId : entry.sessionId !== null && entry.sessionId === actor?.sessionId;
 /** The moved record written on the identity (design §6.5 item 3). */
 export function movedRecord(record, issuer) {
@@ -890,7 +890,7 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
       const now = clock(), credential = recoveryCredential(account);
       return {
         status: account.status, kind: account.kind === 'organization' ? 'organization' : 'person', handle: account.handle ?? null,
-        email: typeof account.verifiedEmail === 'string' && time(account.emailVerifiedAt) ? { address: account.verifiedEmail, verifiedAt: account.emailVerifiedAt } : null,
+        email: noticeEntry(account) ? { address: noticeEntry(account).address, verifiedAt: noticeEntry(account).verifiedAt } : null,
         removedEmails: Array.isArray(account.removedEmails) ? account.removedEmails.filter(entry => typeof entry?.address === 'string' && time(entry.removedAt)).map(entry => ({ address: entry.address, removedAt: entry.removedAt })) : [],
         recovery: credential ? { issuedAt: credential.issuedAt, version: credential.version, keyKid: credential.keyKid, ref: await ref(account.recoveryHash) } : null,
         security: securityState(account), ...account.aep === undefined ? {} : { aep: account.aep },
@@ -926,8 +926,10 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         // Expiry reminder (design §6.4): opted in at transfer-out, it keeps exactly the identity's verified email as of
         // this write, solely for the reminder; no verified email means no reminder (recorded, address-free).
         const kept = structuredClone(moved), wanted = kept.reminder === true; delete kept.reminder;
-        if (wanted) { const email = typeof account.verifiedEmail === 'string' && time(account.emailVerifiedAt) ? { address: account.verifiedEmail, verifiedAt: account.emailVerifiedAt } : null; if (email && typeof kept.redirectBase === 'string') kept.reminderEmail = email; kept.audit = movedAudit(kept, { event: email ? 'reminder-email-kept' : 'reminder-unavailable', at: now }); }
-        Object.assign(account, { status: 'moved', moved: kept, sessions: [], challenges: [], emailChallenges: [], emailLoginEnabled: false, recoveryHash: null, pendingHash: null, pendingExpiresAt: null });
+        if (wanted) { const notice = noticeEntry(account), email = notice ? { address: notice.address, verifiedAt: notice.verifiedAt } : null; if (email && typeof kept.redirectBase === 'string') kept.reminderEmail = email; kept.audit = movedAudit(kept, { event: email ? 'reminder-email-kept' : 'reminder-unavailable', at: now }); }
+        // A moved identity signs in nowhere: every sign-in email becomes verified (sign-in and intents spike §3.7).
+        migrateEmails(account); if (Array.isArray(account.emails)) account.emails = account.emails.filter(entry => entry.state !== 'unverified').map(entry => { if (entry.state !== 'sign-in') return entry; const { signInSince, ...rest } = entry; return { ...rest, state: 'verified' }; });
+        Object.assign(account, { status: 'moved', moved: kept, sessions: [], challenges: [], emailChallenges: [], recoveryHash: null, pendingHash: null, pendingExpiresAt: null });
         for (const name of ['recoveryResumeHash', 'recoveryResumeBackupVersion', 'recoveryResumeKeyKid', 'recoveryIssuedAt', 'recoveryKeyKid', 'recoveryStaged', 'recoveryReissue']) delete account[name];
         audit(account, MOVED_AUDIT); return { ok: true, write: true };
       });
@@ -943,9 +945,11 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         const ended = (account.sessions ?? []).filter(s => removed.has(s.id) && s.expiresAt > now && typeof s.id === 'string').map(s => s.id); if (ended.length) queuePushEndsOn(account, ended);
         account.sessions = (account.sessions ?? []).filter(s => !removed.has(s.id)); pruneLineage(account, now); revokeLineage(account, removed, now);
         account.credentials = (account.credentials ?? []).filter(c => !passkeys.includes(c.id));
-        if (account.verifiedEmail && emails.includes(account.verifiedEmail)) {
-          account.removedEmails = [...(Array.isArray(account.removedEmails) ? account.removedEmails : []).filter(entry => now - entry.removedAt < TIMING.removedChannels), { address: account.verifiedEmail, removedAt: now }].slice(-8);
-          Object.assign(account, { verifiedEmail: null, emailVerifiedAt: null, emailLoginEnabled: false, emailChallenges: [] });
+        const disputed = confirmedEmails(account).filter(entry => emails.includes(entry.address));
+        if (disputed.length) {
+          account.removedEmails = [...(Array.isArray(account.removedEmails) ? account.removedEmails : []).filter(entry => now - entry.removedAt < TIMING.removedChannels), ...disputed.map(entry => ({ address: entry.address, removedAt: now }))].slice(-8);
+          migrateEmails(account); account.emails = account.emails.filter(entry => !emails.includes(entry.address)); if (!account.emails.some(entry => entry.notices)) { const next = account.emails.find(entry => entry.state !== 'unverified'); if (next) next.notices = true; }
+          account.emailChallenges = [];
         }
         audit(account, 'transfer-disputers-removed'); return { ok: true, write: true, value: { security: { ...bump(account) }, endedSessions: ended } };
       });
@@ -982,7 +986,7 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         const window = movedWindow(account.moved, now);
         if (window.live || window.proof) return { ok: true, value: { ended: false, nextAt: window.nextAt } };
         // Purged (credentials gone) identities become exactly a deleted one; an unpurged one keeps `moved` without a target.
-        const purged = !account.passwordHash && !(account.credentials ?? []).length && account.movedPurgedAt !== undefined;
+        const purged = !(account.credentials ?? []).length && account.movedPurgedAt !== undefined;
         // The address-free audit trail survives as long as the marker; a kept reminder email is deleted here (expiry).
         let trail = account.moved.audit; if (account.moved.reminderEmail) trail = movedAudit(account.moved, { event: 'reminder-email-deleted', reason: 'expired', at: now });
         const marker = settlementMarker(account.moved, now);

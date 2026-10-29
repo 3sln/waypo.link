@@ -6,6 +6,11 @@ import {IdentityService} from '../packages/identity/service.mjs';
 import {onboardingPort,signOnboardingInvitation,verifyOnboardingInvitation,signOnboardingIssuance} from '../packages/identity/onboarding.mjs';
 import {encode} from '../packages/identity/crypto.mjs';
 import application from '../packages/runtime/http.mjs';
+import {fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
+// Passwords were dropped (owner approval 2026-10-28): onboarding claims are passkey-only; a lost setup resumes through a
+// passkey sign-in (deterministic fake WebAuthn).
+const register=(f,pending,id='passkey-1')=>f.service.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,id)},f.context);
+const login=async(f,handle,id='passkey-1')=>{const begin=await f.service.beginPasskeyLogin({handle,turnstileToken:'fixture'},f.context);return f.service.finishPasskeyLogin({challengeToken:begin.challengeToken,response:passkeyResponse(begin,id)},f.context);};
 
 const origin='https://onboarding.example',now=1791979200000,key=encode(new Uint8Array(32).fill(63));
 function fixture(){
@@ -13,10 +18,10 @@ function fixture(){
  const config={APP_ORIGIN:origin,ONBOARDING_ENABLED:'true',ONBOARDING_KEY:key,ONBOARDING_NAMES:['alice','bob'],SIGNUP_MAX_ADMISSIONS:10,SIGNUP_FREE_MAX_ADMISSIONS:1};
  const repository=new IdentityRepository({metadata,config}),guard=new FixedWindowGuard({metadata:budget});
  const port=onboardingPort({config,repository,authority:{consumeSignup:(_scope,input)=>guard.consumeSignup(input)},clock:()=>now});
- const service=new IdentityService({repository,onboarding:port,clock:()=>now,config:{...config,origin,rpID:'onboarding.example',termsVersion:'v1',requireReachability:false},turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},passwordHasher:{hash:async value=>'hash:'+value,verify:async(value,hash)=>hash==='hash:'+value},webauthn:{registrationOptions:async()=>({challenge:'fixture'})},paidHandleEligibility:async()=>true});
+ const service=new IdentityService({repository,onboarding:port,clock:()=>now,config:{...config,origin,rpID:'onboarding.example',termsVersion:'v1',requireReachability:false,linkedCodeKey:'test-linked-code-key-0001'},turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),paidHandleEligibility:async()=>true});
  const claims={version:1,purpose:'bindle-ordinary-account-onboarding',issuer:origin,nonce:crypto.randomUUID(),issuedAt:now,expiresAt:now+3600000,names:['alice','bob'].map(name=>({name,owner:crypto.randomUUID(),assignmentId:crypto.randomUUID()}))};
  const context={origin,remoteIP:'192.0.2.3',setupBinding:'private-fixture-binding'};
- const input={method:'password',password:'long ordinary onboarding password',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'fixture'};
+ const input={method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'fixture'};
  return {metadata,budget,repository,guard,config,port,service,claims,context,input,close(){metadata.close();budget.close();}};
 }
 async function invitation(f){const token=await signOnboardingInvitation(f.claims,key,{now}),verified=await verifyOnboardingInvitation(token,key,origin,{now}),proof=await signOnboardingIssuance(verified.digest,origin,key,{now});return {token,proof};}
@@ -76,7 +81,7 @@ test('ordinary issued identity cannot acquire system metadata or replacement set
   const account=await f.repository.get(pending.account.id);
   assert.equal(await f.repository.compareAndSwap(account.id,account.revision,{...account,revision:account.revision+1,onboardingIdentity:undefined}),false);
   assert.equal(await f.repository.compareAndSwap(account.id,account.revision,{...account,revision:account.revision+1,systemIdentity:{role:'system'}}),false);
-  const resumed=await f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context);
+  await register(f,pending);const resumed=await login(f,'alice');
   assert.equal(resumed.resumed,true);assert.notEqual(resumed.pendingToken,pending.pendingToken);assert.equal(resumed.sessionToken,undefined);
   await assert.rejects(f.service.downloadRecovery({pendingToken:pending.pendingToken},f.context),{code:'unauthorized'});
  }finally{f.close();}
@@ -113,22 +118,22 @@ test('injected badge resolver receives only frozen public identity selectors and
  const f=fixture();try{
   f.claims.names[0].badgeIds=['system'];
   const {token,proof}=await invitation(f);await f.port.issue(token,proof);
-  const pending=await f.service.claimOnboarding({...f.input,onboardingToken:token,name:'alice'},f.context);
+  const pending=await f.service.claimOnboarding({...f.input,onboardingToken:token,name:'alice'},f.context);await register(f,pending);
   let descriptor;
   f.service.resolveIdentityBadges=identity=>{descriptor=identity;return ['unknown','system'];};
-  const resumed=await f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context);
+  const resumed=await login(f,'alice');
   assert.equal(resumed.resumed,true);assert.equal(resumed.sessionToken,undefined);assert.deepEqual(resumed.account.badges,['system']);
   assert.deepEqual(Object.keys(descriptor).sort(),['aliases','badgeIds','handle','id','status']);
   assert(Object.isFrozen(descriptor));assert(Object.isFrozen(descriptor.aliases));assert(Object.isFrozen(descriptor.badgeIds));
-  assert.equal(JSON.stringify(descriptor).includes('hash:'),false);assert.equal(JSON.stringify(descriptor).includes(resumed.pendingToken),false);
+  assert.equal(JSON.stringify(descriptor).includes('passkey-1'),false);assert.equal(JSON.stringify(descriptor).includes(resumed.pendingToken),false);
   f.service.resolveIdentityBadges=()=>{throw Error('Private backend detail');};
-  const failed=await f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context);
+  const failed=await login(f,'alice');
   assert.equal(failed.resumed,true);assert.deepEqual(failed.account.badges,[]);assert.equal(JSON.stringify(failed).includes('Private backend detail'),false);
   f.service.resolveIdentityBadges=()=>new Promise(()=>{});
   // Mocked timers: the bounded resolver deadline elapses without a wall-clock wait.
-  t.mock.timers.enable({apis:['setTimeout']});let settled=false;const login=f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context).finally(()=>{settled=true;});
+  t.mock.timers.enable({apis:['setTimeout']});let settled=false;const pendingLogin=login(f,'alice').finally(()=>{settled=true;});
   for(let turns=0;!settled&&turns<1000;turns++){await new Promise(resolve=>setImmediate(resolve));t.mock.timers.tick(500);}
-  const timed=await login;assert.equal(timed.resumed,true,'optional asynchronous resolver must not hang credential resumption');assert.deepEqual(timed.account.badges,[]);t.mock.timers.reset();
+  const timed=await pendingLogin;assert.equal(timed.resumed,true,'optional asynchronous resolver must not hang credential resumption');assert.deepEqual(timed.account.badges,[]);t.mock.timers.reset();
   assert.equal((await f.repository.get(pending.account.id)).status,'pending');
  }finally{f.close();}
 });
@@ -140,11 +145,11 @@ test('explicit formerly reserved ordinary alias survives policy removal while tr
   f.claims.names=[{...f.claims.names[0],name:'admin',badgeIds:['system']}];
   const {token,proof}=await invitation(f);await f.port.issue(token,proof);
   const pending=await f.service.claimOnboarding({...f.input,onboardingToken:token,name:'admin'},f.context);
-  assert.equal(pending.account.systemBadge,undefined);assert.deepEqual(pending.account.badges,['system']);
+  assert.equal(pending.account.systemBadge,undefined);assert.deepEqual(pending.account.badges,['system']);await register(f,pending);
   const account=await f.repository.get(pending.account.id);assert.equal(account.systemIdentity,undefined);
   assert.equal(await f.repository.compareAndSwap(account.id,account.revision,{...account,revision:account.revision+1,badgeIds:[]}),true);
   f.config.HOST_NAME_POLICY={version:1,reserved:[],onboarding:[]};f.service.config.HOST_NAME_POLICY=f.config.HOST_NAME_POLICY;
-  const resumed=await f.service.loginPassword({handle:'ADMIN',password:f.input.password,turnstileToken:'fixture'},f.context);
+  const resumed=await login(f,'ADMIN');
   assert.equal(resumed.account.id,pending.account.id);assert.equal(resumed.resumed,true);assert.deepEqual(resumed.account.badges,[]);
   assert.equal((await f.repository.onboardingLookup('admin')).state,'operator-alias');
  }finally{f.close();}

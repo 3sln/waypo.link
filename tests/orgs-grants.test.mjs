@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {FederationService,MemoryFederationStore,PREFERENCES} from '../packages/federation/index.mjs';
 import {organizationFederationPort} from '../packages/orgs/grants.mjs';
-import {identityEngine,activate,signupInput,PASSWORD} from './helpers/identity-engine.mjs';
+import {identityEngine,activate,signupInput,passkeyResponse} from './helpers/identity-engine.mjs';
 import {authorityEpoch,raiseAuthorityEpoch,organizationVerification} from '../packages/identity/authority-epoch.mjs';
 import {transferIdentityPort} from '../packages/identity/transfer-out.mjs';
 const issuer='https://orgs.example',subject=issuer+'/entities/organization',clientId='https://app.example/client',fragment='https://schema.example/settings/v1',contract='https://spec.bindle.example/contracts/object-store/v1',r1=issuer+'/resources/one',r2=issuer+'/resources/two',owner={session:'verified'};
@@ -35,7 +35,7 @@ test('ORG-3 organization context has no effective_methods; generation changes in
 test('ORG-2 identity authority epoch changes at recovery completion, not setup or routine security changes',async()=>{
  const f=identityEngine();try{const {owner:person,file}=await activate(f.act,signupInput());assert.equal(authorityEpoch(await f.repository.get(person.account.id)),0);
  const recovering=await f.act('recover',{recoveryToken:file.recoveryToken,turnstileToken:'verified'});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),0);
- await f.act('setPendingPassword',{pendingToken:recovering.pendingToken,password:PASSWORD});const replacement=await f.act('downloadRecovery',{pendingToken:recovering.pendingToken});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),0);
+ const options=await f.act('beginPasskeyRegistration',{pendingToken:recovering.pendingToken});await f.act('registerPasskey',{pendingToken:recovering.pendingToken,response:passkeyResponse(options,'passkey-recovered')});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),0);const replacement=await f.act('downloadRecovery',{pendingToken:recovering.pendingToken});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),0);
  await f.act('confirmRecovery',{pendingToken:recovering.pendingToken,recoveryToken:replacement.recoveryToken,downloadConfirmed:true});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),1);
  const port=transferIdentityPort(f.repository,{clock:f.clock.now});await port.invalidateRecovery(person.account.id,{reason:'elevated-abort'});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),2);await port.invalidateRecovery(person.account.id,{reason:'elevated-abort'});assert.equal(authorityEpoch(await f.repository.get(person.account.id)),2);
  }finally{await f.engine.dispose();}

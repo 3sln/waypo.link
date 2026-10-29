@@ -281,7 +281,7 @@ export class DeletionService{
   const replay=await this.replayed(v.operationId,fingerprint);if(replay)return replay;
   const now=this.now();
   // A fresh step-up proves possession of a credential now; a recent sign-in alone is not enough.
-  if(!Number.isSafeInteger(actor.stepUpAt)||actor.stepUpAt>now||now-actor.stepUpAt>=STEP_UP_WINDOW_MS)fail('step_up_required','Confirm your password or passkey to continue.',401);
+  if(!Number.isSafeInteger(actor.stepUpAt)||actor.stepUpAt>now||now-actor.stepUpAt>=STEP_UP_WINDOW_MS)fail('step_up_required','Confirm with your passkey to continue.',401);
   const identityPort=this.port('identity'),identity=await identityPort.get(owner);
   if(!identity)fail('account_unavailable','Account unavailable.',409);
   if(identity.status==='recovering')fail('recovery_pending','Finish account recovery first.',409);

@@ -30,5 +30,5 @@ test('a legacy contact-url payload alone is malformed and never reaches the prov
 test('the intent browser carries only a bintent value: scheme, payload and continuation have no legacy member',()=>{
  const saved=[];const browser=createIntentBrowser({value:'secret',placement:'fragment',legacy:{intent:'send-message',contact:'https://3sln.example/c'},handler:true,now:()=>1,window:{location:{origin:'https://3sln.example'},localStorage:{getItem:()=>null},sessionStorage:{setItem:(key,value)=>saved.push([key,JSON.parse(value)])}}});
  assert.equal(browser.scheme(),'web+bindle://intent?bintent=secret');assert.deepEqual(browser.payload(),{value:'secret',placement:'fragment'});assert.equal('legacy' in browser,false);assert.equal('handler' in browser,false);assert.equal('confirmContact' in browser,false);
- browser.save();assert.deepEqual(saved,[['3sln-intent-continuation',{value:'secret',placement:'fragment',expires:3600001}]]);
+ browser.save();assert.deepEqual(saved,[['3sln-continuation',{v:1,target:'/i',intent:{value:'secret',placement:'fragment'},expiresAt:3600001}]],'the one continuation store (SI-8), no legacy member');
 });

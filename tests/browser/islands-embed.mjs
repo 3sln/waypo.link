@@ -18,6 +18,7 @@ import {tmpdir} from 'node:os';
 import {resolve,extname} from 'node:path';
 import {randomBytes,webcrypto} from 'node:crypto';
 import {chromium,firefox,webkit} from 'playwright';
+import {softAuthenticator} from '../helpers/soft-passkey.mjs';
 import {monogramColors} from '../../packages/sdk/src/islands-protocol.mjs';
 
 const ISSUER='https://provider.example',EMBED='https://embed.provider.example',APP='https://app.example',CLIENT=APP+'/client',sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -141,18 +142,20 @@ async function fixture(t,name){
     if(url.origin===ISSUER||url.origin===EMBED){const response=await forward(route,headers);entry.status=response.status;if(process.env.ISLANDS_DEBUG&&url.pathname.startsWith('/embed/api/'))console.error('api',request.method(),url.pathname,response.status,String(response.body).slice(0,300));return route.fulfill(response);}
     return route.abort();
   };
-  // A real provider account (password signup plus recovery confirmation) with a display name and an avatar served from
-  // the provider's own static assets.
+  // A real provider account (passkey signup with a software authenticator, plus recovery confirmation) with a display
+  // name and an avatar served from the provider's own static assets.
   const provider=await context.newPage();await provider.goto(ISSUER+'/test/blank');
-  const account=await provider.evaluate(async avatar=>{
+  const post=(path,body,headers={})=>provider.evaluate(({path,body,headers})=>fetch(path,{method:path==='/api/profile'?'PUT':'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)}).then(async r=>{const text=await r.text();try{return {status:r.status,body:JSON.parse(text)};}catch{return {status:r.status,body:{text:text.slice(0,300),path}};}}),{path,body,headers});
+  const signup=await post('/api/auth/signup',{method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:(await provider.evaluate(()=>fetch('/api/config').then(r=>r.json()))).termsVersion,turnstileToken:'local-browser-test-token'});assert.ok(signup.body.pendingToken,JSON.stringify(signup));
+  const registered=await post('/api/auth/passkey/register',{pendingToken:signup.body.pendingToken,response:await softAuthenticator({origin:ISSUER,rpID:'provider.example'}).register(signup.body.registrationOptions)});assert.equal(registered.status,200,JSON.stringify(registered));
+  const account=await provider.evaluate(async ({avatar,pendingToken})=>{
     const post=(path,body,headers={})=>fetch(path,{method:path==='/api/profile'?'PUT':'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)}).then(async r=>{const text=await r.text();try{return {status:r.status,body:JSON.parse(text)};}catch{return {status:r.status,body:{text:text.slice(0,300),path}};}});
-    const config=await(await fetch('/api/config')).json();
-    const signup=await post('/api/auth/signup',{method:'password',password:'Islands browser fixture password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});if(!signup.body.pendingToken)return {error:signup};
+    const signup={body:{pendingToken}};
     const file=await post('/api/auth/recovery/download',{pendingToken:signup.body.pendingToken});const confirmed=await post('/api/auth/recovery/confirm',{pendingToken:signup.body.pendingToken,recoveryToken:file.body.recoveryToken,downloadConfirmed:true});if(confirmed.status!==200)return {error:confirmed};
     const session=await(await fetch('/api/session')).json(),member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken};
     const profile=await post('/api/profile',{displayName:'Display alex',avatar},member);if(profile.status!==200)return {error:profile};
     return {id:session.account.id,handle:session.account.handle};
-  },AVATAR_URL);
+  },{avatar:AVATAR_URL,pendingToken:signup.body.pendingToken});
   assert.ok(account.id,JSON.stringify(account));await provider.close();
   const open=async()=>{const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));if(process.env.ISLANDS_DEBUG){page.on('console',m=>console.error('console',m.type(),m.text()));page.on('worker',w=>{console.error('worker',w.url());});}page.on('dialog',d=>{errors.push('dialog '+d.type());d.dismiss();});page.on('download',()=>errors.push('download'));await page.goto(APP+'/');return page;};
   return {browser,context,log,errors,open,name,account,subject:`${ISSUER}/entities/${account.id}`,sessionCalls:()=>log.filter(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/session`).length};

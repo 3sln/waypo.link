@@ -30,7 +30,7 @@ test('seeded chaos: reissue vs rotation vs recovery vs transfer commit vs deleti
     // A client retries a whole step on `conflict` (another write won the identity revision), as the console does.
     const retry = async step => { for (let attempt = 0; ; attempt++) try { return await step(); } catch (error) { if (error?.code !== 'conflict' || attempt >= 3) throw error; } };
     const reissue = context => async () => {
-      await retry(() => f.stepUp('password', context));
+      await retry(() => f.stepUp('passkey', context));
       const staged = f.parse(await retry(() => f.begin(undefined, context))); issued.push(staged);
       await retry(() => f.confirm(staged, {}, context)); confirmed.push(staged);
     };

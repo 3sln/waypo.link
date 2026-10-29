@@ -28,7 +28,7 @@ export function claimInterstitial(s){
    ...claims.map(i=>h('section',h('h2',name(i)),
     h('p',t('Started on ','Iniciada el '),when(i.claim.createdAt),i.claim.earliestEffectAt?[t('. Earliest effect: ','. Efecto más temprano: '),when(i.claim.earliestEffectAt)]:null,'.'),
     i.claim.state==='held-for-support'?h('p',t('This claim is on hold: it cannot take effect unless 3sln.me support reviews it, and you can still stop it.','Esta reclamación está en espera: no puede surtir efecto salvo que el soporte de 3sln.me la revise, y aún puedes detenerla.')).classes('org-status'):null,
-    h('p',t('If this is your organization and you did not ask for this, stop the claim. It needs no reason, and you may be asked to confirm it is you with a passkey or password you already had.','Si esta es tu organización y no lo pediste, detén la reclamación. No requiere motivo, y puede que se te pida confirmar que eres tú con una llave de acceso o contraseña que ya tenías.')),
+    h('p',t('If this is your organization and you did not ask for this, stop the claim. It needs no reason, and you may be asked to confirm it is you with a passkey you already had.','Si esta es tu organización y no lo pediste, detén la reclamación. No requiere motivo, y puede que se te pida confirmar que eres tú con una llave de acceso que ya tenías.')),
     h('div',btn(t('Stop this claim','Detener esta reclamación'),'bg-abort',{org:i.org,claim:i.claim.id},'bg-gate-abort','org-primary'),
      h('a',t('Contact support','Contactar con el soporte')).props({href:SUPPORT}),
      btn(t('Not now','Ahora no'),'bg-dismiss',{claim:i.claim.id},'bg-gate-dismiss')).classes('org-actions')).attrs({'aria-label':t('Ownership claim','Reclamación de propiedad')}).key(i.claim.id)),

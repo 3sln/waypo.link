@@ -144,8 +144,10 @@ test('capability: a non-capability admin, boot, a suspended operator and a revok
 }finally{await w.close();}});
 
 test('a password step-up is refused, and every decision needs its own fresh passkey assertion',async()=>{const w=await orgCasesWorld(10);try{
- await held(w);await w.stepUp(PWD,'password');
- await rejects(w.list(PWD),'step_up_required');await rejects(w.decide(PWD,'acknowledge',{},{passkey:false}),'step_up_required');
+ await held(w);await rejects(w.stepUp(PWD,'password'),'invalid_method','user passwords were dropped (2026-10-28): no password step-up exists');
+ // A legacy session a password stepped up (stored before the removal) authorizes nothing.
+ {const a=await w.repository.get(PWD);for(const s of a.sessions)s.stepUpCredential={kind:'password'};await w.identity.save(a,a.revision);}
+ await rejects(w.list(PWD),'unauthorized');await rejects(w.decide(PWD,'acknowledge',{},{passkey:false}),'step_up_required');
  await rejects(w.decide(OP1,'acknowledge',{},{passkey:false}),'step_up_required','a fresh console step-up alone is not a decision assertion');
  // The HTTP boundary: administrators confirm with a passkey only.
  const ctx=w.contexts.get(PWD),request=path=>new Request(ISS+path,{method:'POST',headers:{Origin:ISS,'X-Bindle-Admin-Actor':'admin'}});

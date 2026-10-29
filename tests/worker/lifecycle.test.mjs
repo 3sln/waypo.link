@@ -22,7 +22,7 @@ test('Worker adapter: suspension fences HTTP APIs, restricted reactivation, cron
  // Purge needs a successful live Polar ever-paid lookup; workerd's outbound fetch answers it with an empty history.
  const outboundService=async request=>{const url=new URL(request.url);polar.push(url.pathname+url.search);if(/^\/v1\/(?:orders|subscriptions)\/?$/.test(url.pathname))return Response.json({items:[],pagination:{total_count:0,max_page:1}});return new Response('{}',{status:404,headers:{'Content-Type':'application/json'}});};
  const h=await createHarness({outboundService,bindings:{LIFECYCLE_ENABLED:'true',LIFECYCLE_DRY_RUN:'false',LIFECYCLE_PURGE_ENABLED:'true',BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_CATALOG_MODE:'metadata',POLAR_ACCESS_TOKEN:'offline-test',POLAR_WEBHOOK_SECRET:'offline-test',POLAR_ORGANIZATION_ID:'org'}});t.after(()=>h.close());
- const {result,cookie}=await h.signup(),owner=result.account.id,handle=(await h.directory.get(owner)).handle;
+ const {result,cookie,credentialId}=await h.signup(),owner=result.account.id,handle=(await h.directory.get(owner)).handle;
  const headers={Cookie:cookie,'X-Bindle-Account':owner,'X-Bindle-Session-Context':result.sessionContext};
  const mutate={...headers,Origin:h.origin,'X-CSRF-Token':result.csrfToken};
  assert.equal((await h.request('/api/account',{headers})).status,200);
@@ -49,5 +49,5 @@ test('Worker adapter: suspension fences HTTP APIs, restricted reactivation, cron
  const identity=await h.directory.get(owner);assert.equal(identity.status,'deleted');assert.equal(identity.handle,handle);assert.deepEqual(identity.sessions,[]);
  assert.equal((await h.directory.findByHandle(handle)).id,owner);
  assert.equal((await h.request('/api/account',{headers})).status,401);
- const again=await h.request('/api/auth/login/password',{method:'POST',value:{handle,password:'isolated test account password',turnstileToken:'local-browser-test-token'},headers:{Origin:h.origin}});assert.equal(again.status,401);
+ const again=await h.passkeyLogin(handle,{credentialId});assert.equal(again.status,401);
 });

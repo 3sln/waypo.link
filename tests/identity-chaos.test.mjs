@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRandom, createScheduler, injectFaults, forEachSeed, fakeClock } from './helpers/chaos.mjs';
-import { identityEngine, activate, signupInput, sessionContext, context, memoryShards, MemoryAccounts, MemoryDevices, PASSWORD } from './helpers/identity-engine.mjs';
+import { identityEngine, activate, signupInput, sessionContext, context, memoryShards, MemoryAccounts, MemoryDevices, signInPasskey } from './helpers/identity-engine.mjs';
 
 // Engine-level contention and fault injection for identity. Every schedule and
 // fault plan derives from a logged seed; rerun a failure with CHAOS_SEED=<seed>.
@@ -13,7 +13,7 @@ test('chaos: concurrent logins, logout and rename on one account never lose a co
     const { act, service } = identityEngine({ repository: scheduler.wrap(base, 'accounts') });
     const { ownerContext, owner } = await activate(act), sessionId = (await service.owner({}, ownerContext)).sessionContext;
     const work = [
-      ...Array.from({ length: 4 }, () => () => act('loginPassword', signupInput())),
+      ...Array.from({ length: 4 }, () => () => signInPasskey(act, 'alice', 'passkey-alice')),
       () => act('logout', {}, ownerContext),
       () => act('renameSession', { sessionId, label: 'Renamed laptop' }, ownerContext),
     ];
@@ -56,12 +56,12 @@ test('chaos: concurrent recovery with one file starts one transaction; every ear
     const scheduler = createScheduler(random), base = new MemoryAccounts();
     const { act, service } = identityEngine({ repository: scheduler.wrap(base, 'accounts') });
     const { file, ownerContext, owner } = await activate(act), proof = { recoveryToken: file.recoveryToken, turnstileToken: 'verified' };
-    const results = await scheduler.run([() => act('recover', proof), () => act('recover', proof), () => act('loginPassword', signupInput()), () => act('revokeOtherSessions', {}, ownerContext)]);
+    const results = await scheduler.run([() => act('recover', proof), () => act('recover', proof), () => signInPasskey(act, 'alice', 'passkey-alice'), () => act('revokeOtherSessions', {}, ownerContext)]);
     const started = results.slice(0, 2).filter(r => r.status === 'fulfilled');
     assert(started.filter(r => r.value.resumed === false).length <= 1, 'one fresh recovery transaction');
     const stored = await base.get(owner.account.id);
     if (started.length) {
-      assert.equal(stored.status, 'recovering'); assert.equal(stored.sessions.length, 0); assert.equal(stored.passwordHash, null);
+      assert.equal(stored.status, 'recovering'); assert.equal(stored.sessions.length, 0); assert.deepEqual(stored.credentials, []);
       const live = [];
       for (const { value } of started) { try { await service.setupStatus({ pendingToken: value.pendingToken }, context); live.push(value); } catch (error) { assert.equal(error.code, 'unauthorized'); } }
       assert.equal(live.length, 1, `exactly the last committed setup token is live; trace ${scheduler.trace.join(' | ')}`);
@@ -83,7 +83,7 @@ test('chaos: storage faults during account operations keep invariants and the ac
       clock.advance(random.int(60000));
       const pick = random.int(4), live = random.pick(sessions);
       try {
-        if (pick === 0) sessions.push(await act('loginPassword', signupInput()));
+        if (pick === 0) sessions.push(await signInPasskey(act, 'alice', 'passkey-alice'));
         else if (pick === 1) await act('logout', {}, sessionContext(live));
         else if (pick === 2) await act('renameSession', { sessionId: live.sessionContext, label: `Device ${step}` }, sessionContext(live));
         else await service.owner({}, sessionContext(live));
@@ -92,10 +92,10 @@ test('chaos: storage faults during account operations keep invariants and the ac
       assert(stored.revision >= lastRevision, 'revisions never go backwards'); lastRevision = stored.revision;
       assert(stored.sessions.length <= 10 && stored.audit.length <= 100, 'bounded state under faults');
       const serialized = JSON.stringify(stored);
-      assert(!serialized.includes(PASSWORD) && sessions.every(s => !serialized.includes(s.sessionToken)), 'no plaintext secrets at rest');
+      assert(sessions.every(s => !serialized.includes(s.sessionToken)), 'no plaintext secrets at rest');
     }
     enabled = false;
-    const fresh = await act('loginPassword', signupInput());
+    const fresh = await signInPasskey(act, 'alice', 'passkey-alice');
     assert.equal((await service.owner({}, sessionContext(fresh))).account.id, id);
     assert.deepEqual(await act('logout', {}, sessionContext(fresh)), { loggedOut: true });
   });
@@ -103,6 +103,8 @@ test('chaos: storage faults during account operations keep invariants and the ac
 
 // The sharded repository is the durable identity authority. Its prepare/settle/
 // finish protocol must survive interleavings and lost or failed shard RPCs.
+// Records use the legacy single-address fields; the email model reads them as one entry only with a verification time.
+const mailed = email => ({ verifiedEmail: email, emailVerifiedAt: email ? 1 : null });
 const SHARD_METHODS = ['shardPrepare', 'shardSettle', 'shardFinish', 'shardClaim', 'shardRelease', 'shardHandleConsume', 'shardHandleGrandfather', 'shardRead', 'shardLookup'];
 test('chaos: sharded identity storage keeps handles permanent and emails unique through interleavings and lost shard RPCs', async () => {
   await forEachSeed(30, async random => {
@@ -115,10 +117,10 @@ test('chaos: sharded identity storage keeps handles permanent and emails unique 
     const handles = ['shared-a', 'shared-b'], emails = ['one@mail.example', 'two@mail.example'], owners = Array.from({ length: 5 }, (_, i) => `owner-${i}`);
     const created = new Map();
     const work = owners.map(id => async () => {
-      const handle = random.pick(handles), value = { id, handle, revision: 0, status: 'active', verifiedEmail: random.chance(0.5) ? random.pick(emails) : null };
+      const handle = random.pick(handles), value = { id, handle, revision: 0, status: 'active', ...mailed(random.chance(0.5) ? random.pick(emails) : null) };
       if (await repository.create(value)) created.set(id, handle);
       const current = await repository.get(id);
-      if (current) await repository.compareAndSwap(id, current.revision, { ...current, revision: current.revision + 1, verifiedEmail: random.pick([...emails, null]) });
+      if (current) await repository.compareAndSwap(id, current.revision, { ...current, revision: current.revision + 1, ...mailed(random.pick([...emails, null])) });
     });
     await scheduler.run(work);
     enabled = false;
@@ -131,7 +133,7 @@ test('chaos: sharded identity storage keeps handles permanent and emails unique 
       const found = await recovered.findByHandle(handle);
       assert.equal(found?.id ?? null, holders[0]?.id ?? null, `lookup disagrees with records for ${handle}`);
       // A handle that ever had a holder is permanently burned; one no create ever consumed may still be free.
-      const late = await recovered.create({ id: `late-${handle}`, handle, revision: 0, status: 'active', verifiedEmail: null });
+      const late = await recovered.create({ id: `late-${handle}`, handle, revision: 0, status: 'active', ...mailed(null) });
       if (holders.length || [...created.values()].includes(handle)) assert.equal(late, false, `held handle ${handle} was recycled; ${trace()}`);
     }
     for (const email of emails) {
@@ -148,12 +150,12 @@ test('chaos: at-least-once shard RPC delivery never reports a committed create o
   for (const method of SHARD_METHODS) {
     let duplicate = false;
     const shards = memoryShards({ wrap: stub => injectFaults(stub, [{ method, mode: 'duplicate', when: () => duplicate }]) }), repository = shards.repository();
-    assert(await repository.create({ id: 'a', handle: 'alpha', revision: 0, status: 'active', verifiedEmail: null }));
+    assert(await repository.create({ id: 'a', handle: 'alpha', revision: 0, status: 'active', ...mailed(null) }));
     duplicate = true;
-    assert.equal(await repository.create({ id: 'b', handle: 'beta', revision: 0, status: 'active', verifiedEmail: 'b@mail.example' }), true, `${method}: create`);
-    assert.equal(await repository.compareAndSwap('a', 0, { id: 'a', handle: 'alpha', revision: 1, status: 'active', verifiedEmail: null }), true, `${method}: session-path update`);
-    assert.equal(await repository.compareAndSwap('a', 1, { id: 'a', handle: 'alpha', revision: 2, status: 'active', verifiedEmail: 'a@mail.example' }), true, `${method}: lookup-changing update`);
-    assert.equal(await repository.compareAndSwap('a', 1, { id: 'a', handle: 'alpha', revision: 2, status: 'stale', verifiedEmail: null }), false, `${method}: a stale revision still conflicts`);
+    assert.equal(await repository.create({ id: 'b', handle: 'beta', revision: 0, status: 'active', ...mailed('b@mail.example') }), true, `${method}: create`);
+    assert.equal(await repository.compareAndSwap('a', 0, { id: 'a', handle: 'alpha', revision: 1, status: 'active', ...mailed(null) }), true, `${method}: session-path update`);
+    assert.equal(await repository.compareAndSwap('a', 1, { id: 'a', handle: 'alpha', revision: 2, status: 'active', ...mailed('a@mail.example') }), true, `${method}: lookup-changing update`);
+    assert.equal(await repository.compareAndSwap('a', 1, { id: 'a', handle: 'alpha', revision: 2, status: 'stale', ...mailed(null) }), false, `${method}: a stale revision still conflicts`);
     duplicate = false;
     assert.equal((await repository.get('a')).revision, 2); assert.equal((await repository.findByEmail('a@mail.example')).id, 'a');
     assert.equal((await repository.findByHandle('beta')).id, 'b'); assert.equal((await repository.findByEmail('b@mail.example')).id, 'b');
@@ -163,11 +165,11 @@ test('chaos: at-least-once shard RPC delivery never reports a committed create o
 test('scaling: storage per account stays constant under repeated updates and allocation stays unique across 64 lanes', async () => {
   const shards = memoryShards(), repository = shards.repository(), rows = () => [...shards.controllers.values()].reduce((sum, c) => sum + c.metadata.rows.size, 0);
   const total = 200;
-  await Promise.all(Array.from({ length: total }, (_, i) => repository.create({ id: `bulk-${i}`, handle: `bulk-${i}`, revision: 0, status: 'active', verifiedEmail: `bulk-${i}@mail.example` })));
+  await Promise.all(Array.from({ length: total }, (_, i) => repository.create({ id: `bulk-${i}`, handle: `bulk-${i}`, revision: 0, status: 'active', ...mailed(`bulk-${i}@mail.example`) })));
   const baseline = rows();
   assert(baseline <= total * 4, `a small constant number of rows per account (${baseline / total})`);
   let account = await repository.get('bulk-0');
-  for (let i = 0; i < 60; i++) { const next = { ...account, revision: account.revision + 1, verifiedEmail: `rotating-${i % 3}@mail.example`, sessions: [i] }; assert(await repository.compareAndSwap(account.id, account.revision, next)); account = next; }
+  for (let i = 0; i < 60; i++) { const next = { ...account, revision: account.revision + 1, ...mailed(`rotating-${i % 3}@mail.example`), sessions: [i] }; assert(await repository.compareAndSwap(account.id, account.revision, next)); account = next; }
   assert.equal(rows(), baseline, 'email rotation releases old claims; updates add no residue');
   assert.equal(await repository.findByEmail('bulk-0@mail.example'), null);
   const allocated = await Promise.all(Array.from({ length: 256 }, (_, i) => repository.allocateFreeHandle(undefined, `alloc-${i}`)));

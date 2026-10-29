@@ -19,10 +19,11 @@ function fixture(worker=false){
  const ctx=(extra={})=>({origin,remoteIP:'192.0.2.9',...extra});
  async function deploy(at=now){const token=mintBootToken(origin,{now:at});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);return token;}
  async function claimBoot(token,binding='boot-browser',password=PASSWORD){await admin.bootStart({bootToken:token},ctx({setupBinding:binding}));const result=await admin.bootComplete({bootToken:token,method:'password',password,acknowledgeExpiry:true},ctx({setupBinding:binding}));return {...result,context:ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken})};}
- async function activate(link,name,password='long internal account password'){const onboardingToken=decodeURIComponent(link.split('#token=')[1]),c=ctx({setupBinding:'claim-'+name}),pending=await identity.claimOnboarding({onboardingToken,name,method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},c),file=await identity.downloadRecovery(pending,c),active=await identity.confirmRecovery({...pending,...file,downloadConfirmed:true},c);const context=ctx({actor:'admin',sessionToken:active.sessionToken,csrfToken:active.csrfToken});return {id:active.account.id,context,password,stepUp:()=>identity.stepUp({method:'password',password},context)};}
+ // Passwords were dropped for user accounts (2026-10-28): claims register a passkey before the recovery download.
+ async function activate(link,name,passkeyId='signup-'+name){const onboardingToken=decodeURIComponent(link.split('#token=')[1]),c=ctx({setupBinding:'claim-'+name}),pending=await identity.claimOnboarding({onboardingToken,name,method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},c);await identity.registerPasskey({pendingToken:pending.pendingToken,response:{id:passkeyId,ok:true}},c);const file=await identity.downloadRecovery(pending,c),active=await identity.confirmRecovery({...pending,...file,downloadConfirmed:true},c);const context=ctx({actor:'admin',sessionToken:active.sessionToken,csrfToken:active.csrfToken});return {id:active.account.id,context,signupPasskeyId:passkeyId,stepUp:async()=>{await identity.stepUpBegin({},context);return identity.stepUp({method:'passkey',response:{id:passkeyId,ok:true}},context);}};}
  async function user(extra={}){const id=crypto.randomUUID(),assignmentId=crypto.randomUUID(),handle=await repository.allocateFreeHandle(undefined,id,assignmentId),{verifiedEmail,...rest}=extra,account={id,assignmentId,handle,revision:0,status:'active',createdAt:now,lastActiveAt:now,credentials:[],sessions:[],challenges:[],audit:[],badgeIds:[],passwordHash:'hash:secret user password',recoveryHash:'recovery-secret-hash',...rest};assert(await repository.create(account));if(verifiedEmail)assert(await repository.compareAndSwap(id,0,{...account,revision:1,verifiedEmail}));return repository.get(id);}
  // Administrators confirm with a passkey (wargame 2026-10-23 #2): enrol one, then step up with it.
- async function enrolPasskey(member,id='passkey-'+member.id){const {challengeId}=await identity.credentialBegin({label:'Admin key'},member.context);await identity.credentialFinish({challengeId,response:{id,ok:true}},member.context);return {...member,passkeyId:id,passwordStepUp:member.stepUp,stepUp:async()=>{await identity.stepUpBegin({},member.context);return identity.stepUp({method:'passkey',response:{id,ok:true}},member.context);}};}
+ async function enrolPasskey(member,id='passkey-'+member.id){const {challengeId}=await identity.credentialBegin({label:'Admin key'},member.context);await identity.credentialFinish({challengeId,response:{id,ok:true}},member.context);return {...member,passkeyId:id,signupStepUp:member.stepUp,stepUp:async()=>{await identity.stepUpBegin({},member.context);return identity.stepUp({method:'passkey',response:{id,ok:true}},member.context);}};}
  async function makeAdmin(boot,name){await admin.reserve({name},boot.context);const minted=await admin.mintClaim({name,roles:['admin']},boot.context),member=await enrolPasskey(await activate(minted.link,name));await member.stepUp();return member;}
  // Runs the identity storage alarm sweep on every namespace store at an explicit time.
  async function sweep(at=now){if(!worker)return (await repository.shardOnboardingSweep({now:at})).released;const released=[];for(const [shardName,shardStorage]of shards)if(shardName.startsWith('identity-v1/namespace/'))released.push(...(await shardStorage.onboardingSweep({now:at})).released);return released.sort();}
@@ -160,7 +161,7 @@ both('suspension, step-up freshness, runtime reservations and per-actor rate lim
  await assert.rejects(f.admin.reserve({name:'admin',badgeIds:['system']},member.context),{code:'badge_boot_only'});await f.admin.reserve({name:'admin'},member.context);await assert.rejects(f.admin.unreserve({name:'admin'},member.context),{code:'static_reservation'});
  const claim=await f.admin.mintClaim({name:'concierge'},member.context);await assert.rejects(f.admin.unreserve({name:'concierge'},member.context),{code:'claim_outstanding'});
  await f.admin.revokeClaim({nonce:claim.nonce},member.context);
- await assert.rejects(f.identity.claimOnboarding({onboardingToken:decodeURIComponent(claim.link.split('#token=')[1]),name:'concierge',method:'password',password:'long internal account password',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},f.ctx({setupBinding:'late'})),{code:'invalid_onboarding_invitation'});
+ await assert.rejects(f.identity.claimOnboarding({onboardingToken:decodeURIComponent(claim.link.split('#token=')[1]),name:'concierge',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},f.ctx({setupBinding:'late'})),{code:'invalid_onboarding_invitation'});
  await assert.rejects(f.admin.unreserve({name:'concierge'},member.context),{code:'reservation_assigned'});
  let limited;for(let i=0;i<70&&!limited;i++)try{await f.admin.reserve({name:'loop-name'},member.context);}catch(error){limited=error;}
  assert.equal(limited?.code,'rate_limited');await f.admin.bootStepUp({method:'password',password:PASSWORD},boot.context);await f.admin.reserve({name:'loop-name'},boot.context);
@@ -265,7 +266,7 @@ both('console access reports only the caller\'s own administrator authority',asy
  const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops'),plain=await f.user();
  assert.deepEqual(await f.admin.access({},member.context),{admin:true,handle:'ops',passkey:true});
  await assert.rejects(f.admin.access({},{...member.context,actor:'boot'}),{code:'actor_required'});await assert.rejects(f.admin.access({},{...member.context,csrfToken:'wrong'}),{code:'csrf'});
- const session=await f.identity.loginPassword({handle:plain.handle,password:'secret user password',turnstileToken:'ok'},f.ctx());assert.ok(session.sessionToken);
+ const signedIn=await f.repository.get(plain.id),session=await f.identity.session(signedIn,{credentialId:'plain-key'});await f.identity.save(signedIn,signedIn.revision);assert.ok(session.sessionToken);
  assert.deepEqual(await f.admin.access({},f.ctx({actor:'admin',sessionToken:session.sessionToken,csrfToken:session.csrfToken})),{admin:false});
  await assert.rejects(f.admin.access({extra:1},member.context),{code:'invalid_request'});
 });
@@ -304,23 +305,22 @@ test('console boot logout always clears the cookie; administrator step-up can be
   await f.admin.overview({},member.context);assert.deepEqual(await f.admin.endStepUp({},member.context),{ended:true});await assert.rejects(f.admin.overview({},member.context),{code:'step_up_required'});
  }finally{f.close();}
 });
-// Wargame 2026-10-23 #2 (replaces a grep for callers of IdentityService.stepUp): the general identity step-up
-// (/api/auth/step-up) accepts a password, so the administrator console itself must demand a passkey stamp.
-both('a password step-up, from any route, never grants administrator authority',async f=>{
+// Wargame 2026-10-23 #2 (replaces a grep for callers of IdentityService.stepUp): the administrator console demands a
+// passkey stamp. Passwords were dropped for user accounts (2026-10-28), so the general identity step-up now refuses a
+// password outright (invalid_method) and a refused attempt leaves the console locked.
+both('a password step-up, from any route, is refused and never grants administrator authority',async f=>{
  const {IdentityAction}=await import('../packages/identity/index.mjs');
- const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops'),plain=await f.makeAdmin(boot,'ops-plain').catch(()=>null);void plain;
- // The general identity route maps to IdentityAction('stepUp') and accepts a password.
- await new IdentityAction('stepUp',{method:'password',password:member.password},member.context).execute({identity:f.identity},{dispatchFeed:new EventTarget(),engineFeed:new EventTarget()});
+ const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops');
+ assert.deepEqual(await f.admin.endStepUp({},member.context),{ended:true});
+ // The general identity route maps to IdentityAction('stepUp'); a password is no longer a step-up method.
+ await assert.rejects(new IdentityAction('stepUp',{method:'password',password:'long internal account password'},member.context).execute({identity:f.identity},{dispatchFeed:new EventTarget(),engineFeed:new EventTarget()}),{code:'invalid_method'});
  await assert.rejects(f.admin.blockClient({host:'victim-app.example',blocked:true,reason:'pwned'},member.context),{code:'step_up_required'});
  await assert.rejects(f.admin.overview({},member.context),{code:'step_up_required'});
- // A passkey step-up restores it; removing that passkey withdraws it again even inside the window.
+ // A passkey step-up restores it.
  await member.stepUp();await f.admin.blockClient({host:'victim-app.example',blocked:true,reason:'test'},member.context);
- // An administrator without any passkey cannot reach the console with a password step-up.
- await f.admin.reserve({name:'nokey'},boot.context);const minted=await f.admin.mintClaim({name:'nokey',roles:['admin']},boot.context),bare=await f.activate(minted.link,'nokey');
- await bare.stepUp();await assert.rejects(f.admin.overview({},bare.context),{code:'step_up_required'});
  // The HTTP admin step-up route still refuses passwords outright.
  const env={APP_ORIGIN:origin,ADMIN_SERVICE:async()=>f.admin},json=(data,status=200,headers)=>new Response(JSON.stringify(data),{status,headers});
- const response=await adminRoutes({path:'/api/admin/step-up',request:new Request(origin+'/api/admin/step-up',{method:'POST',headers:{Origin:origin,'X-Bindle-Admin-Actor':'admin'}}),env,local:true,context:member.context,body:async()=>({method:'password',password:member.password}),json});assert.equal(response.status,403);
+ const response=await adminRoutes({path:'/api/admin/step-up',request:new Request(origin+'/api/admin/step-up',{method:'POST',headers:{Origin:origin,'X-Bindle-Admin-Actor':'admin'}}),env,local:true,context:member.context,body:async()=>({method:'password',password:'long internal account password'}),json});assert.equal(response.status,403);
 });
 
 // Wargame 2026-10-23 #6: an unauthenticated begin never evicts another caller's pending challenge, and a challenge is
@@ -397,7 +397,7 @@ both('expired unredeemed claims release their name; redeemed, mid-redemption, st
  assert.equal((await f.repository.onboardingLookup('security')).onboarding.phase,'preissued');
  assert.deepEqual(await f.sweep(due+86400000),[]);
  // The expired token stays dead; the released name can be unreserved or reissued.
- await assert.rejects(f.identity.claimOnboarding({onboardingToken:token(claims.unused.link),name:'unused',method:'password',password:'long internal account password',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},f.ctx({setupBinding:'late'})));
+ await assert.rejects(f.identity.claimOnboarding({onboardingToken:token(claims.unused.link),name:'unused',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},f.ctx({setupBinding:'late'})));
  await member.stepUp();await f.admin.unreserve({name:'unused'},member.context);
  await assert.rejects(f.admin.unreserve({name:'redeemed'},member.context),{code:'reservation_assigned'});await assert.rejects(f.admin.unreserve({name:'started'},member.context),{code:'reservation_assigned'});
  const again=await f.admin.mintClaim({name:'revoked',hours:1},member.context);const owner=await f.activate(again.link,'revoked');assert.equal((await f.repository.findByHandle('revoked')).id,owner.id);

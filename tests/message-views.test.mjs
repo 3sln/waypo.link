@@ -58,7 +58,8 @@ test('actual Node owner routes enforce session, Origin, CSRF, methods and strict
  const directory=await mkdtemp(join(tmpdir(),'bindle-views-')),origin='http://localhost:8789';let app;
  try{app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BILLING_ENABLED:'false'}});
   const request=(path,{method='GET',body,headers={}}={})=>app.fetch(new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...headers},...body===undefined?{}:{body:JSON.stringify(body)}}));
-  const pending=await(await request('/api/auth/signup',{method:'POST',body:{handle:'views_test',method:'password',password:'Views isolated local testing password',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();
+  const pending=await(await request('/api/auth/signup',{method:'POST',body:{handle:'views_test',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();
+  const {softAuthenticator}=await import('./helpers/soft-passkey.mjs');assert.equal((await request('/api/auth/passkey/register',{method:'POST',body:{pendingToken:pending.pendingToken,response:await softAuthenticator({origin}).register(pending.registrationOptions)}})).status,200);
   const recovery=await(await request('/api/auth/recovery/download',{method:'POST',body:{pendingToken:pending.pendingToken}})).json();
   const activation=await request('/api/auth/recovery/confirm',{method:'POST',body:{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}});assert.equal(activation.status,200);const session=await activation.json(),headers={Cookie:activation.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':session.csrfToken};
   assert.equal((await request('/api/views')).status,401);assert.equal((await request('/api/incoming')).status,401);

@@ -12,23 +12,23 @@ import {identityBackupPort} from '../packages/runtime/identity-backup.mjs';
 import {accountHandle} from '../packages/runtime/routes/shared.mjs';
 import {stages} from '../packages/runtime/routes/orgs.mjs';
 import {personActor} from '../packages/orgs/authority.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeHasher,fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 import {fakeClock} from '../packages/app/memory-providers.mjs';
 import {IdentityCrypto} from '../packages/identity/crypto.mjs';
 import {fakeOrgPolar,ORG_POLAR_CONFIG} from './helpers/org-polar.mjs';
 import {transferIdentityPort} from '../packages/identity/transfer-out.mjs';
 import {organizationIdentityPort} from '../packages/identity/organizations.mjs';
 
-const ORIGIN='http://localhost:8788',PASSWORD='Organizations ownership runtime password!',DAY=86400000;
+const ORIGIN='http://localhost:8788',DAY=86400000;
 test('runtime: checkout at creation, verified webhook delegation, transfer effect, key rotation and recovery reissue',async t=>{
  const directory=await mkdtemp(join(tmpdir(),'orgs-ownership-')),clock=fakeClock(Date.now()),polar=fakeOrgPolar({clock});
  const app=await createNodeServer({directory,config:{...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client,LIFECYCLE_CLOCK:clock.now}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
  const backup=identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts});
- const identity=new IdentityService({repository,identityBackup:backup,turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const identity=new IdentityService({repository,identityBackup:backup,turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const base={origin:ORIGIN,remoteIP:'127.0.0.1'};
- const person=async()=>{const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);return pending.account.id;};
+ const person=async()=>{const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);return pending.account.id;};
  const A=await person(),B=await person(),env={...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client};
  const verification=()=>({stepUpAt:clock.now(),enrolledAt:clock.now()-30*DAY,securityChangedAt:clock.now()-60*DAY});
  const call=async(id,method,path,input)=>{
@@ -96,8 +96,8 @@ test('runtime: a reconcile refused for subscription capacity raises an operator 
  const app=await createNodeServer({directory,config:{...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client,LIFECYCLE_CLOCK:clock.now,LIFECYCLE_LOG:entry=>log.push(entry)}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
- const base={origin:ORIGIN,remoteIP:'127.0.0.1'},pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const base={origin:ORIGIN,remoteIP:'127.0.0.1'},pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
  const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
  const A=pending.account.id,env={...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client};
  const call=async(method,path,input)=>{const request=new Request(ORIGIN+path,{method,headers:input?{'Content-Type':'application/json'}:{},...input?{body:JSON.stringify(input)}:{}});const response=await stages.owner({request,env,url:new URL(request.url),path:new URL(request.url).pathname,id:A,object:accountHandle(env,A),actor:personActor({owner:A,iss:ORIGIN,authTime:clock.now()}),context:{remoteIP:'127.0.0.1'}}).catch(error=>new Response(JSON.stringify({error:error.code}),{status:error.status??500}));return {status:response.status,body:await response.json()};};

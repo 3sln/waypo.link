@@ -17,7 +17,7 @@ const hash=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',
 const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;let diff=0;for(let i=0;i<a.length;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;};
 const ownerOf=actor=>{if(actor?.kind!=='owner'||!UUID.test(actor.owner??''))fault('unauthorized','Sign in to continue.',401);return actor.owner;};
 const service=r=>new AccountExport({...r,...r.config.exportPorts});
-const fresh=(actor,now)=>{if(!Number.isSafeInteger(actor.stepUpAt)||actor.stepUpAt>now||actor.stepUpAt+300000<=now)fault('step_up_required','Verify your password or passkey again.',401);};
+const fresh=(actor,now)=>{if(!Number.isSafeInteger(actor.stepUpAt)||actor.stepUpAt>now||actor.stepUpAt+300000<=now)fault('step_up_required','Verify with your passkey again.',401);};
 const ready=(job,security,now)=>{if(job.state!=='ready')fault('export_not_ready','The export is not ready.',409);if(now>=job.expiresAt)fault('export_expired','The export has expired.',410);if(job.securityEpoch!==security.epoch)fault('unauthorized','Security settings changed.',401);};
 export function parseExportGrant(token){const m=typeof token==='string'&&/^bex1\.([a-f0-9-]{36})\.([a-f0-9-]{36})\.([a-f0-9-]{36})\.([A-Za-z0-9_-]{43})$/.exec(token);return m&&m.slice(1,4).every(v=>UUID.test(v))?{owner:m[1],jobId:m[2],grantId:m[3]}:null;}
 class ExportGrantAction extends AppAction {static deps=deps;static lifecycle='suspended';static termsGate='exempt';static changes='exports-changed';}

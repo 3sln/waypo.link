@@ -1,7 +1,9 @@
 // Active-account recovery reissue in real Chromium and Firefox against the real Node runtime: real routes, the shipped
 // console bundle, on-device encryption and test-unlock, the step-up prompt, a real file download and the re-upload
 // acknowledgement (recovery file v3: the saved file is selected again and compared by hash, never decrypted). The only
-// out-of-band step is making the password look 8 days old in the identity record, which a browser test cannot wait for.
+// out-of-band step is making the passkey look 8 days old in the identity record, which a browser test cannot wait for.
+// Passwords were dropped (owner approval 2026-10-28): accounts sign up with a soft passkey (tests/helpers/soft-passkey.mjs)
+// and the browsers' WebAuthn calls reach the same authenticator (softWebAuthn, tests/e2e/browser.mjs).
 // Run `npm run build:assets` first.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,8 +15,10 @@ import {chromium,firefox} from 'playwright';
 import {createNodeServer} from '../../apps/node/server.mjs';
 import {recoveryCredential} from '../../packages/identity/service.mjs';
 import {catalogues} from '../../packages/i18n/catalogues.mjs';
+import {softAuthenticator,signupBody,registerPending,passkeyStepUp} from '../helpers/soft-passkey.mjs';
+import {softWebAuthn} from '../e2e/browser.mjs';
 
-const PASSWORD='Browser reissue test password 2026!',ANSWER='Private reissue passphrase 2026!',CHALLENGE='local-browser-test-token',DAY=86400000;
+const ANSWER='Private reissue passphrase 2026!',CHALLENGE='local-browser-test-token',DAY=86400000;
 let app,directory,origin,signups=0;const mail=[];
 test.before(async()=>{
  const probe=net.createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
@@ -27,17 +31,21 @@ const post=async(path,input,headers={})=>{const response=await app.fetch(new Req
 /** An active account (API setup, as the signup suites cover the UI), its first file, and the session cookies. */
 async function account({aged=true}={}){
  // Each fixture signs up from its own address: the per-network signup windows would otherwise refuse the later ones.
- const pending=await post('/api/auth/signup',{method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:CHALLENGE},{'CF-Connecting-IP':`198.51.100.${++signups}`});assert.equal(pending.status,200,pending.value.error);
+ const authenticator=softAuthenticator({origin}),address={'CF-Connecting-IP':`198.51.100.${++signups}`},send=async(path,input)=>{const result=await post(path,input,address);assert.equal(result.status,200,`${path}: ${result.value.error}`);return result.value;};
+ const pending=await post('/api/auth/signup',signupBody({ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:CHALLENGE}),address);assert.equal(pending.status,200,pending.value.error);
+ assert.equal((await registerPending(authenticator,send,pending.value)).readyForRecovery,true);
  const file=await post('/api/auth/recovery/download',{pendingToken:pending.value.pendingToken});assert.equal(file.status,200);
  const active=await post('/api/auth/recovery/confirm',{pendingToken:pending.value.pendingToken,recoveryToken:file.value.recoveryToken,downloadConfirmed:true});assert.equal(active.status,200,active.value.error);
  const id=pending.value.account.id,repository=app.resources.repository;
- if(aged){const record=await repository.get(id);assert.equal(await repository.compareAndSwap(id,record.revision,{...record,passwordSetAt:Date.now()-8*DAY,revision:record.revision+1}),true);}
+ if(aged){const record=await repository.get(id);assert.equal(await repository.compareAndSwap(id,record.revision,{...record,credentials:record.credentials.map(credential=>({...credential,createdAt:Date.now()-8*DAY})),revision:record.revision+1}),true);}
  const cookies=active.cookies.map(header=>{const [pair]=header.split(';'),index=pair.indexOf('=');return {name:pair.slice(0,index),value:pair.slice(index+1),url:origin};});
- return {id,cookies,csrfToken:active.value.csrfToken,file:{recoveryToken:file.value.recoveryToken,fileId:file.value.fileId},identity:()=>repository.get(id),patch:async mutate=>{for(let attempt=0;attempt<5;attempt++){const record=await repository.get(id);if(await repository.compareAndSwap(id,record.revision,{...mutate(record),revision:record.revision+1}))return;}assert.fail('patch lost every race');}};
+
+ const stepUp=headers=>passkeyStepUp(authenticator,async(path,input)=>{const result=await post(path,input,headers);assert.equal(result.status,200,`${path}: ${result.value.error}`);return result.value;});
+ return {id,authenticator,stepUp,cookies,csrfToken:active.value.csrfToken,file:{recoveryToken:file.value.recoveryToken,fileId:file.value.fileId},identity:()=>repository.get(id),patch:async mutate=>{for(let attempt=0;attempt<5;attempt++){const record=await repository.get(id);if(await repository.compareAndSwap(id,record.revision,{...mutate(record),revision:record.revision+1}))return;}assert.fail('patch lost every race');}};
 }
 async function open(browserType,fixture,{locale='en',width=1280}={}){
  const browser=await browserType.launch({headless:true}),context=await browser.newContext({acceptDownloads:true,locale,viewport:{width,height:1000}});
- await context.addCookies(fixture.cookies);const page=await context.newPage();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await context.addCookies(fixture.cookies);await softWebAuthn(context,fixture.authenticator);const page=await context.newPage();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/console?lang='+locale);
  // Narrow layouts tuck the navigation behind a menu button.
  const nav=page.getByRole('button',{name:locale==='es'?'Cuenta y seguridad':'Account & security'}).or(page.getByRole('link',{name:locale==='es'?'Cuenta y seguridad':'Account & security'})).first();
@@ -59,7 +67,7 @@ for(const [name,browserType,locale]of [['chromium',chromium,'en'],['firefox',fir
  await dialog.getByText(L('Confirm that your current recovery file will stop working.')).waitFor();
  await dialog.getByLabel(L('I understand my old recovery file will stop working.')).check();await dialog.getByRole('button',{name:L('Continue'),exact:true}).click();
  // The step-up prompt (no step-up yet), then the server stages the file.
- await page.getByRole('heading',{name:L("Confirm it's you")}).waitFor();await page.getByLabel(L('Password'),{exact:true}).fill(PASSWORD);await page.getByRole('button',{name:L('Confirm with password')}).click();
+ await page.getByRole('heading',{name:L("Confirm it's you")}).waitFor();assert.equal(await page.locator('.step-up input[name=password]').count(),0,'passkey only');await page.getByRole('button',{name:L('Confirm with passkey')}).click();
  await page.getByRole('heading',{name:L('Keep a way back in.'),exact:true}).waitFor();
  assert.equal((await fixture.identity()).recoveryHash,before.recoveryHash,'staging leaves the current file working');
  await page.getByLabel(L('What is my private recovery passphrase?'),{exact:true}).fill(ANSWER);await page.getByRole('button',{name:L('Encrypt recovery file'),exact:true}).click();
@@ -84,8 +92,9 @@ for(const [name,browserType,locale]of [['chromium',chromium,'en'],['firefox',fir
  assert.equal(recoveryCredential(after).fileId,saved.fileId,'the confirmed file is the one saved and selected again');assert.equal(after.recoveryKeyKid,undefined);
  assert.equal(JSON.stringify(saved).includes('keychain'),false);
  assert.ok(Date.now()-recoveryCredential(after).issuedAt<60000,'P14: the new file starts its 7 days now');
- // Wargame 2026-10-23 #1: during the window the old file can only cancel and the new one cannot recover yet.
- const old=await post('/api/auth/recover',{recoveryToken:fixture.file.recoveryToken,turnstileToken:CHALLENGE});assert.equal(old.status,409);assert.equal(old.value.error,'recovery_reissue_pending');
+ // Wargame 2026-10-23 #1: during the window the old file cannot recover. The fixture's passkey predates the old file,
+ // so this passkey-confirmed reissue is file-proof (service.mjs fileProofReissue) and the old file is locked out entirely.
+ const old=await post('/api/auth/recover',{recoveryToken:fixture.file.recoveryToken,turnstileToken:CHALLENGE});assert.equal(old.status,409);assert.equal(old.value.error,'recovery_reissue_locked');
  assert.equal(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}).includes('recoveryToken')),false,'no file secret in browser storage');
  await page.getByRole('button',{name:L('Back to security'),exact:true}).click();await page.getByRole('heading',{name:L('Recovery file'),exact:true}).waitFor();
  // The console shows the window; this device was signed in before the replacement began, so it can cancel.
@@ -111,7 +120,7 @@ for(const [name,browserType,locale]of [['chromium',chromium,'en'],['firefox',fir
 for(const [name,browserType]of [['chromium',chromium],['firefox',firefox]])test(`${name}: the emailed cancel link removes its token from the address bar and cancels only on an explicit press, without signing in`,async t=>{
  const fixture=await account();await fixture.patch(record=>({...record,verifiedEmail:`owner-${fixture.id.slice(0,8)}@reissue.example`,emailVerifiedAt:Date.now()-30*DAY}));
  const before=await fixture.identity(),cookie=fixture.cookies.map(entry=>`${entry.name}=${entry.value}`).join('; '),headers={Cookie:cookie,'X-CSRF-Token':fixture.csrfToken,'X-Bindle-Account':fixture.id};
- assert.equal((await post('/api/auth/step-up',{method:'password',password:PASSWORD},headers)).status,200);
+ await fixture.stepUp(headers);
  const begun=await post('/api/auth/recovery/reissue/begin',{acknowledged:true},headers);assert.equal(begun.status,200,begun.value.error);
  assert.equal((await post('/api/auth/recovery/reissue/confirm',{recoveryToken:begun.value.recoveryToken,fileId:begun.value.fileId,downloadConfirmed:true},headers)).status,200);
  const token=mail.filter(entry=>entry.owner===fixture.id&&entry.type==='recovery-reissued').at(-1)?.cancelToken;assert.ok(token,'the earlier email received a cancel link');
@@ -137,7 +146,7 @@ for(const [name,browserType]of [['chromium',chromium],['firefox',firefox]])test(
  await page.getByText(/Puedes reemplazar tu archivo de recuperación a partir del/).waitFor();
  assert.equal(await page.getByRole('button',{name:'Reemplazar archivo de recuperación'}).isDisabled(),true);
  const headers={Cookie:fixture.cookies.map(entry=>`${entry.name}=${entry.value}`).join('; '),'X-CSRF-Token':fixture.csrfToken,'X-Bindle-Account':fixture.id};
- assert.equal((await post('/api/auth/step-up',{method:'password',password:PASSWORD},headers)).status,200);
+ await fixture.stepUp(headers);
  const refused=await post('/api/auth/recovery/reissue/begin',{acknowledged:true},headers);assert.equal(refused.value.error,'credential_too_new');
  assert.equal((await fixture.identity()).recoveryHash,before.recoveryHash);assert.equal((await fixture.identity()).recoveryStaged,undefined,'nothing staged, nothing rotated');
  assert.deepEqual(errors,[]);

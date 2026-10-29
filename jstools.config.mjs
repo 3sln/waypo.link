@@ -11,7 +11,7 @@ export const publicSources = [
   'vendor/tldts/index.js',
   'packages/sdk/src',
   'packages/intents/format.mjs','packages/intents/schema.mjs','packages/intents/sessions.mjs','packages/intents/project.mjs',
-  'packages/core/strict-json.mjs','packages/core/artefacts.mjs','packages/core/extensions.mjs','packages/core/fragments.mjs','packages/core/ip-address.mjs',
+  'packages/core/strict-json.mjs','packages/core/artefacts.mjs','packages/core/extensions.mjs','packages/core/fragments.mjs','packages/core/ip-address.mjs','packages/core/cbor.mjs',
   'packages/i18n',
   'packages/consent/model.mjs','packages/consent/localization.mjs','packages/consent/reviewed-contracts.mjs',
   'packages/portal',

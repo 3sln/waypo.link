@@ -7,6 +7,7 @@ import { mkdtemp, rm, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { argon2id } from 'hash-wasm';
+import { softAuthenticator, registerPending, signupBody } from '../helpers/soft-passkey.mjs';
 
 // Actual workerd + SQLite Durable Objects + R2. These test-only subclasses
 // expose inspection/seeding; they are never bundled into the deployed Worker.
@@ -56,9 +57,13 @@ async function request(route, { method = 'GET', value, headers = {}, raw } = {})
   return mf.dispatchFetch(`${origin}${route}`, { method, headers: { ...(value !== undefined || raw !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },
     ...(value !== undefined || raw !== undefined ? { body: raw ?? JSON.stringify(value) } : {}) });
 }
+// Test accounts use a soft passkey (passwords were dropped for user accounts, owner approval 2026-10-28).
+const authenticator = softAuthenticator({ origin });
+const send = async (route, value) => { const response = await request(route, { method: 'POST', value, headers: { Origin: origin } }); assert.ok(response.ok, route); return response.json(); };
 async function signup(handle = `test_${crypto.randomUUID().slice(0, 8)}`) {
-  const start = await request('/api/auth/signup', { method: 'POST', value: { handle, method: 'password', password: 'isolated test account password', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }, headers: { Origin: origin } });
+  const start = await request('/api/auth/signup', { method: 'POST', value: signupBody({ handle, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }), headers: { Origin: origin } });
   assert.equal(start.status, 200); const pending = await start.json();
+  await registerPending(authenticator, send, pending);
   const download = await request('/api/auth/recovery/download', { method: 'POST', value: { pendingToken: pending.pendingToken }, headers: { Origin: origin } });
   assert.equal(download.status, 200); const file = await download.json();
   const activation = await request('/api/auth/recovery/confirm', { method: 'POST', value: { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true }, headers: { Origin: origin } });
@@ -82,11 +87,13 @@ test('actual Worker signup stays unauthenticated until recovery proof; cookie se
   assert.equal(session.headers.get('Cache-Control'), 'private, no-store');
   const stored = JSON.stringify(await directory.get(result.account.id));
   assert(!stored.includes(decodeURIComponent(cookie.split('=')[1]))); assert(!stored.includes(file.recoveryToken)); assert(!stored.includes(pending.pendingToken));
-  assert(!stored.includes('isolated test account password'));
+  assert.equal(JSON.parse(stored).passwordHash, undefined);
+  assert.equal((await request('/api/auth/login/password', { method: 'POST', value: { handle: result.account.handle, password: 'isolated test account password', turnstileToken: 'local-browser-test-token' }, headers: { Origin: origin, Cookie: cookie, 'X-CSRF-Token': result.csrfToken } })).status, 404, 'password sign-in is gone');
   assert.equal((await request('/api/contacts', { method: 'POST', value: {}, headers: { Origin: origin, Cookie: cookie, 'X-CSRF-Token': 'wrong' } })).status, 403);
   const logout = await request('/api/auth/logout', { method: 'POST', value: {}, headers: { Origin: origin, Cookie: cookie, 'X-CSRF-Token': result.csrfToken } });
   assert.equal(logout.status, 200); assert.equal((await (await request('/api/session', { headers: { Cookie: cookie } })).json()).authenticated, false);
-  const login = await request('/api/auth/login/password', { method: 'POST', value: { handle: result.account.handle, password: 'isolated test account password', turnstileToken: 'local-browser-test-token' }, headers: { Origin: origin } });
+  const begin = await send('/api/auth/login/passkey/begin', { handle: result.account.handle, turnstileToken: 'local-browser-test-token' });
+  const login = await request('/api/auth/login/passkey/finish', { method: 'POST', value: { challengeToken: begin.challengeToken, response: await authenticator.authenticate(begin.authenticationOptions) }, headers: { Origin: origin } });
   assert.equal(login.status, 200); assert(login.headers.get('Set-Cookie').includes('HttpOnly')); assert.equal((await login.json()).sessionToken, undefined);
 });
 
@@ -105,8 +112,8 @@ test('actual Durable Object races preserve unique handles/emails and reject stal
   const race = await Promise.all([directory.create(alice), directory.create(bob)]); assert.equal(race.filter(Boolean).length, 1);
   const winning = await directory.findByHandle(handle); assert.equal(winning.id, race[0] ? alice.id : bob.id);
   const other = { id: crypto.randomUUID(), handle: `other_${crypto.randomUUID().slice(0, 8)}`, revision: 0, status: 'active' }; assert(await directory.create(other));
-  const email = `race-${crypto.randomUUID()}@mail.example`;
-  const claims = await Promise.all([directory.compareAndSwap(winning.id, 0, { ...winning, revision: 1, verifiedEmail: email }), directory.compareAndSwap(other.id, 0, { ...other, revision: 1, verifiedEmail: email })]);
+  const email = `race-${crypto.randomUUID()}@mail.example`, emails = [{ address: email, state: 'verified', verifiedAt: Date.now(), notices: true, source: 'test', addedBy: { session: 'test', at: Date.now() } }];
+  const claims = await Promise.all([directory.compareAndSwap(winning.id, 0, { ...winning, revision: 1, emails }), directory.compareAndSwap(other.id, 0, { ...other, revision: 1, emails })]);
   assert.equal(claims.filter(Boolean).length, 1); assert.equal((await directory.findByEmail(email)).id, claims[0] ? winning.id : other.id);
   assert.equal(await directory.compareAndSwap((await directory.findByEmail(email)).id, 0, { ...winning, revision: 2 }), false);
 });

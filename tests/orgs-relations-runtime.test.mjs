@@ -21,10 +21,10 @@ import {stages} from '../packages/runtime/routes/orgs.mjs';
 import {personActor} from '../packages/orgs/authority.mjs';
 import {importResourceId} from '../packages/runtime/account/relations.mjs';
 import {OBJECT_STORAGE} from '../packages/orgs/relation-catalogue.mjs';
-import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeHasher,fakeWebAuthn,passkeyResponse} from './helpers/identity-engine.mjs';
 import {dpopKey} from './authorization-entry-helpers.mjs';
 
-const ORIGIN='https://relations-runtime.example',PASSWORD='Relations runtime password, long enough!',DAY=86400000;
+const ORIGIN='https://relations-runtime.example',DAY=86400000;
 export const RELATION_FLAGS={ORGANIZATIONS_ENABLED:'true',DIRECTORY_ENABLED:'true',ORG_RELATIONS_ENABLED:'true'};
 const PLANS={check:async()=>({paid:true,plan:'organization-internal',source:'test'})};
 export async function relationsRuntime(t,{flags=RELATION_FLAGS,config={},clock}={}){
@@ -32,10 +32,10 @@ export async function relationsRuntime(t,{flags=RELATION_FLAGS,config={},clock}=
  const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',ORGANIZATION_PLANS:PLANS,...clock?{LIFECYCLE_CLOCK:clock.now}:{},...config}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
- const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:fakeWebAuthn(),passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
  const base={origin:ORIGIN,remoteIP:'127.0.0.1'},env={...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATION_PLANS:PLANS};
  const person=async()=>{
-  const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+  const pending=await identity.signup({method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);await identity.registerPasskey({pendingToken:pending.pendingToken,response:passkeyResponse(pending,'passkey-'+pending.account.id)},base);
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id);
@@ -43,7 +43,7 @@ export async function relationsRuntime(t,{flags=RELATION_FLAGS,config={},clock}=
   const call=async(method,path,{input,routeEnv=env,stale=false}={})=>{
    const request=new Request(ORIGIN+path,{method,headers:input?{'Content-Type':'application/json'}:{},...input?{body:JSON.stringify(input)}:{}});
    const record=await repository.get(id),authTime=now()-(stale?3600000:0);
-   const response=await stages.owner({request,env:routeEnv,url:new URL(request.url),path,id,object,context:{remoteIP:'127.0.0.1'},owner:{devices:[]},actor:personActor({owner:id,iss:ORIGIN,authTime,verification:{stepUpAt:authTime,enrolledAt:record.passwordSetAt,securityChangedAt:record.security?.changedAt??0}})})
+   const response=await stages.owner({request,env:routeEnv,url:new URL(request.url),path,id,object,context:{remoteIP:'127.0.0.1'},owner:{devices:[]},actor:personActor({owner:id,iss:ORIGIN,authTime,verification:{stepUpAt:authTime,enrolledAt:record.credentials[0]?.createdAt,securityChangedAt:record.security?.changedAt??0}})})
     .catch(error=>new Response(JSON.stringify({error:error.code,message:error.message}),{status:error.status??500}));
    return {status:response.status,body:await response.json()};
   };

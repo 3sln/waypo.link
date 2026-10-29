@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {baseURL,screenshot,launch} from './browser.mjs';
+import {baseURL,screenshot,launch,passkeySignup} from './browser.mjs';
 // This test exercises actual Chrome WebMCP and durable local Worker APIs.
 // Only explicitly local CAPTCHA bypass is used. No modelContext/API mocks.
 let browser;
@@ -12,7 +12,7 @@ test('native Chrome WebMCP discovers and invokes real Worker tools with owner mu
  const config=await(await context.request.get(baseURL+'/api/config')).json();
  // Private writes name the tab's account member (multi-account sessions); identity calls stay header-less.
  let member={};const post=async(path,value,csrf)=>{const response=await context.request.post(baseURL+path,{data:value,headers:csrf?{'X-CSRF-Token':csrf,...member}:{}});const body=await response.json();assert.equal(response.status(),200,JSON.stringify(body));return body;};
- const pending=await post('/api/auth/signup',{method:'password',password:'Native browser fixture long password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});
+ const {pending}=await passkeySignup(context.request,{body:{termsVersion:config.termsVersion}});
  assert.match(pending.account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);assert.match(pending.account.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
  const recovery=await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken});const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});
  const session=await(await context.request.get(baseURL+'/api/session')).json();member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext};

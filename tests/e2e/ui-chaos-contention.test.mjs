@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer,request as httpRequest} from 'node:http';
-import {launch,baseURL} from './browser.mjs';
+import {launch,baseURL,passkeyAccount} from './browser.mjs';
 import {deferred} from './chaos.mjs';
 
 // Contention against the real local Worker: real cookies, sessions, multi-account
@@ -10,7 +10,7 @@ import {deferred} from './chaos.mjs';
 let browser;
 test.before(async()=>{const url=new URL(baseURL);assert.ok(['localhost','127.0.0.1'].includes(url.hostname),'local Worker required');browser=await launch();});
 test.after(async()=>{await browser?.close();});
-async function signup(context,index){const headers={Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':`198.51.100.${200+index}`};const pending=await (await context.request.post(baseURL+'/api/auth/signup',{headers,data:{method:'password',password:'UI chaos contention password 2026!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));const file=await (await context.request.post(baseURL+'/api/auth/recovery/download',{headers,data:{pendingToken:pending.pendingToken}})).json();const response=await context.request.post(baseURL+'/api/auth/recovery/confirm',{headers,data:{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true}});assert.equal(response.status(),200);return (await response.json()).account;}
+async function signup(context,index){return (await passkeyAccount(context.request,{headers:{'Content-Type':'application/json','CF-Connecting-IP':`198.51.100.${200+index}`}})).account;}
 const shell=(page,handle)=>page.locator('.user-summary strong').filter({hasText:handle}).waitFor();
 const watchErrors=(t,...pages)=>{const errors=[];for(const page of pages){page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error'&&!/^Failed to load resource|status of (4|5)\d\d/.test(message.text()))errors.push(message.text());});}t.after(()=>assert.deepEqual(errors,[],'No browser runtime or console errors'));};
 
