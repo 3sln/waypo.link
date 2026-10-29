@@ -227,7 +227,7 @@ See DEVLOG "2026-10-26 — Messaging extraction prep (no reset)".
 | `docs/architecture/message-sender-identities.md` | **Core** (identity). Delegation is now `key-delegation.v1`. |
 | `docs/architecture/message-actions.md`, `app-notifications.md` | **Core: activity.** |
 | `docs/architecture/bindle-links.md`, `system-identities-contact.md`, `contact-link-previews.md` | **Core** with Parlay cross-references. |
-| `docs/artefacts/conversation-v1.json` | **Retained immutable.** Mark withdrawn in the registry. Published JSON never changes. |
+| `docs/artefacts/conversation-v1.json` | *Superseded 2026-10-28:* removed from the registry and the repository (owner direction: no versioning churn before release). Originally: retained immutable, marked withdrawn. |
 | `docs/architecture/artefacts/contact-delivery-v1.{schema,vectors}.json` | **Historical.** Parlay vectors go to `packages/messaging-protocol/vectors/`. |
 | `docs/architecture/artefacts/bindle-links.vectors.json` | **Core** (generic items). Contact-type items are re-cut in the Parlay vectors. |
 | `docs/release/*` messaging reviews and audits | Historical record. Unchanged. |

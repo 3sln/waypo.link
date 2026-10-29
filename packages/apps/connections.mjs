@@ -11,7 +11,7 @@ import {MESSAGING_INGRESS_FRAGMENT} from '../identity/messaging-ingress.mjs';
 // Extensions rev 3.2 (CR-X3-26): the former slot documents, republished as ordinary fragments at new URLs. The provider
 // pins these exact documents; the intake and ingress fragments are consumed only by provider features. The shared
 // Bindle item-classification fragment (CR-X3-25, IC-4) is application-consumed (Parlay requests it as a setup fragment);
-// the withdrawn 3sln.me item-classifier fragment is no longer pinned.
+// the former 3sln.me item-classifier fragment is removed.
 import classifierFragment from '../../docs/artefacts/fragments/item-classification-v1.json' with {type:'json'};
 import messagingIngressFragment from '../../docs/artefacts/fragments/messaging-ingress-v1.json' with {type:'json'};
 import publicIntakeFragment from '../../docs/artefacts/fragments/public-intake-v1.json' with {type:'json'};

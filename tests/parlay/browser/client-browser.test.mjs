@@ -55,3 +55,18 @@ for(const locale of ['en','es'])for(const width of [320,390,1440])for(const them
   current=fixture({archive:true});await page.reload();await page.waitForFunction(()=>window.ready);await click('settings');await page.getByRole('spinbutton',{name:t('generation'),exact:true}).fill('2');await page.getByRole('textbox',{name:t('handoffDigest'),exact:true}).fill('D'.repeat(43));await click('import');await page.getByRole('group',{name:t('confirm'),exact:true}).waitFor();assert.equal(current.calls.some(c=>c.name==='archive.import'),false);await click('confirm');await page.waitForFunction(()=>window.client.state.value.archiveStatus?.imported?.anchored===true);assert.equal(current.calls.some(c=>c.name==='conversations.rejoin'),false);await click('rejoin');await click('confirm');await page.waitForFunction(()=>window.client.state.value.archive?.rejoins===1);assert.equal(current.calls.filter(c=>c.name==='conversations.rejoin').length,1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  }finally{await page.close();}
 });
+// Owner direction 2026-10-28: the failed-classification tag filter and "Classify again", through the browser HTTP
+// allowlist, in both locales at phone and desktop widths.
+for(const locale of ['en','es'])for(const width of [320,1440])test(`${locale} ${width}px: failed classification filter and Classify again`,async()=>{
+ current=fixture();resetNext=false;const page=await browser.newPage({viewport:{width,height:900}}),errors=[];page.setDefaultTimeout(5000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});const t=key=>COPY[locale][key];
+ try{
+  await page.goto(origin+'/?locale='+locale);await page.waitForFunction(()=>window.ready);await page.getByRole('button',{name:t('views'),exact:true}).click();
+  await page.getByRole('button',{name:t('classificationFailedFilter'),exact:true}).click();await page.getByRole('heading',{name:'Failed item item-1',exact:true}).waitFor();
+  assert.match(await page.locator('main').innerText(),new RegExp(t('failure_deadline')));
+  const again=page.getByRole('button',{name:t('classifyAgain'),exact:true});assert.equal(await again.isDisabled(),true,'nothing selected');
+  await page.locator('[data-select="item-1"] input').check();await page.waitForFunction(()=>window.client.state.value.selected.length===1);assert.equal(await again.isDisabled(),false);
+  await again.click();await page.getByRole('status').filter({hasText:t('classify-requested')}).waitFor();
+  assert.deepEqual(current.calls.filter(c=>c.name==='classify.retry').map(c=>c.input),[{ids:['item-1']}]);assert.equal(await page.getByRole('heading',{name:'Failed item item-1',exact:true}).count(),0);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(errors,[]);
+ }catch(error){error.message+='\nBrowser errors: '+JSON.stringify(errors)+'\nDOM: '+(await page.locator('body').innerText()).slice(-1500);throw error;}finally{await page.close();}
+});

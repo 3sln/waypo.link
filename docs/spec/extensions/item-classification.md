@@ -113,9 +113,12 @@ A classifier refuses with `unsupported_item` any well-formed call outside its cu
 A classifier that lists `url` fetches like this:
 
 1. Exactly the given `href`, never a URL derived from it, from its response or from the item's content.
-2. Only from public addresses. It resolves the host and refuses if any address is loopback, private, link-local, shared (CGNAT), multicast, reserved or documentation space, or the IPv6 equivalent (including IPv4-mapped addresses).
-3. One `GET` with no request body, no credentials, cookies, `Authorization` or `Referer`, and no redirects: any 3xx response is a failure, whatever its target. It MAY retry the same `GET` within the time bound.
-4. Bounded: it reads at most `size` bytes and fails when the body is longer or shorter, or `Content-Length` disagrees with `size`; the whole fetch ends within 30 seconds and no later than `expiresAt`.
+2. Only from public addresses. It refuses if any address the host resolves to is loopback, private, link-local, site-local, shared (CGNAT), multicast, reserved, discard-only, documentation (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32, 3fff::/20) or another special-purpose address, or the IPv6 equivalent. It judges the address's bytes, not its spelling: every valid text form of an address is the same address, and an IPv6 address that carries an IPv4 address (IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) is refused when the IPv4 address is. It refuses the deprecated IPv4-compatible block `::/96` and anything it cannot parse as an address.
+   - The address it checks MUST be the address it connects to, on every connection attempt, retries included. Resolving the name to check it and then letting the transport resolve the name again is not enough, because a short-lived DNS answer can change in between (DNS rebinding). A classifier checks inside its transport's own address lookup or connect step, and connects only to the address it checked.
+   - A runtime that cannot check the address it actually connects to (no resolver or connect hook) MUST NOT list `url` in `capabilities`, unless it relies on a platform control that refuses non-public destinations and that it has verified for that platform; it names that control in its documentation.
+   - The 3sln.me built-in classifier accepts no URLs: its only input is `inline`.
+3. One `GET` with no request body, no credentials, cookies, `Authorization` or `Referer`, and no redirects: any 3xx response is a failure, whatever its target. It MAY retry the same `GET` within the time bound; each retry is a new connection attempt under rule 2.
+4. Bounded: it reads at most `size` bytes and fails when the body is longer or shorter, or `Content-Length` disagrees with `size`; the whole fetch ends within 30 seconds and no later than `expiresAt`. It holds only the bytes actually received, with a running cap at `size`; it does not reserve `size` bytes before the body arrives.
 5. Only status 200 counts. It treats the bytes as `item.mediaType` and MUST NOT pick a different decoder from the response's `Content-Type`.
 6. Once it has returned its answer for the call, it never fetches the URL again.
 
@@ -160,7 +163,8 @@ The fragment uses only the [protocol §3](../protocol.md#3-fragments-and-prefere
 
 1. Each classifier field has its own detail field, because what an owner is willing to share depends on who runs the classifier, and the per-kind classifiers can be different parties (an owner's own classifier for text, a third-party service for images).
 2. An app MUST build each call under the detail value of the field whose resource it calls, and sets `detail` to that value. An absent or unrecognized value, or a detail field the app was not granted, means `minimal`.
-3. An app MUST NOT send tags beyond that level and SHOULD send only tags that help classification. The classifier refuses a call whose tags exceed `detail` (§3 rule 1), as a backstop.
+3. An app MUST NOT send tags beyond that level and SHOULD send only tags that help classification. The classifier refuses a call whose tags exceed `detail` (§3 rule 1), as a backstop against mistakes.
+4. Enforcing the detail level is the app's obligation. The classifier sees only the `detail` the app declares and cannot tell what the owner allowed, and an app can put any data in the item itself. The check in rule 3 catches an app's mistakes; it is not a boundary against an app that means to send more than the owner allowed. An owner limits what an app can disclose by which apps they grant and which classifiers they assign.
 
 ### 8.3 Selection
 
@@ -175,6 +179,9 @@ For an item of kind K, an app reads the fragment's values once for the operation
 
 1. An item the app meant to classify that ends without a score is **unscored**. The app records that state, with the reason, and MUST NOT treat an unscored item as one that was checked and found clean. What an unscored item means for delivery is the app's policy; it SHOULD be the conservative choice for that app.
 2. When no candidate exists for a kind, or every candidate refused the item for its capabilities or with `unsupported_item`, the app tells the owner, naming the kind (and media type where useful), so the owner can choose another classifier. A transient failure is not such a gap.
+3. An app SHOULD let the owner find its unscored items (for example by a tag or filter) and MAY let the owner ask for them to be classified again. A re-request is a new classification: it is charged and metered like the first, and an app MUST NOT send an item again on its own after an ambiguous outcome (§8.3 rule 4). An app that holds items while they await classification SHOULD bound that wait and treat an item still waiting at the bound as unscored.
+
+> **Note (non-normative, provisional).** Parlay (owner direction 2026-10-28) marks an unscored item with its own "auto-classification failed" tag (`sys:classification-failed`), keeps the reason for display, runs its final rules on it, fails items still pending after 10 minutes the same way, and offers "Classify again" for selected failed items.
 
 ## 9. Retention and logging
 

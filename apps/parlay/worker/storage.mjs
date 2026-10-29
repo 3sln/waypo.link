@@ -1,11 +1,16 @@
 import {taskCleanupAt} from '../../../packages/messaging-engine/domains/outbox.mjs';
 import {OBLIGATION_STATES} from '../../../packages/messaging-protocol/index.mjs';
+import {CLASSIFY_PENDING} from '../../../packages/messaging-engine/store/item-index.mjs';
+import {CLASSIFICATION_DEADLINE_MS} from '../../../packages/messaging-engine/domains/classify.mjs';
 // Called INSIDE every mailbox transaction, including claim before egress. A killed drain therefore leaves both
 // its lease and its recovery alarm durable. Keep renewal and queue wakeups on the DO's single alarm.
 export async function nextWake(tx,now){
  const due=[],purge=await tx.get('shell:purge');if(purge?.at)due.push(Math.max(now+1,purge.at));for(const task of (await tx.list({prefix:'bb:send:task/'})).values()){if(!OBLIGATION_STATES[task.state]?.final)due.push(Math.max(now+1,task.nextAttemptAt??now,task.lease?.until??0));const cleanup=taskCleanupAt(task);if(cleanup!==null)due.push(Math.max(now+1,cleanup));}
  if(await tx.get('shell:archive-enabled')&&(await tx.get('shell:authorization'))?.active&&!(await tx.get('archive/hold'))){const state=await tx.get('archive/state');if(!state?.fenced)due.push(Math.max(now+1,await tx.get('shell:archive-retry')??0,(state?.lastCheckpointAt??await tx.get('shell:archive-started')??now)+15*60000));}
  const renewal=await tx.get('shell:renewal');if(renewal?.at)due.push(Math.max(now+1,renewal.at));
+ // Auto-classification (owner direction 2026-10-28, review M2): an unclaimed pending item wakes the alarm to classify it
+ // (classify.item claims it, so this never spins); a claimed one wakes it at its deadline for the sweep.
+ for(const row of (await tx.list({prefix:CLASSIFY_PENDING,limit:1000})).values())due.push(Math.max(now+1,row?.claimed===undefined?now:(Number.isSafeInteger(row?.since)?row.since:now)+CLASSIFICATION_DEADLINE_MS));
  if((await tx.list({prefix:'edge-outbox/'})).size||(await tx.list({prefix:'conv-edge-outbox/'})).size)due.push(now+60000);
  if((await tx.get('shell:authorization'))?.active){
   for(const row of (await tx.list({prefix:'conv/work/'})).values())due.push(Math.max(now+1,row.nextAt??now));

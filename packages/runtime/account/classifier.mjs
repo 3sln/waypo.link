@@ -13,7 +13,7 @@ import {ownerFlags} from './flags.mjs';
 // Order of a `classify` call: validate and check capabilities (invalid_args, unsupported_item) -> configuration -> paid
 // gate (forbidden) -> the shared AI allowance (account month, 50% app share, minute cap) in one transaction (rate_limited with Retry-After;
 // counters only) -> covered work admission -> FIRST EFFECT: the spend lease on the shared `ai` ledger -> model ->
-// entitlement recheck. Everything from the lease on runs under afterEffect: a refusal there is `indeterminate`, never a
+// entitlement recheck. A refused admission or lease credits the allowance debit back (review M1). Everything from the lease on runs under afterEffect: a refusal there is `indeterminate`, never a
 // no-effect code (review M2). Nothing content-bearing is written anywhere; the federation journal keeps no result and
 // fingerprints non-retained requests with a per-owner key (review L3).
 import fragment from '../../../docs/artefacts/fragments/item-classification-v1.json' with {type:'json'};
@@ -24,7 +24,7 @@ import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {SemanticBudgetError} from '../semantic-budget.mjs';
 import {SEMANTIC_LAYOUT,semanticShard} from '../semantic-routing.mjs';
 import {validateClassifyArgs,validateCapabilitiesArgs,validateCapabilities,refuseUnsupported,afterEffect} from '../../sdk/src/item-classification.mjs';
-import {AI_PLANS,aiLimits,reserveAIAllowance,retryAfter} from '../ai-allowance.mjs';
+import {AI_PLANS,aiLimits,reserveAIAllowance,releaseAIAllowance,retryAfter} from '../ai-allowance.mjs';
 import {CLASSIFIER_LIMITS,CLASSIFIER_MODEL,CLASSIFIER_COST,classifierCostMicroUSD,workersAIClassifierModel} from './classifier-models.mjs';
 export {CLASSIFIER_LIMITS,CLASSIFIER_MODEL,CLASSIFIER_COST,classifierCostMicroUSD};
 
@@ -103,6 +103,10 @@ export class ClassifierDescriptors extends AppQuery {
  static operation='classifier.descriptors';static deps=['config','accountStore','ai'];
  async fetch({config,accountStore,ai}){
   enabled(config,this.actor);const owner=await actorOwner(this.actor,accountStore);if(ai.configured!==true)return [];
+  // Review L3: an account without a classifier plan is not offered the built-in, so its owner cannot assign a classifier
+  // that would only refuse (forbidden). An owner who assigned it and later lost the plan sees its items fail visibly in
+  // the consuming app (Parlay: the failure tag, reason `unavailable`), never silently.
+  if(!await ai.plan(owner))return [];
   return [{id:classifierResource(config,owner),label:CLASSIFIER_LABEL,provider:'bindle',contracts:{[CLASSIFIER_CONTRACT]:[...CLASSIFIER_METHODS]},generation:'v1',limits:descriptorLimits()}];
  }
 }
@@ -127,11 +131,20 @@ export class ClassifierClassify extends AppAction {
   if(ai.configured!==true)fail('temporarily_unavailable','Classifier is not configured.',503);
   const {request,microUSD}=ai.prepare(args),plan=await ai.plan(owner);
   if(!plan)fail('forbidden','Classification needs a current paid plan.',403);
-  await reserveAIAllowance(accountStore,{now:clock.now(),plan,service:'classify',clientId:this.actor.clientId??'@owner',microUSD});
-  if(await ai.admitWork(owner,this.actor.clientId)!==true)fail('rate_limited','Activity allowance is exhausted.',429);
+  const debit={now:clock.now(),service:'classify',clientId:this.actor.clientId??'@owner',microUSD};
+  await reserveAIAllowance(accountStore,{...debit,plan});
+  // Review M1: the allowance debit stands only once work admission and the ledger lease are granted. A refusal between
+  // the debit and the lease claims no effect, so it credits the debit back first.
+  const refuse=async(...args)=>{await releaseAIAllowance(accountStore,debit);fail(...args);};
+  let admitted;try{admitted=await ai.admitWork(owner,this.actor.clientId);}catch(error){await releaseAIAllowance(accountStore,debit);throw error;}
+  if(admitted!==true)await refuse('rate_limited','Activity allowance is exhausted.',429);
   // First effect: the money lease. A refused lease spent nothing (rate_limited, so an app may fail over); from a granted
-  // lease on, no refusal may claim that nothing happened.
-  try{await ai.reserve(owner,microUSD);}catch(error){if(error instanceof SemanticBudgetError)fail('rate_limited','The classifier service budget is exhausted for now.',429,{retryAfter:retryAfter(clock.now(),'day')});throw error;}
+  // lease on, no refusal may claim that nothing happened, and the allowance stays charged.
+  try{await ai.reserve(owner,microUSD);}catch(error){
+   if(error instanceof SemanticBudgetError)await refuse('rate_limited','The classifier service budget is exhausted for now.',429,{retryAfter:retryAfter(clock.now(),'day')});
+   if(error?.code==='invalid_args')await releaseAIAllowance(accountStore,debit);
+   throw error;
+  }
   return afterEffect(async()=>{
    if(!await ai.plan(owner))fail('forbidden','Classifier entitlement changed.',403);
    let value;try{value=await ai.run(request);}catch{fail('indeterminate','Classifier outcome is unknown; the allowance remains charged.',503);}

@@ -54,3 +54,22 @@ test('classification status: gaps in settings, a pending marker per item and a s
  // A failing status call leaves the last value and never breaks a load.
  c.mailbox.run=(orig=>async(name,args)=>{if(name==='classify.status')throw new Error('down');return orig(name,args);})(c.mailbox.run.bind(c.mailbox));await c.run('load');assert.equal((await c.read()).classification.pending.slow,1);
 });
+
+// Owner direction 2026-10-28: failed items are found with a tag filter and re-requested with "Classify again" (en+es).
+test('classification failed: a tag filter lists failed items with their reason; Classify again re-requests the selection',async t=>{
+ const {webView}=await import('../../../apps/parlay/web/ui/app.mjs');const html=state=>JSON.stringify(webView(state,()=>{}));
+ const c=make(t);await c.run('load');await c.run('navigate',{section:'views'});let s=await c.read();assert.ok(html(s).includes('Classification failed'),'the filter is offered');
+ await c.run('navigate',{view:{id:'classification-failed',failed:true}});s=await c.read();
+ assert.deepEqual(c.calls.filter(x=>x.name==='incoming.query').at(-1).input,{filter:{version:1,tagsAll:['sys:classification-failed']},sort:'activity-desc',limit:PAGE_SIZE},'an ad-hoc tag filter, never a stored View');
+ assert.deepEqual(s.items.map(i=>i.id),['item-1','item-2']);assert.ok(html(s).includes('classification took too long'));assert.ok(html(s).includes('the classification allowance was used up'));
+ // Nothing selected: the action is disabled and sends nothing.
+ const before=c.calls.length;await c.run('classifyAgain');assert.equal(c.calls.length,before);
+ await c.run('select',{id:'item-1',on:true});await c.run('select',{id:'not-listed',on:true});assert.deepEqual((await c.read()).selected,['item-1'],'only listed items can be selected');
+ await c.run('classifyAgain');s=await c.read();assert.deepEqual(c.calls.find(x=>x.name==='classify.retry').input,{ids:['item-1']});
+ assert.equal(s.notice,'classify-requested');assert.deepEqual(s.selected,[]);assert.deepEqual(s.items.map(i=>i.id),['item-2'],'the refreshed filter no longer lists it');
+ // The allowance refusal is explained; Spanish copy.
+ c.retryAllowance.left=0;await c.run('select',{id:'item-2',on:true});await c.run('classifyAgain');s=await c.read();assert.equal(s.notice,'classify-allowance');assert.ok(html(s).includes('allowance for today is used up'));
+ await c.run('locale',{locale:'es'});s=await c.read();assert.ok(html(s).includes('Clasificar de nuevo'));assert.ok(html(s).includes('Se agotó tu cupo de clasificación de hoy'));assert.ok(html(s).includes('Clasificación fallida'));
+ // The operation is on the browser allowlist; classify.item stays host-only.
+ const {WEB_OPERATIONS}=await import('../../../apps/parlay/web/providers/mailbox.mjs');assert.ok(WEB_OPERATIONS.includes('classify.retry'));assert.equal(WEB_OPERATIONS.includes('classify.item'),false);assert.equal(WEB_OPERATIONS.includes('classify.sweep'),false);
+});

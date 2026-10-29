@@ -123,6 +123,25 @@ test('after the first effect no refusal claims no effect; a refused lease spent 
  const lost=await fixture(t,{lease:()=>{throw new Error('transport');}});await assert.rejects(lost.classify(),{code:'indeterminate'});
 });
 
+test('review M1: a refused work admission or ledger lease leaves the AI allowance counters as they were',async t=>{
+ const usage=async f=>{const keys=[...(await f.metadata.list({prefix:'ai/usage/v1'})).entries()];return JSON.stringify(keys);};
+ // A prior granted call leaves counters; each refusal afterwards changes none of them.
+ for(const options of [{work:false},{lease:()=>{throw new SemanticBudgetError();}}]){
+  let refuse=false;const f=await fixture(t,{...options.work===false?{ai:{admitWork:async()=>!refuse}}:{},...options.lease?{lease:input=>{if(refuse)return options.lease(input);return {owner:input.owner,partition:input.partition,layoutVersion:SEMANTIC_LAYOUT.version,day:new Date(f.clock.now()).toISOString().slice(0,10),month:new Date(f.clock.now()).toISOString().slice(0,7),microUSD:input.microUSD,upsertSlots:0,ledger:'ai'};}}:{}});
+  await f.classify();const before=await usage(f),row=await f.metadata.get('ai/usage/v1');assert.equal(row.services.classify.calls,1);assert.ok(row.monthlyMicroUSD>0);
+  refuse=true;
+  for(let i=0;i<20;i++)await assert.rejects(f.classify(),{code:'rate_limited'});
+  assert.equal(await usage(f),before,'twenty refusals debit nothing');
+  // The minute cap is not consumed by refusals either: the next granted calls still fit.
+  refuse=false;for(let i=1;i<X.CLASSIFIER_PLAN_LIMITS.paid.minuteCalls;i++)await f.classify();
+ }
+ // An empty account: a refusal before the lease writes no debit at all (or credits it back to zero).
+ const empty=await fixture(t,{lease:()=>{throw new SemanticBudgetError();}});await assert.rejects(empty.classify(),{code:'rate_limited'});
+ const row=await empty.metadata.get('ai/usage/v1');assert.equal(row?.monthlyMicroUSD??0,0);assert.equal(row?.services?.classify?.calls??0,0);
+ // A granted lease keeps the debit even when the model then fails (the money may be spent).
+ const failing=await fixture(t,{run:()=>{throw new Error('upstream');}});await assert.rejects(failing.classify(),{code:'indeterminate'});assert.ok((await failing.metadata.get('ai/usage/v1')).monthlyMicroUSD>0);
+});
+
 test('cost: every argument set within the capabilities stays under the per-call ceiling (worst case and seeded)',async()=>{
  const caps={configured:true,mediaTypes:['text/plain']},now=Date.UTC(2026,9,28);
  const worst=(text,description)=>X.classificationArgs({detail:'full',item:{kind:'text',mediaType:'text/plain',size:enc.encode(text).length,data:encodeBase64url(enc.encode(text))},tags:{language:'en-GB-oxendict',source:'s'.repeat(32),origin:'a'.repeat(60)+'.'+'b'.repeat(60)+'.'+'c'.repeat(60)+'.example',context:Array.from({length:16},(_,i)=>String(i).padEnd(64,'z'))},labels:Array.from({length:6},(_,i)=>({id:String(i).padEnd(64,'x'),description}))},{now,ai:caps});
@@ -195,6 +214,8 @@ test('discovery: descriptors list both methods, the manifest lists the contract 
  assert.deepEqual(federationSchemas(f.config)[X.CLASSIFIER_FRAGMENT],X.CLASSIFIER_FRAGMENT_DOCUMENT);assert.deepEqual(configuredArtefactDocuments(f.config)[X.CLASSIFIER_CONTRACT],X.CLASSIFIER_CONTRACT_DOCUMENT);
  const url=new URL(`/api/incremental/schema?fragment=${encodeURIComponent(X.CLASSIFIER_FRAGMENT)}`,ORIGIN),response=await incrementalRoutes.public({request:new Request(url),env:{...f.config,INCREMENTAL_AUTH_ENABLED:'true',INCREMENTAL_AUTHORIZATION:{mounted:true}},path:url.pathname,url});assert.equal(response.status,200);assert.deepEqual((await response.json()).schema,X.CLASSIFIER_FRAGMENT_DOCUMENT);
  const unavailable=await fixture(t,{ai:{version:undefined}});assert.deepEqual(await unavailable.read(X.ClassifierDescriptors,system),[]);
+ // Review L3: a free (or plan-less) account is not offered the built-in at all; upgrading lists it.
+ for(const plan of ['free',null]){f.plan(plan);assert.deepEqual(await snapshot(),[],String(plan));}f.plan('paid');assert.equal((await snapshot()).length,1);
  assert.equal(X.classifierOffered({AI:{run(){}},SEMANTIC_SPEND:{authorityFor(){}},CLASSIFIER_MODEL_VERSION:VERSION}),true);assert.equal(X.classifierOffered({AI:{run(){}}}),false);
  assert.equal(workersAIClassifierModel(undefined).configured,false);assert.deepEqual(workersAIClassifierModel({run(){}}).mediaTypes,['text/plain']);
  const status=await f.read(X.ClassifierStatus,system);assert.equal(status.plan,'paid');assert.deepEqual(status.limits,X.CLASSIFIER_PLAN_LIMITS.paid);

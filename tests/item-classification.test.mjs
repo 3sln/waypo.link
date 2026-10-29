@@ -8,7 +8,9 @@ import {readFile} from 'node:fs/promises';
 import contract from '../docs/artefacts/item-classification-v1.json' with {type:'json'};
 import fragment from '../docs/artefacts/fragments/item-classification-v1.json' with {type:'json'};
 import * as C from '../packages/sdk/src/item-classification.mjs';
-import {fetchPresignedItem,nonPublicAddress} from '../packages/sdk/src/item-classification-fetch.mjs';
+import {fetchPresignedItem,nonPublicAddress,parseAddress,CHECKS_CONNECTED_ADDRESS} from '../packages/sdk/src/item-classification-fetch.mjs';
+import {nodeGuardedFetch,guardedLookup} from '../packages/sdk/node/item-classification-fetch-node.mjs';
+import http from 'node:http';
 import {classifierDouble,presignedFetchDouble,classifierPort,TEXT_CAPABILITIES} from './helpers/classifier-double.mjs';
 import {fragmentOutcome} from '../packages/core/fragments.mjs';
 import {contractMethods} from '../packages/core/contract-methods.mjs';
@@ -45,8 +47,8 @@ test('artefacts: the contract compiles in the shipped dialect, the fragment is v
  assert.equal(Object.keys(fragment.fields).length,12);assert.equal(fragment.fields.other,undefined,'other has no field of its own: the fallback serves it');
  const parlay=JSON.parse(await readFile(new URL('../apps/parlay/integration.json',import.meta.url))).setup.fragments.find(f=>f.fragment===fragment.id);
  assert.equal(parlay.digest,'sha256-'+await digest(crypto,canonical(fragment)));
- // The withdrawn 3sln.me fragment stays resolvable and listed as withdrawn (append-only).
- const withdrawn=publicFragments.find(f=>f.name==='item-classifier');assert.equal(withdrawn.status,'withdrawn');assert.ok(JSON.parse(await readFile(new URL('../'+withdrawn.source,import.meta.url))).id);
+ // The former 3sln.me item-classifier fragment is removed, not kept resolvable (owner direction 2026-10-28).
+ assert.equal(publicFragments.find(f=>f.name==='item-classifier'),undefined);
 });
 
 test('the shared fragment and contract ship behind the flags; the manifest lists the contract only while the paid built-in is offered',()=>{
@@ -109,7 +111,6 @@ test('presigned URLs: https only, no credentials, fragment, port or IP literal, 
  invalid(()=>v(HREF,NOW));invalid(()=>v(HREF,NOW-1));invalid(()=>v(HREF,NOW+C.LIMITS.urlLifetimeMs+1));assert.ok(v(HREF,NOW+C.LIMITS.urlLifetimeMs));invalid(()=>v(HREF,'soon'));
  invalid(()=>v(HREF,NOW+1000,0));invalid(()=>v(HREF,NOW+1000,C.LIMITS.urlBytes+1));assert.equal(v(HREF,NOW+1000,C.LIMITS.urlBytes).item.size,C.LIMITS.urlBytes);
  invalid(()=>C.validateClassifyArgs(byURL({},{url:{href:HREF,expiresAt:NOW+1000,headers:{}}}),{now:NOW}));
- assert.equal(nonPublicAddress('203.0.113.10'),false);for(const a of ['127.0.0.1','10.1.2.3','172.16.0.1','192.168.1.1','169.254.169.254','100.64.0.1','0.0.0.0','::1','fd00::1','fe80::1','::ffff:10.0.0.1','224.0.0.1'])assert.equal(nonPublicAddress(a),true,a);
 });
 
 test('presigned fetch: one GET of exactly the URL, no redirects or credentials, bounded by size and expiry; failures are item_unavailable',async()=>{
@@ -125,10 +126,10 @@ test('presigned fetch: one GET of exactly the URL, no redirects or credentials, 
  ];
  for(const [name,objects] of cases){net=presignedFetchDouble(objects);d=classifierDouble({fetch:net.fetch});await assert.rejects(d.classify(byURL()),{code:'item_unavailable'},name);}
  // A host that resolves to a non-public address is never contacted.
- net=presignedFetchDouble(ok);d=classifierDouble({fetch:net.fetch,checkHost:async()=>['203.0.113.10','10.0.0.5']});await assert.rejects(d.classify(byURL()),{code:'item_unavailable'});assert.equal(net.requests.length,0);
+ net=presignedFetchDouble(ok);d=classifierDouble({fetch:net.fetch,checkHost:async()=>['8.8.8.8','10.0.0.5']});await assert.rejects(d.classify(byURL()),{code:'item_unavailable'});assert.equal(net.requests.length,0);
  net=presignedFetchDouble(ok);d=classifierDouble({fetch:net.fetch,checkHost:async()=>{throw new Error('nxdomain');}});await assert.rejects(d.classify(byURL()),{code:'item_unavailable'});assert.equal(net.requests.length,0);
  // Expired between validation and fetch: refused without a request.
- let clock=NOW;net=presignedFetchDouble(ok);const expiring=classifierDouble({fetch:net.fetch,now:()=>clock,checkHost:async()=>{clock=NOW+400000;return ['203.0.113.10'];}});
+ let clock=NOW;net=presignedFetchDouble(ok);const expiring=classifierDouble({fetch:net.fetch,now:()=>clock,checkHost:async()=>{clock=NOW+400000;return ['8.8.8.8'];}});
  await assert.rejects(expiring.classify(byURL()),{code:'item_unavailable'});assert.equal(net.requests.length,0);
  // A declared size over the classifier's own limit is unsupported_item, before any fetch.
  net=presignedFetchDouble(ok);d=classifierDouble({fetch:net.fetch,capabilities:{kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['url'],maxBytes:10}],maxLabels:16}});await assert.rejects(d.classify(byURL()),{code:'unsupported_item'});assert.equal(net.requests.length,0);
@@ -136,8 +137,77 @@ test('presigned fetch: one GET of exactly the URL, no redirects or credentials, 
  await assert.rejects(classifierDouble({capabilities:{kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:100}],maxLabels:16}}).classify(byURL()),{code:'unsupported_item'});
  await assert.rejects(classifierDouble({fetch:net.fetch,capabilities:{kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['url'],maxBytes:100}],maxLabels:16}}).classify(inline()),{code:'unsupported_item'});
  // The deadline never exceeds the URL's remaining validity or the 30 s bound.
- let aborted=false;const slow=async(href,init)=>new Promise((_,reject)=>init.signal.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));}));
- await assert.rejects(fetchPresignedItem({mediaType:'text/plain',size:19,url:{href:HREF,expiresAt:Date.now()+50}},{fetch:slow,checkHost:async()=>['203.0.113.10'],now:Date.now}),{code:'item_unavailable'});assert.equal(aborted,true);
+ let aborted=false;const slow=Object.assign(async(href,init)=>new Promise((_,reject)=>init.signal.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));})),{[CHECKS_CONNECTED_ADDRESS]:true});
+ await assert.rejects(fetchPresignedItem({mediaType:'text/plain',size:19,url:{href:HREF,expiresAt:Date.now()+50}},{fetch:slow,checkHost:async()=>['8.8.8.8'],now:Date.now}),{code:'item_unavailable'});assert.equal(aborted,true);
+});
+
+// Review M3: the address check works on bytes, so every valid spelling of a non-public address is refused (spec §5.2.2).
+const NON_PUBLIC=[
+ // IPv4: this network, private, CGNAT, loopback, link-local, IETF protocol assignments, documentation (TEST-NET-1/2/3),
+ // 6to4 relay anycast, benchmarking, multicast, reserved and broadcast.
+ '0.0.0.0','0.1.2.3','10.1.2.3','100.64.0.1','100.127.255.255','127.0.0.1','127.255.255.254','169.254.169.254','172.16.0.1','172.31.255.255','192.0.0.8','192.0.2.1','192.88.99.1','192.168.1.1','198.18.0.1','198.19.255.255','198.51.100.1','203.0.113.10','224.0.0.1','239.255.255.250','240.0.0.1','255.255.255.255',
+ // IPv6: unspecified and loopback in every spelling.
+ '::','::1','0:0:0:0:0:0:0:1','0000::1','0000:0000:0000:0000:0000:0000:0000:0001','[::1]','::0:1',
+ // IPv4-mapped, hex and dotted; IPv4-compatible (deprecated ::/96, refused outright).
+ '::ffff:127.0.0.1','::ffff:7f00:1','::FFFF:7F00:0001','0:0:0:0:0:ffff:7f00:1','::ffff:10.0.0.1','::ffff:a9fe:a9fe','::ffff:203.0.113.10','::127.0.0.1','::7f00:1','::8.8.8.8',
+ // NAT64 well-known prefix wrapping non-public IPv4, the local-use NAT64 prefix, 6to4 wrapping non-public IPv4.
+ '64:ff9b::7f00:1','64:ff9b::10.0.0.1','64:ff9b:1::1','64:ff9b:1::8.8.8.8','2002:7f00:1::','2002:a00:1::1','2002:c0a8:101::1',
+ // Unique local, link-local, site-local, multicast, discard, IETF protocol assignments (Teredo), documentation, SRv6.
+ 'fc00::1','fd00::1','fe80::1','febf::1','fec0::1','feff::1','ff02::1','ff0e::1','100::1','100::ffff:ffff:ffff:ffff','2001::1','2001:0:4136:e378:8000:63bf:3fff:fdd2','2001:1ff::1','2001:db8::1','2001:0db8:85a3::8a2e:370:7334','3fff::1','5f00::1',
+ // Not an address at all, or not a usable one: refused.
+ '','localhost','objects.example','1.2.3','1.2.3.4.5','01.2.3.4','256.1.1.1','1.2.3.04',' 8.8.8.8','fe80::1%en0','1::2::3',':::','1:2:3:4:5:6:7:8:9','1:2:3:4:5:6:7::8:9','12345::1','::ffff:999.0.0.1','::ffff:1.2.3',
+];
+const PUBLIC=['8.8.8.8','1.1.1.1','93.184.216.34','100.63.255.255','100.128.0.1','172.15.255.255','172.32.0.1','192.0.1.1','192.88.98.1','198.17.255.255','198.20.0.1','198.51.99.1','203.0.112.1','223.255.255.255','2606:4700::1111','2606:4700:4700::1001','2a00:1450:4001:80b::200e','::ffff:8.8.8.8','::ffff:808:808','64:ff9b::8.8.8.8','64:ff9b::808:808','2002:808:808::1','2001:200::1','2001:db7::1','2001:db9::1','3ffe::1','2400:cb00::1'];
+test('address check (review M3): table-driven over every non-public range and spelling, and genuinely public addresses',()=>{
+ for(const a of NON_PUBLIC)assert.equal(nonPublicAddress(a),true,`non-public: ${JSON.stringify(a)}`);
+ for(const a of PUBLIC)assert.equal(nonPublicAddress(a),false,`public: ${a}`);
+ assert.deepEqual([...parseAddress('::ffff:127.0.0.1')],[...parseAddress('::ffff:7f00:1')]);assert.deepEqual([...parseAddress('0:0:0:0:0:0:0:1')],[...parseAddress('::1')]);
+ assert.deepEqual([...parseAddress('1:2:3:4:5:6:7:8')],[0,1,0,2,0,3,0,4,0,5,0,6,0,7,0,8]);assert.deepEqual([...parseAddress('1:2:3:4:5:6:7::')].slice(-2),[0,0],'`::` may stand for one group (RFC 4291)');assert.equal(parseAddress('1:2:3:4:5:6:7:8::'),null,'`::` must stand for at least one group');
+ for(const a of [null,undefined,42,{}])assert.equal(nonPublicAddress(a),true);
+});
+
+test('presigned fetch: the transport must check the connected address (review M4); a name-only pre-check is not enough',async()=>{
+ const item={mediaType:'text/plain',size:5,url:{href:HREF,expiresAt:NOW+300000}};
+ const unchecked=async()=>new Response('hello');
+ await assert.rejects(fetchPresignedItem(item,{fetch:unchecked,checkHost:async()=>['8.8.8.8'],now:()=>NOW}),TypeError,'a plain fetch with only a name check is refused');
+ const checked=Object.assign(async()=>new Response('hello'),{[CHECKS_CONNECTED_ADDRESS]:true});
+ assert.equal(new TextDecoder().decode(await fetchPresignedItem(item,{fetch:checked,now:()=>NOW})),'hello','checkHost is optional once the transport checks at connect');
+});
+
+test('Node transport (review M4): the address checked is the address connected to, on every attempt; rebinding is refused',async()=>{
+ const seen=[];const server=http.createServer((req,res)=>{seen.push(req.socket.localAddress);res.writeHead(200,{'content-length':'5'});res.end('hello');});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
+ try{
+  // A stub resolver (no DNS): the first answer is the address the test treats as allowed, the second rebinds to ::1.
+  const answers=[[{address:'127.0.0.1',family:4}],[{address:'::1',family:6}],[{address:'127.0.0.1',family:4},{address:'::1',family:6}]];let lookups=0;
+  const resolve=(host,options,callback)=>{lookups++;callback(null,answers.shift());};
+  const fetch=nodeGuardedFetch({resolve,allowed:a=>a==='127.0.0.1'}),href=`http://bucket.objects.example:${port}/x`;
+  assert.equal(fetch[CHECKS_CONNECTED_ADDRESS],true);
+  const ok=await fetch(href,{headers:{Accept:'text/plain'}});assert.equal(ok.status,200);assert.equal(await new Response(ok.body).text(),'hello');assert.deepEqual(seen,['127.0.0.1'],'connected to exactly the checked address');
+  await assert.rejects(fetch(href),{code:'ENONPUBLIC'},'a retry that resolves to a refused address never connects');
+  await assert.rejects(fetch(href),{code:'ENONPUBLIC'},'any refused answer among several refuses the attempt');
+  assert.equal(lookups,3,'each attempt resolves and checks again; no connection is reused');assert.equal(seen.length,1);
+  // Default policy: loopback is non-public, so even the real server is never reached; an IP literal is checked too.
+  const strict=nodeGuardedFetch({resolve:(h,o,cb)=>cb(null,[{address:'127.0.0.1',family:4}])});
+  await assert.rejects(strict(href),{code:'ENONPUBLIC'});await assert.rejects(strict(`http://127.0.0.1:${port}/x`),{code:'ENONPUBLIC'});await assert.rejects(strict(`http://[::ffff:7f00:1]:${port}/x`),{code:'ENONPUBLIC'});
+  assert.equal(seen.length,1);
+  // A redirect is returned, never followed.
+  const redirecting=http.createServer((req,res)=>{res.writeHead(302,{location:`http://127.0.0.1:${port}/x`});res.end();});await new Promise(r=>redirecting.listen(0,'127.0.0.1',r));
+  try{const r=await nodeGuardedFetch({resolve:(h,o,cb)=>cb(null,[{address:'127.0.0.1',family:4}]),allowed:()=>true})(`http://r.objects.example:${redirecting.address().port}/`);assert.equal(r.status,302);assert.equal(r.body,null);assert.equal(seen.length,1);}
+  finally{await new Promise(r=>redirecting.close(r));}
+  // The lookup in the node:net signature, single and all.
+  const lookup=guardedLookup({resolve:(h,o,cb)=>cb(null,[{address:'8.8.8.8',family:4}])});
+  assert.deepEqual(await new Promise(r=>lookup('x.example',{},(e,a,f)=>r([e,a,f]))),[null,'8.8.8.8',4]);
+  assert.deepEqual(await new Promise(r=>lookup('x.example',{all:true},(e,a)=>r([e,a]))),[null,[{address:'8.8.8.8',family:4}]]);
+ }finally{await new Promise(r=>server.close(r));}
+});
+
+test('presigned fetch (review I5): memory follows the bytes received, never the declared size',async()=>{
+ let pulled=0;const huge=C.LIMITS.urlBytes;
+ const body=new ReadableStream({pull(controller){pulled++;controller.enqueue(new Uint8Array(1024));if(pulled>4)controller.enqueue(new Uint8Array(huge));}});
+ const fetch=Object.assign(async()=>new Response(body,{status:200}),{[CHECKS_CONNECTED_ADDRESS]:true});
+ await assert.rejects(fetchPresignedItem({mediaType:'text/plain',size:4096,url:{href:HREF,expiresAt:NOW+300000}},{fetch,now:()=>NOW}),{code:'item_unavailable'});
+ const source=(await readFile(new URL('../packages/sdk/src/item-classification-fetch.mjs',import.meta.url),'utf8'));assert.equal(/new Uint8Array\(item\.size\)/.test(source),false,'no allocation of the declared size up front');
 });
 
 test('post-effect rule: once fetched or charged, a classifier never answers a no-effect code',async()=>{
@@ -200,6 +270,12 @@ test('app side: more labels than a candidate takes are split across calls to it;
  let d=classifierDouble({capabilities:small,log:true}),port=classifierPort({values:{text:T,fallback:F},resources:{[T]:d,[F]:classifierDouble()}});
  let r=await C.classifyWithFallback(port,{values:{text:T,fallback:F},item,labels,now:NOW});
  assert.equal(r.status,'scored');assert.equal(r.calls,3);assert.deepEqual(d.calls.map(c=>c.labels.length),[2,2,1]);assert.deepEqual(Object.keys(r.result.scores),labels.map(l=>l.id));assert.equal(r.result.scores.invoice,.95);
+ // Review I2: a duplicate id that a split would put in two different chunks is refused for the whole set, before any call.
+ const dupe=[...labels,{id:'invoice',description:'again'}],before=d.counts.classify,dispatched=port.dispatches.length;
+ await assert.rejects(C.classifyWithFallback(port,{values:{text:T,fallback:F},item,labels:dupe,now:NOW}),{code:'invalid_args'});assert.equal(d.counts.classify,before);assert.equal(port.dispatches.length,dispatched,'nothing was dispatched');
+ await assert.rejects(C.classifyWithFallback(port,{values:{text:T,fallback:F},item,labels:[],now:NOW}),{code:'invalid_args'});
+ await assert.rejects(C.classifyWithFallback(port,{values:{text:T,fallback:F},item,labels:[...labels.slice(0,4),{id:'BAD',description:'x'}],now:NOW}),{code:'invalid_args'});
+ const many=Array.from({length:40},(_,i)=>({id:'k'+i,description:'d'}));assert.equal((await C.classifyWithFallback(classifierPort({values:{text:T},resources:{[T]:classifierDouble()}}),{values:{text:T},item,labels:many,now:NOW})).calls,3,'more than 16 labels are allowed when split');
  // The second part refused: the item already reached this classifier, so the fallback is not tried.
  let n=0;d=classifierDouble({capabilities:small,fail:m=>m==='classify'&&++n===2?'rate_limited':null});const fb=classifierDouble();port=classifierPort({values:{text:T,fallback:F},resources:{[T]:d,[F]:fb}});
  r=await C.classifyWithFallback(port,{values:{text:T,fallback:F},item,labels,now:NOW});assert.deepEqual([r.status,r.reason],['unscored','unavailable']);assert.equal(fb.counts.classify,0);

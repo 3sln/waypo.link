@@ -11,7 +11,12 @@ export const SYSTEM_PREFIX='sys:',SUSPECTED_PREFIX='sys:suspected.',TAG_MODEL=1,
 export const TAG_CATEGORIES=Object.freeze(['spam','social','promotional','recruitment','conversation','outreach','transactional','receipt','automation','verification','code']);
 const LABELS={spam:'Spam',social:'Social',promotional:'Promotional',recruitment:'Recruitment',conversation:'Conversation',outreach:'Outreach',transactional:'Transactional',receipt:'Receipt',automation:'Automation',verification:'Verification',code:'Security Code',personal:'Personal',work:'Work'};
 // Labels are English bab source text in packages/i18n/catalogues.mjs.
-export const SYSTEM_TAGS=Object.freeze(Object.fromEntries([...Object.entries(LABELS).map(([name,label])=>[SYSTEM_PREFIX+name,Object.freeze({id:SYSTEM_PREFIX+name,label,kind:'final'})]),...TAG_CATEGORIES.map(name=>[SUSPECTED_PREFIX+name,Object.freeze({id:SUSPECTED_PREFIX+name,label:'Suspected '+LABELS[name],kind:'suspected',final:SYSTEM_PREFIX+name})])]));
+export const SYSTEM_TAGS=(Object.fromEntries([...Object.entries(LABELS).map(([name,label])=>[SYSTEM_PREFIX+name,Object.freeze({id:SYSTEM_PREFIX+name,label,kind:'final'})]),...TAG_CATEGORIES.map(name=>[SUSPECTED_PREFIX+name,Object.freeze({id:SUSPECTED_PREFIX+name,label:'Suspected '+LABELS[name],kind:'suspected',final:SYSTEM_PREFIX+name})])]));
+// Owner direction 2026-10-28 (signed in session): an item whose auto-classification failed (allowance, deadline,
+// classifier unavailable, unknown outcome, invalid result, no longer eligible) carries this tag, set by the classifier
+// evidence path (recordAutomated) and visible to rules and tag filters. Its reason is kept in the classifier evidence.
+export const CLASSIFICATION_FAILED_TAG=SYSTEM_PREFIX+'classification-failed';
+SYSTEM_TAGS[CLASSIFICATION_FAILED_TAG]=Object.freeze({id:CLASSIFICATION_FAILED_TAG,label:'Auto-classification failed',kind:'status'});Object.freeze(SYSTEM_TAGS);
 export const systemTag=id=>typeof id==='string'&&Object.hasOwn(SYSTEM_TAGS,id)?SYSTEM_TAGS[id]:null;
 export const isSystemTag=id=>Boolean(systemTag(id));
 // Reserved look-alikes (case, fullwidth colon, invisible prefixes) can never be user tags.
@@ -100,12 +105,13 @@ export function stampRules(next,prior){
  return next.map(({default:_,revision:__,...rule})=>{const p=byId.get(rule.id);if(rule.id.startsWith('default:')&&!p?.default)fail('invalid_rules');return {...rule,revision:p?bodyOf(p)===bodyOf(rule)?p.revision??1:(p.revision??1)+1:1,...p?.default?{default:p.default}:{}};});
 }
 const plain=v=>v!==null&&typeof v==='object'&&Object.getPrototypeOf(v)===Object.prototype;
-/** Classifier/heuristic boundary input: registered suspected IDs only, with bounded evidence. `unscored` (classifier
- * only, item-classification §8.4) records that classification was wanted but produced no score, with a reason token. */
+/** Classifier/heuristic boundary input: registered suspected IDs only, with bounded evidence. `failed` with a reason
+ * (classifier only; item-classification §8.4 "unscored", owner direction 2026-10-28) records that classification was
+ * wanted but produced no score, and why; it carries CLASSIFICATION_FAILED_TAG. */
 export function normalizeAutomatedResult(input){
  const status=input?.status??'complete';
- if(plain(input)&&(input.reason!==undefined||status==='unscored')&&(input.source!=='classifier'||status!=='unscored'||typeof input.reason!=='string'||!/^[a-z_]{1,32}$/.test(input.reason)))fail('invalid_classification');
- if(!plain(input)||Object.keys(input).some(k=>!['source','status','model','version','schema','labels','reason'].includes(k))||!['classifier','heuristic'].includes(input.source)||!['complete','skipped','failed','unscored'].includes(status)||!boundedString(input.version,64)||input.model!==undefined&&!boundedString(input.model,100)||input.schema!==undefined&&!boundedString(input.schema,128)||!Array.isArray(input.labels)||input.labels.length>TAG_CATEGORIES.length||status!=='complete'&&input.labels.length)fail('invalid_classification');
+ if(plain(input)&&(input.reason!==undefined||status==='failed')&&(input.source!=='classifier'||status!=='failed'||typeof input.reason!=='string'||!/^[a-z_]{1,32}$/.test(input.reason)))fail('invalid_classification');
+ if(!plain(input)||Object.keys(input).some(k=>!['source','status','model','version','schema','labels','reason'].includes(k))||!['classifier','heuristic'].includes(input.source)||!['complete','skipped','failed'].includes(status)||!boundedString(input.version,64)||input.model!==undefined&&!boundedString(input.model,100)||input.schema!==undefined&&!boundedString(input.schema,128)||!Array.isArray(input.labels)||input.labels.length>TAG_CATEGORIES.length||status!=='complete'&&input.labels.length)fail('invalid_classification');
  const labels=input.labels.map(l=>{if(!plain(l)||Object.keys(l).some(k=>!['tag','probability'].includes(k))||!isSuspectedTag(l.tag)||l.probability!==undefined&&!(Number.isFinite(l.probability)&&l.probability>=0&&l.probability<=1))fail('invalid_classification');return {tag:l.tag,...l.probability!==undefined?{probability:l.probability}:{}};});
  if(new Set(labels.map(l=>l.tag)).size!==labels.length)fail('invalid_classification');
  return {source:input.source,status,...input.model!==undefined?{model:input.model}:{},version:input.version,...input.schema!==undefined?{schema:input.schema}:{},...input.reason!==undefined?{reason:input.reason}:{},labels};
@@ -134,7 +140,19 @@ export function recordAutomated(m,input,now){
   newly.push(tag);m.automated={...m.automated,[tag]:{...prior,[source]:evidence}};
   if(!prior&&!m.tagSuppressed?.includes(tag))addTag(m,tag,{source,...evidence},now);
  }
+ // The failure tag follows the classifier's latest outcome: a failure sets it (rules see it as automated evidence), a
+ // completed classification clears it. An owner who removed it suppresses it, as with any automated tag.
+ if(source==='classifier'&&result.status==='failed'){
+  const evidence={version,reason:result.reason,at:now};m.automated={...m.automated,[CLASSIFICATION_FAILED_TAG]:{classifier:evidence}};newly.push(CLASSIFICATION_FAILED_TAG);
+  if(!m.tagSuppressed?.includes(CLASSIFICATION_FAILED_TAG)&&!addTag(m,CLASSIFICATION_FAILED_TAG,{source,...evidence},now)&&m.tagProvenance?.[CLASSIFICATION_FAILED_TAG]?.source===source)m.tagProvenance={...m.tagProvenance,[CLASSIFICATION_FAILED_TAG]:{source,...evidence}};
+ }else if(source==='classifier'&&result.status==='complete')clearClassificationFailure(m,now);
  return newly;
+}
+/** Removes the failure tag and its evidence (a completed classification, or an owner re-request). */
+export function clearClassificationFailure(m,now){
+ if(m.automated?.[CLASSIFICATION_FAILED_TAG]){const {[CLASSIFICATION_FAILED_TAG]:_,...rest}=m.automated;m.automated=rest;}
+ if(m.tagProvenance?.[CLASSIFICATION_FAILED_TAG]?.source==='classifier')removeTag(m,CLASSIFICATION_FAILED_TAG,{source:'classifier'},now);
+ return m;
 }
 export async function applyAutomatedTags(tx,item,input,now){
  const m=organizationOf(item),newly=recordAutomated(m,input,now);if(newly===null)return m;

@@ -49,38 +49,10 @@
     ]
   },
   {
-    "id": "https://3sln.me/artefacts/conversation-v1.json",
-    "kind": "submission-schema",
-    "versions": [
-      "sha256-4e1k3tDy1YR_Ir4HN3beP079vxndcbbRMXphlJKZlp0"
-    ]
-  },
-  {
     "id": "https://3sln.me/artefacts/preferences/app-messages/v1",
     "kind": "fragment",
     "versions": [
       "sha256-LloIImEYXKCJI_7dADkwoVds3nHbWlOkTOl2PXdQj7E"
-    ]
-  },
-  {
-    "id": "https://3sln.me/artefacts/fragments/item-classifier/v1",
-    "kind": "fragment",
-    "versions": [
-      "sha256-b5e5bGtWtRz9ND-NTqNllyAhbfRbdVPfldokKu51A4Q"
-    ]
-  },
-  {
-    "id": "https://3sln.me/artefacts/profiles/components/v1",
-    "kind": "manifest-profile",
-    "versions": [
-      "sha256--udu0QCvYvOk75SW3Dh8Cr-aLPdsWvbr7b9V9yvxbJU"
-    ]
-  },
-  {
-    "id": "https://3sln.me/artefacts/slots/item-classifier/v1",
-    "kind": "slot",
-    "versions": [
-      "sha256-IVhINUsHlqxzcwI2LSq3IK99lKaclCXOH4Eb2MEW6vE"
     ]
   }
 ]

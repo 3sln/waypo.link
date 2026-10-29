@@ -4,8 +4,12 @@ import {encodeIntent} from '../../../../packages/intents/format.mjs';
 import {Engine,Action,Query,Provider} from '../../../../vendor/ngin/index.js';
 import {perform} from '../../../../packages/messaging-engine/engine.mjs';
 export const PAGE_SIZE=40;
+// Owner direction 2026-10-28: the "auto-classification failed" system tag (packages/messaging-engine/domains/tags.mjs
+// CLASSIFICATION_FAILED_TAG). The failed filter is an ad-hoc tag filter over incoming.query, not a stored View.
+export const CLASSIFICATION_FAILED_TAG='sys:classification-failed',FAILED_VIEW=Object.freeze({id:'classification-failed',failed:true});
+const viewQuery=view=>view?.failed?{filter:{version:1,tagsAll:[CLASSIFICATION_FAILED_TAG]},sort:'activity-desc'}:{view:view.id,viewRevision:view.revision};
 const disabled=()=>{throw Object.assign(new Error('Disabled'),{code:'not_found'});};
-export const initialState=({locale='en',online=true}={})=>({locale:locale.startsWith('es')?'es':'en',online,section:'conversations',rooms:[],views:[],outbox:[],requests:[],rejected:[],items:[],invites:[],contactMembers:[],freshInvite:null,detail:null,page:0,cursor:null,pages:[],resume:null,draft:'',pendingDraft:null,busy:false,error:null,notice:null,archive:null,classification:null,generation:0});
+export const initialState=({locale='en',online=true}={})=>({locale:locale.startsWith('es')?'es':'en',online,section:'conversations',rooms:[],views:[],outbox:[],requests:[],rejected:[],items:[],invites:[],contactMembers:[],freshInvite:null,detail:null,page:0,cursor:null,pages:[],resume:null,draft:'',pendingDraft:null,busy:false,error:null,notice:null,archive:null,classification:null,selected:[],generation:0});
 export class ClientState extends Query {
  static deps=['state'];
  fetch({state}){return structuredClone(state.value);}
@@ -47,7 +51,7 @@ async function selected(mailbox,s){
  const generation=s.generation;
  if(s.section==='contacts'&&!s.detail)await invitations(mailbox,s);
  if(s.detail){const id=s.detail.id,detail=await call(mailbox,'conversations.get',{conversationId:id,limit:PAGE_SIZE,...s.detail.pagination?{offset:s.detail.pagination.offset}:{}});if(s.generation!==generation||s.detail?.id!==id)return;s.detail=detail;s.page=detail.pagination?Math.floor(detail.pagination.offset/PAGE_SIZE):Math.min(s.page,Math.max(0,Math.ceil(detail.timeline.length/PAGE_SIZE)-1));}
- if(s.section==='views'&&s.view){const page=await call(mailbox,'incoming.query',{view:s.view.id,viewRevision:s.view.revision,limit:PAGE_SIZE});if(s.generation===generation)Object.assign(s,{items:page.items,cursor:page.cursor,pages:[]});}
+ if(s.section==='views'&&s.view){const page=await call(mailbox,'incoming.query',{...viewQuery(s.view),limit:PAGE_SIZE});if(s.generation===generation){Object.assign(s,{items:page.items,cursor:page.cursor,pages:[]});s.selected=s.selected.filter(id=>page.items.some(i=>i.id===id));}}
 }
 export class LoadClient extends ClientAction {
  static needsOnline=false;
@@ -61,7 +65,7 @@ export class Navigate extends ClientAction {
   if(page!==undefined){const count=s.detail?.timeline.length??({conversations:s.rooms,contacts:s.contactMembers,requests:s.requests,rejected:s.rejected,delivery:s.outbox}[s.section]??[]).length;s.page=Math.max(0,Math.min(Math.floor(page),Math.max(0,Math.ceil(count/PAGE_SIZE)-1)));return;}
   if(section){if(!['conversations','contacts','views','requests','rejected','delivery','settings'].includes(section))throw new TypeError('Invalid section');s.section=section;s.detail=null;s.view=null;s.page=0;s.freshInvite=null;}
   if(id&&s.online){const detail=await call(mailbox,'conversations.get',{conversationId:id,limit:PAGE_SIZE}),draft=await browser.drafts.get(id)??'',pending=await browser.drafts.get('pending:'+id);if(s.generation!==generation)return;s.detail=detail;s.page=detail.pagination?Math.floor(detail.pagination.offset/PAGE_SIZE):Math.max(0,Math.ceil(detail.timeline.length/PAGE_SIZE)-1);s.draft=draft;s.pendingDraft=pending?JSON.parse(pending):null;}
-  if(view&&s.online){s.view=view;await selected(mailbox,s);}
+  if(view&&s.online){s.view=view;s.selected=[];await selected(mailbox,s);}
   if(section==='contacts'&&s.online)await invitations(mailbox,s);
   if(section==='settings'&&mailbox.archive?.status&&s.online)s.archiveStatus=await call(mailbox,mailbox.archive.status.operation);
   // Classifier gaps (no classifier, or none that can classify text) are shown in settings; a failure shows nothing.
@@ -145,7 +149,7 @@ export class ViewAction extends ClientAction {
    if(JSON.stringify({...pending,operationId:undefined})!==JSON.stringify({...data,operationId:undefined}))throw Object.assign(new Error('Resolve the previous View request first'),{code:'operation_pending'});
    await browser.drafts.set('view-operation',JSON.stringify(pending));await call(mailbox,'views.create',pending);await snapshot(mailbox,s);await browser.drafts.set('view-operation','');return;
   }
-  else if(kind==='next'&&s.cursor){const generation=s.generation,page=await call(mailbox,'incoming.query',{view:s.view.id,viewRevision:s.view.revision,limit:PAGE_SIZE,cursor:s.cursor});if(generation!==s.generation)return;s.pages.push({items:s.items,cursor:s.cursor});s.items=page.items;s.cursor=page.cursor;return;}
+  else if(kind==='next'&&s.cursor){const generation=s.generation,page=await call(mailbox,'incoming.query',{...viewQuery(s.view),limit:PAGE_SIZE,cursor:s.cursor});if(generation!==s.generation)return;s.pages.push({items:s.items,cursor:s.cursor});s.items=page.items;s.cursor=page.cursor;return;}
   else if(kind==='previous'&&s.pages.length){Object.assign(s,s.pages.pop());return;}
   else throw new TypeError('Invalid View operation');
  }
@@ -172,9 +176,25 @@ export class ArchiveAction extends ClientAction {
   if(['import','rejoin'].includes(this.input.kind))await snapshot(mailbox,s);return result;
  }
 }
+// Owner direction 2026-10-28: the owner selects failed items (failed filter) and asks for them to be classified again.
+// Each accepted item re-enters pending and is charged again; the mailbox refuses what is not failed, no longer eligible
+// or beyond today's allowance, and the notice says so.
+export class SelectItem extends ClientAction {
+ static needsOnline=false;
+ run({state}){const s=state.value,{id,on}=this.input;if(typeof id!=='string'||!s.items.some(i=>i.id===id))return;s.selected=on===true?[...new Set([...s.selected,id])].slice(0,50):s.selected.filter(x=>x!==id);}
+}
+export class ClassifyAgain extends ClientAction {
+ async run({state,mailbox}){
+  const s=state.value,ids=s.selected.filter(id=>s.items.some(i=>i.id===id)).slice(0,50);if(!ids.length)return;
+  const result=await call(mailbox,'classify.retry',{ids}),results=Array.isArray(result?.results)?result.results:[];
+  const accepted=results.filter(r=>r?.status==='pending').length;s.selected=[];
+  s.notice=accepted===ids.length?'classify-requested':results.some(r=>r?.reason==='allowance')?'classify-allowance':accepted?'classify-partial':'classify-refused';
+  await selected(mailbox,s);await classification(mailbox,s);return {accepted,requested:ids.length};
+ }
+}
 export class Locale extends ClientAction {static needsOnline=false;run({state}){state.value.locale=this.input.locale==='es'?'es':'en';}}
 export class AcceptRequest extends ClientAction {async run({state,mailbox}){const result=await call(mailbox,'conversations.accept',this.input);await snapshot(mailbox,state.value);return result;}}
-export const CLIENT_OPERATIONS=Object.freeze({discardIntent:DiscardAppIntent,intent:ReceiveAppIntent,confirmIntent:ConfirmAppIntent,body:ReadRequestBody,start:StartConversation,load:LoadClient,navigate:Navigate,draft:SaveDraft,submit:SubmitMessage,retry:RetryMissing,delivery:DeliveryDetail,sync:SyncProgress,connectivity:Connectivity,rescue:Rescue,invite:InviteAction,view:ViewAction,access:RequestAccess,archive:ArchiveAction,locale:Locale,accept:AcceptRequest});
+export const CLIENT_OPERATIONS=Object.freeze({discardIntent:DiscardAppIntent,intent:ReceiveAppIntent,confirmIntent:ConfirmAppIntent,body:ReadRequestBody,start:StartConversation,load:LoadClient,navigate:Navigate,draft:SaveDraft,submit:SubmitMessage,retry:RetryMissing,delivery:DeliveryDetail,sync:SyncProgress,connectivity:Connectivity,rescue:Rescue,invite:InviteAction,view:ViewAction,access:RequestAccess,archive:ArchiveAction,locale:Locale,accept:AcceptRequest,select:SelectItem,classifyAgain:ClassifyAgain});
 export function createClientEngine({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,mailbox,browser,permissions={},locale='en',online=true}={}){
  const state={enabled:PARLAY_ENABLED===true,intentLinksEnabled:INTENT_LINKS_ENABLED===true,value:initialState({locale,online}),syncing:false};
  const engine=new Engine({providers:Object.fromEntries(Object.entries({state,mailbox,browser,permissions}).map(([name,value])=>[name,Provider.fromSingleton(value)]))});

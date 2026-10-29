@@ -3115,7 +3115,7 @@ Added by the seventh update. Each item links its DEVLOG entry; sign-offs go on t
 - Owner: ___
 
 **EC-1. Embedded-components migration choices**
-- Decided (provisional, EXT3-34): `parts` as `<name>/<version>`. Islands never delegate to FedCM. No `theme_tokens`, while the wire `theme` member stays as `{}`. The components profile URL is no longer emitted and is listed as withdrawn. The Node host accepts only origin-form request targets.
+- Decided (provisional, EXT3-34): `parts` as `<name>/<version>`. Islands never delegate to FedCM. No `theme_tokens`, while the wire `theme` member stays as `{}`. The components profile URL is no longer emitted; it was later removed from the registry rather than listed as withdrawn (owner direction 2026-10-28, no versioning churn before release). The Node host accepts only origin-form request targets.
 - Source: [DEVLOG "Embedded-components migration"](../../DEVLOG.md#2026-10-28--embedded-components-migration-implemented-locally-cr-x3-16-incl-cr-x3-35-code-side-of-cr-x3-33); [DEVLOG "Embedded-components review follow-ups"](../../DEVLOG.md#2026-10-28--embedded-components-review-follow-ups-l1-l2-i1-i3).
 - Owner: ___
 
@@ -3155,7 +3155,7 @@ Added by the seventh update. Each item links its DEVLOG entry; sign-offs go on t
 ### Messaging out of core, and contacts
 
 **MC-23. Messaging torn out of core; Parlay rename**
-- Decided (provisional): the renames and `PARLAY_*` flags, with an app-side `BINDLEBOX_*` fallback (removing the alias is open). `conversation-v1.json` stays published as withdrawn. Collections, Views, rules, tags and `/api/messages*` stay as activity surfaces. Public-message-intake consumers stay provider-only (M2). The RTC compatibility port is now moot with RTC retired (L6). The BB-CUT reset itself is SQ-1, answered by the user.
+- Decided (provisional): the renames and `PARLAY_*` flags, with an app-side `BINDLEBOX_*` fallback (removing the alias is open). `conversation-v1.json` was first kept published as withdrawn, then removed (owner direction 2026-10-28, no versioning churn before release). Collections, Views, rules, tags and `/api/messages*` stay as activity surfaces. Public-message-intake consumers stay provider-only (M2). The RTC compatibility port is now moot with RTC retired (L6). The BB-CUT reset itself is SQ-1, answered by the user.
 - Source: [DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"](../../DEVLOG.md#2026-10-27--messaging-removed-from-core-parlay-rename-bb-cut-reset).
 - Owner: ___
 

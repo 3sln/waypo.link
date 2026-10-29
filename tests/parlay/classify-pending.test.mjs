@@ -70,12 +70,12 @@ test('the final run is a blank slate: effects of rules that no longer match are 
 test('an unscored or failed classification still completes the item; consent withdrawn mid-flight completes it without evidence',async t=>{
  for(const fail of ['indeterminate','unsupported_item']){
   const c=port({fail}),e=fresh(t,c);await put(e,'a','social');await setup(e);await e.run('classify.begin',{id:'a'});
-  const r=await e.run('classify.item',{id:'a'});assert.equal(r.status,'unscored');const item=await e.store.get('item/a');
-  assert.equal(item.classificationPending,undefined);assert.equal(item.notification,'push');assert.equal(item.classificationResult.classifier.result.status,'unscored');assert.deepEqual(view(item).tags,['from-list','list-mail']);
+  const r=await e.run('classify.item',{id:'a'});assert.equal(r.status,'failed');const item=await e.store.get('item/a');
+  assert.equal(item.classificationPending,undefined);assert.equal(item.notification,'push');assert.equal(item.classificationResult.classifier.result.status,'failed');assert.deepEqual(view(item).tags,['from-list','list-mail','sys:classification-failed']);
  }
  let release,started;const ready=new Promise(r=>started=r),c=port({gate:()=>{started();return new Promise(r=>release=r);}}),e=fresh(t,c);await put(e,'a','social');await setup(e);await e.run('classify.begin',{id:'a'});
  const pending=e.run('classify.item',{id:'a'});await ready;await e.run('classify.settings',{input:{consent:false}});release();
- const r=await pending;assert.equal(r.reason,'changed');const item=await e.store.get('item/a');assert.equal(item.classificationPending,undefined);assert.equal(view(item).tags.includes('friends'),false,'no evidence from a withdrawn consent');assert.equal(item.notification,'push');
+ const r=await pending;assert.equal(r.reason,'changed');const item=await e.store.get('item/a');assert.equal(item.classificationPending,undefined);assert.equal(view(item).tags.includes('friends'),false,'no evidence from a withdrawn consent');assert.equal(view(item).tags.includes('sys:classification-failed'),true);assert.equal(item.notification,'push');
 });
 
 test('seeded chaos: random latency and completion order with rules changing in between end exactly where one run with the final rules would',async t=>{

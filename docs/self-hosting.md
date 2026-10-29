@@ -176,6 +176,7 @@ These switches now gate implemented local features. They default off without con
 | `EMBED_ORIGIN` (N) | unset | Separate origin serving sign-in islands. |
 | `EMBED_AVATAR_ORIGINS` | empty | Worker allowlist of extra HTTPS origins for island avatars. |
 | `DPOP_NONCE_KEY` (N) | `KEY_ENCRYPTION_KEY` | Secret for DPoP nonces. |
+| `FEDERATION_JOURNAL_KEY` (N) | `KEY_ENCRYPTION_KEY` | Secret from which per-account keys for federation journal fingerprints are derived (never stored in the account shard). With no secret at all, non-retained federation writes are refused, except in local development. |
 | `APP_METADATA_DISCOVERY_ENABLED` (N) | `false` (off) | Fetch app metadata documents from registered client origins. |
 | `APP_NOTIFICATION_SIGNING_JWK`, `APP_NOTIFICATION_PUBLIC_JWKS` (N) | unset | Signing key (secret) and published verification keys for app notifications. |
 | `MCP_ENABLED`, `MCP_LAYOUT`, `MCP_CLIENTS` (N) | `false` (off), `mcp-auth-v1-64`, `[]` | Agent endpoint. |

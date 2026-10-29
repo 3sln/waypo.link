@@ -5,7 +5,7 @@ import {EXT,declare} from '../core/extensions.mjs';
 // only place that knows the declaration members: logic reads configured values through componentsProfile() and
 // advertises through componentsDeclaration(). Origins are always configured per instance.
 // Extensions rev 3.3 (§2.7, §2.8; CR-X3-16): declared only as the Bindle-owned embedded-components extension. The former
-// profile URL (https://3sln.me/artefacts/profiles/components/v1) is withdrawn: never emitted, never read.
+// profile URL (https://3sln.me/artefacts/profiles/components/v1) is removed: never emitted, read or published.
 export const COMPONENTS_EXTENSION=EXT.embeddedComponents;
 export const COMPONENTS_PROTOCOL=[1];
 // Parts the islands shell implements (SDK islands-protocol PARTS). Rev 3.3 (§2.7, CR-X3-33, provisional): no per-part

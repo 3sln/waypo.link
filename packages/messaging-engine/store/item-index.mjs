@@ -30,7 +30,11 @@ export async function projectIncoming(tx,item){
  if(m.seenActivityRevision!==undefined&&row.activityRevision>m.seenActivityRevision)row.readAt=null;
  if(canonical(prior)!==canonical(row)){await tx.put(ROW+item.id,row);await bump(tx);}return row;
 }
-export async function removeIncoming(tx,id){if(await tx.get(ROW+id)){await tx.delete(ROW+id);await bump(tx);}}
+// Items awaiting auto-classification (domains/classify.mjs) are indexed under this prefix; removing an item removes its
+// pending entry too, so classify.status never counts a deleted item and no deadline sweep waits on it (review M2).
+export const CLASSIFY_PENDING='bb:classify:pending/';
+export const classifyPendingKey=id=>CLASSIFY_PENDING+encodeURIComponent(id);
+export async function removeIncoming(tx,id){await tx.delete(classifyPendingKey(id));if(await tx.get(ROW+id)){await tx.delete(ROW+id);await bump(tx);}}
 export async function saveOrganization(tx,item,m){
  const overlay={...select(m,organizationFields),...m.seenActivityRevision!==undefined?{seenActivityRevision:m.seenActivityRevision}:{}};
  if(item.type==='conversation'||item.kind==='conversation')await tx.put(OVERLAY+item.id,overlay);

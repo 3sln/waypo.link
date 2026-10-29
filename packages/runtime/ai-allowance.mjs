@@ -42,3 +42,23 @@ export async function reserveAIAllowance(store,{now,plan,service,clientId,microU
   await tx.put(appKey,{month,monthlyMicroUSD:appSpent});
  });
 }
+/**
+ * Credits back a debit made by reserveAIAllowance when the call is then refused before any effect (review M1, CR-X3-25:
+ * covered-work admission refused, or the service-wide `ai` ledger refused the lease), so a refusal that claims no effect
+ * leaves the owner's allowance as it was. Only counters of the same month (and minute, for the call cap) are credited; a
+ * counter that rolled over in between is left alone, and nothing goes below zero. A crash between the debit and this
+ * credit leaves the debit in place (fails closed, bounded by one call).
+ */
+export async function releaseAIAllowance(store,{now,service,clientId,microUSD}){
+ if(!Number.isSafeInteger(microUSD)||microUSD<1)throw new TypeError('Invalid AI spend estimate');
+ const iso=new Date(now).toISOString(),month=iso.slice(0,7),minute=iso.slice(0,16),appKey=AI_APP_USAGE+await hex(String(clientId));
+ await store.transaction(async tx=>{
+  const account=await tx.get(AI_USAGE),app=await tx.get(appKey);
+  if(plain(account)&&account.month===month&&count(account.monthlyMicroUSD)){
+   const prior=account.services?.[service],services={...account.services};
+   if(plain(prior)&&prior.minute===minute&&count(prior.calls))services[service]={minute,calls:Math.max(0,prior.calls-1)};
+   await tx.put(AI_USAGE,{...account,monthlyMicroUSD:Math.max(0,account.monthlyMicroUSD-microUSD),services});
+  }
+  if(plain(app)&&app.month===month&&count(app.monthlyMicroUSD))await tx.put(appKey,{month,monthlyMicroUSD:Math.max(0,app.monthlyMicroUSD-microUSD)});
+ });
+}

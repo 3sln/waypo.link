@@ -131,9 +131,14 @@ credential storage and storage-resource adapters require integration and indepen
 is requested through the shared Bindle item-classification fragment (contract `item-classification/v1`, extensions
 CR-X3-25): the text and fallback classifier fields and their detail fields. Parlay sends its own message categories with
 every call (`packages/messaging-engine/domains/categories.mjs`), honours the owner's detail level, fails over to the
-fallback only on `unsupported_item` or a proven no-effect failure, and records items it could not score as `unscored`.
-Items the owner wants classified enter `classify.begin` (pending, notification held, provisional tags only) and
-`classify.item` completes them with the final rule run, whose effects (quarantine, moves, notification) then run once. No host adapter supplies the classifier port yet.
+fallback only on `unsupported_item` or a proven no-effect failure, and tags items it could not score with
+`sys:classification-failed` (reason kept; owner direction 2026-10-28). Items the owner wants classified enter
+`classify.begin` (pending, notification held, provisional tags only) and `classify.item` completes them with the final
+rule run, whose effects (quarantine, moves, notification) then run once. The mailbox alarm classifies each unclaimed
+pending item once through `ports.classifier` and fails items pending longer than 10 minutes (`classify.sweep`, reason
+`deadline`). The owner re-requests failed items with `classify.retry` (web: the "Classification failed" filter and
+"Classify again"). No host composition supplies `ports.classifier` yet, so with consent a begun item fails as
+`no_classifier`.
 
 Local gate results (2026-10-20, concurrent Wave 3 checkout): B8's 15 tests pass, including the workerd crash/
 recovery, finite SSE RPC transport, conversation index and live peer-authorization checks. Final `npm test`:

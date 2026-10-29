@@ -24,12 +24,13 @@ test('classification without a classifier, consent or allowance yields header hi
  for(const mode of ['absent','consent','allowance','throw','malformed','requiresConsent']){
   const c=fake();if(mode==='throw')c.classify=async()=>{c.calls.push({});throw new Error('Unavailable');};if(mode==='malformed')c.classify=async()=>({scores:{'sys:spam':1},model:{id:MODEL.model,version:MODEL.version}});if(mode==='requiresConsent')c.classify=async()=>({requiresConsent:true});
   const e=fresh(t,mode==='absent'?undefined:c);await put(e);if(!['absent','consent'].includes(mode))await enable(e);if(mode==='allowance')await e.run('classify.settings',{input:{allowance:0}});
-  const r=await e.run('classify.item',{id:'a'});assert.equal(r.source,'heuristic');assert.deepEqual([...r.item.tags].sort(),['sys:suspected.automation','sys:suspected.promotional']);assert.equal(r.item.quarantined,undefined);assert.equal(r.item.state,'inbox');
+  const r=await e.run('classify.item',{id:'a'}),failedTag=!['absent','consent'].includes(mode)?['sys:classification-failed']:[];assert.equal(r.source,'heuristic');assert.deepEqual([...r.item.tags].sort(),[...failedTag,'sys:suspected.automation','sys:suspected.promotional']);assert.equal(r.item.quarantined,undefined);assert.equal(r.item.state,'inbox');
   if(['absent','consent','allowance'].includes(mode))assert.equal(c.calls.length,0);
-  // Without consent nothing was wanted; with consent, every shortfall is an explicit unscored state (§8.4).
-  const expected={absent:['heuristic'],consent:['heuristic'],allowance:['unscored','allowance'],throw:['unscored','unknown_outcome'],malformed:['unscored','invalid_result'],requiresConsent:['unscored','invalid_result']}[mode];
+  // Without consent nothing was wanted; with consent, every shortfall fails the item explicitly (§8.4): the failure tag
+  // (owner direction 2026-10-28) with the reason kept in the classifier evidence.
+  const expected={absent:['heuristic'],consent:['heuristic'],allowance:['failed','allowance'],throw:['failed','unknown_outcome'],malformed:['failed','invalid_result'],requiresConsent:['failed','invalid_result']}[mode];
   assert.deepEqual([r.status,r.reason].filter(Boolean),expected,mode);
-  if(expected[0]==='unscored')assert.deepEqual((await e.store.get('item/a')).classificationResult.classifier.result,{source:'classifier',status:'unscored',version:'none',reason:expected[1],labels:[]});
+  if(expected[0]==='failed'){const item=await e.store.get('item/a');assert.deepEqual(item.classificationResult.classifier.result,{source:'classifier',status:'failed',version:'none',reason:expected[1],labels:[]});assert.equal(item.tags.find(t=>t.id==='sys:classification-failed').reason,expected[1]);}
  }
 });
 test('a consented host classifier sees minimized text only, model-bound thresholds select suspected tags and owner rules promote',async t=>{
@@ -55,7 +56,16 @@ test('owner suppression, manual category choices and quarantine release survive 
  const initial=await e.run('classify.item',{id:'a'});assert.equal(initial.item.quarantined,true);assert.equal((await e.store.get('item/a')).notification,null);
  await e.run('incoming.update',{input:{id:'a',expectedRevision:initial.item.organizationRevision,removeTags:['sys:social','sys:spam'],classification:'work',quarantined:false}});
  const rules=await e.run('rules.list');await e.run('rules.replace',{input:{rules:[...rules,{id:'later',enabled:true,match:{tagsAll:['sys:suspected.automation']},actions:{addTags:['sys:social'],classification:'spam',quarantined:true}}]}});
- c.classify=async(_,input)=>answer(input,{automation:1});const r=await e.run('classify.item',{id:'a'});assert.equal(r.item.classification,'work');assert.equal(r.item.quarantined,false);assert.equal(r.item.tags.includes('sys:social'),false);
+ // Review L2: an already classified item is never classified (or charged) again by classify.item.
+ c.classify=async(_,input)=>answer(input,{automation:1});const calls=c.calls.length;assert.equal((await e.run('classify.item',{id:'a'})).reason,'classified');assert.equal(c.calls.length,calls);
+ // A later classifier result arrives only through an owner re-request of a failed item; owner choices still win.
+ const b=fake({social:1,spam:1}),f=fresh(t,b);await put(f,'b');await enable(f);b.classify=async()=>{throw Object.assign(new Error('x'),{code:'indeterminate'});};
+ let r=await f.run('classify.item',{id:'b'});assert.equal(r.status,'failed');
+ await f.run('incoming.update',{input:{id:'b',expectedRevision:r.item.organizationRevision,addTags:['sys:social']}});r=await f.run('incoming.query',{input:{limit:5}});
+ await f.run('incoming.update',{input:{id:'b',expectedRevision:r.items[0].organizationRevision,removeTags:['sys:social'],classification:'work',quarantined:false}});
+ const later=await f.run('rules.list');await f.run('rules.replace',{input:{rules:[...later,{id:'later',enabled:true,match:{tagsAll:['sys:suspected.automation']},actions:{addTags:['sys:social'],classification:'spam',quarantined:true}}]}});
+ b.classify=async(_,input)=>answer(input,{automation:1});assert.equal((await f.run('classify.retry',{input:{ids:['b']}})).results[0].status,'pending');
+ r=await f.run('classify.item',{id:'b'});assert.equal(r.item.classification,'work');assert.equal(Boolean(r.item.quarantined),false);assert.equal(r.item.tags.includes('sys:social'),false);assert.equal(r.item.tags.includes('sys:classification-failed'),false);
 });
 test('automation runs only newly matched rules; an owner-removed suspected tag cannot later promote',async t=>{
  const c=fake(),e=fresh(t,c);await put(e);await enable(e);await e.run('rules.delete',{id:'default:promote.social'});
@@ -63,7 +73,7 @@ test('automation runs only newly matched rules; an owner-removed suspected tag c
  await e.run('rules.restore-default',{id:'default:promote.social'});await e.run('classify.item',{id:'a'});
  assert.equal((await e.store.get('item/a')).tags.some(t=>t.id==='sys:social'),false);
  await e.run('rules.replace',{input:{rules:[{id:'new-social',enabled:true,match:{tagsAll:['sys:suspected.social']},actions:{addTags:['too-late']}}]}});
- c.classify=async(_,input)=>answer(input,{social:1,automation:1});const next=await e.run('classify.item',{id:'a'});assert.equal(next.item.tags.includes('too-late'),false);
+ c.classify=async(_,input)=>answer(input,{social:1,automation:1});const next=await e.run('classify.item',{id:'a'});assert.equal(next.reason,'classified','review L2: never classified twice');assert.equal((await e.store.get('item/a')).tags.some(t=>t.id==='too-late'),false);
 });
 test('public intake retains BB-B2 tiers; conversations require explicit local opt-in; metering reserves atomically',async t=>{
  const c=fake(),e=fresh(t,c);await enable(e);
@@ -114,15 +124,15 @@ test('per-kind selection: text first, the fallback only after a proven no-effect
  // An ambiguous outcome never reaches a second classifier: the item stays unscored.
  for(const code of ['indeterminate','item_unavailable',undefined]){
   c=fake(undefined,undefined,{values:both});c.classify=async resource=>{c.resources.push(resource);throw Object.assign(new Error('?'),code?{code}:{});};
-  ({r}=await run(c));assert.equal(r.status,'unscored');assert.deepEqual(c.resources,[TEXT],String(code));
+  ({r}=await run(c));assert.equal(r.status,'failed');assert.deepEqual(c.resources,[TEXT],String(code));
  }
  // The same resource in both fields is asked once.
  c=fake(undefined,undefined,{values:{text:TEXT,fallback:TEXT}});c.classify=async resource=>{c.resources.push(resource);throw Object.assign(new Error('no'),{code:'unsupported_item'});};
- ({r}=await run(c));assert.deepEqual([r.status,r.reason],['unscored','unsupported']);assert.deepEqual(c.resources,[TEXT]);
+ ({r}=await run(c));assert.deepEqual([r.status,r.reason],['failed','unsupported']);assert.deepEqual(c.resources,[TEXT]);
 });
 test('no classifier for text, or none that can classify it, is an unscored item and a gap shown to the owner',async t=>{
  const c=fake(undefined,undefined,{values:{image:'https://classifiers.example/r/image'}}),e=fresh(t,c);await put(e);await put(e,'b');await enable(e);
- const r=await e.run('classify.item',{id:'a'});assert.deepEqual([r.status,r.reason],['unscored','no_classifier']);assert.equal(c.calls.length,0);
+ const r=await e.run('classify.item',{id:'a'});assert.deepEqual([r.status,r.reason],['failed','no_classifier']);assert.equal(c.calls.length,0);
  let status=await e.run('classify.status');assert.deepEqual(status.gaps.map(g=>[g.kind,g.mediaType,g.reason]),[['text','text/plain','no_classifier']]);
  assert.equal((await e.store.get('bb:classify:settings')).usage.calls,0,'nothing was dispatched, so no allowance was used');
  // Every candidate refuses text: the gap says so.

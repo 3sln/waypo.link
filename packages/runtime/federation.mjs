@@ -21,7 +21,7 @@ import {dpopNonces} from '../federation/dpop.mjs';
 import {ENTRY_INTENTS,ENTRY_SHARDS,AuthorizationEntries,entryManifest,entryShard,remoteShard} from '../federation/authorization-entries.mjs';
 import {componentsProfile,componentsDeclaration} from '../federation/components-profile.mjs';
 import {deviceManifest} from '../federation/device-authorization.mjs';
-import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations} from '../federation/runtime.mjs';
+import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations,DEV_JOURNAL_SECRET} from '../federation/runtime.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
 import {EMAIL_BRIDGE_CONTRACT,EMAIL_BRIDGE_METHODS} from '../email-bridge/wire.mjs';
@@ -135,6 +135,10 @@ export async function federationEpoch(account){return authorityGrantEpoch(accoun
 const unsupported=()=>{throw Object.assign(new Error('Credential operations use the identity service.'),{code:'unsupported_method'});};
 /** DPoP nonce MAC key; DPoP stays unadvertised without one. */
 export const federationDpopSecret=config=>config.DPOP_NONCE_KEY||config.KEY_ENCRYPTION_KEY||undefined;
+/** Federation journal fingerprint secret (security review L1, CR-X3-25): FEDERATION_JOURNAL_KEY, else KEY_ENCRYPTION_KEY
+ * (required on Workers, generated on Node). Local development with neither uses the public DEV_JOURNAL_SECRET; any other
+ * configuration without a secret yields null, which fails non-retained federation writes closed before any effect. */
+export const federationJournalSecret=config=>config.FEDERATION_JOURNAL_KEY||config.KEY_ENCRYPTION_KEY||(config.LOCAL_DEVELOPMENT==='true'?DEV_JOURNAL_SECRET:null);
 /** Last credential verification of an owner session: its credential sign-in, or a later step-up (password or passkey).
  * Sessions minted without a credential (device approval, which any recent session can grant) count only from a step-up. */
 export const sessionAuthTime=session=>Math.max((session?.source??'credential')==='credential'?session?.createdAt??0:0,Number.isSafeInteger(session?.stepUpAt)?session.stepUpAt:0)||undefined;
@@ -159,7 +163,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
   await account.orgsActingAuthority(owner,{actor:{principal:{iss:issuer,sub:person.id},entity:{kind:'organization',id:owner},authTime,epoch:Number.isSafeInteger(scope.epoch)&&scope.epoch>=0?scope.epoch:0,aep:Number.isSafeInteger(scope.aep)&&scope.aep>=0?scope.aep:0},power:'admin',widen:mutation===true});
   return {subject,epoch:await federationEpoch(current),authTime:authTime??undefined,sessionId:await identity.sessionID(session),approvalChain:[session.id]};
  };
- return {organizations:organizationAccountAuthority({account,owner,enabled:()=>ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')}),contractVersion:input=>configuredContractVersion(config,input),pinContract:target=>pinConfiguredContract(config,target),flagConfig:config,schemaHostProvider:()=>Object.keys(federationSchemas(config)).map(url=>new URL(url).host),issuer,clients:federationClients(config),routingKey:owner,crypto,manifestDeclarations:()=>federationDeclarations(config,{target:'controller',mounts:manifestMounts}),objectURLs:{...objectURLAuthority({issuer,secret:config.KEY_ENCRYPTION_KEY}),seal:value=>encryptSecret(value,config.KEY_ENCRYPTION_KEY),open:record=>decryptSecret(record,config.KEY_ENCRYPTION_KEY)},enabled:siteGlobal(config,'FEDERATION_ENABLED'),appSessions:appSessionPolicy(config),refreshEnabled:capability(config,'FEDERATION_REFRESH_ENABLED'),allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',dpop:federationDpopSecret(config)?{secret:federationDpopSecret(config)}:undefined,embedOrigin:componentsProfile(config)?.embedOrigin,clientMetadata:clientMetadataEnabled(config),
+ return {organizations:organizationAccountAuthority({account,owner,enabled:()=>ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')}),contractVersion:input=>configuredContractVersion(config,input),pinContract:target=>pinConfiguredContract(config,target),flagConfig:config,schemaHostProvider:()=>Object.keys(federationSchemas(config)).map(url=>new URL(url).host),issuer,clients:federationClients(config),routingKey:owner,crypto,journalSecret:federationJournalSecret(config),manifestDeclarations:()=>federationDeclarations(config,{target:'controller',mounts:manifestMounts}),objectURLs:{...objectURLAuthority({issuer,secret:config.KEY_ENCRYPTION_KEY}),seal:value=>encryptSecret(value,config.KEY_ENCRYPTION_KEY),open:record=>decryptSecret(record,config.KEY_ENCRYPTION_KEY)},enabled:siteGlobal(config,'FEDERATION_ENABLED'),appSessions:appSessionPolicy(config),refreshEnabled:capability(config,'FEDERATION_REFRESH_ENABLED'),allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',dpop:federationDpopSecret(config)?{secret:federationDpopSecret(config)}:undefined,embedOrigin:componentsProfile(config)?.embedOrigin,clientMetadata:clientMetadataEnabled(config),
   incremental,integrations:siteGlobal(config,'INTEGRATIONS_ENABLED'),clientAuth:clientId=>account.connectionClientAuth(owner,clientId),
   // ORG-10f (spec organizations §10): imported resources are projected in relay form with an entity certificate issued
   // by the organization's own writer after its own hops (relations.certify); the shard passes its grant records and the

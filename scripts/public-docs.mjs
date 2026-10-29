@@ -53,7 +53,7 @@ export const publicDocumentation=Object.freeze([
  ['3sln.me reference service','docs/3sln/services/mcp-service.md','Agent connections (MCP)'],
  ['3sln.me reference service','docs/3sln/services/browser-automation.md','Browser automation'],
  ['3sln.me reference service','docs/3sln/release-gates.md','Security policy and release gates'],
- ['3sln.me reference service','docs/profiles/components-v1.md','Components profile (provisional)'],
+ ['3sln.me reference service','docs/profiles/components-v1.md','Embedded components extension (provisional)'],
  ['Hosting','docs/deployment/client-build.md','Client builds'],
  ['Hosting','docs/deployment/federation.md','Provider federation configuration'],
  ['Hosting','docs/deployment/google-drive.md','Google Drive configuration'],

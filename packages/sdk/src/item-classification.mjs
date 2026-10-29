@@ -225,9 +225,16 @@ export function classifierCandidates(values,kind){
  *  {status:'scored', result, field, resource, detail} or
  *  {status:'unscored', reason, kind, mediaType} with reason 'no_classifier' | 'unsupported' | 'unavailable' |
  *  'item_unavailable' | 'unknown_outcome' | 'invalid_result'.
- * 'no_classifier' and 'unsupported' are gaps the application surfaces to the owner (§8.4).
+ * 'no_classifier' and 'unsupported' are gaps the application surfaces to the owner (§8.4). An invalid label set
+ * (including an id repeated anywhere in it) throws `invalid_args` before any dispatch.
  */
 export async function classifyWithFallback(port,{values,item,tags,labels,now}){
+ // The whole label set is checked before any call (review I2): each id must be distinct across every chunk a split
+ // would make, so a duplicate can never pass per-chunk validation and be merged first-wins. More than 16 labels are
+ // allowed here because they are split; each chunk still meets §3.4.
+ if(!Array.isArray(labels)||!labels.length)invalid('Use at least one label.');
+ for(let i=0;i<labels.length;i+=LIMITS.labels)validateLabels(labels.slice(i,i+LIMITS.labels));
+ if(new Set(labels.map(l=>l.id)).size!==labels.length)invalid('Label ids must be distinct.');
  const candidates=classifierCandidates(values,item.kind),miss={kind:item.kind,mediaType:item.mediaType};
  if(!candidates.length)return {status:'unscored',reason:'no_classifier',...miss};
  let unsupported=0;

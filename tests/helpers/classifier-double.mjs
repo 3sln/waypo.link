@@ -4,7 +4,7 @@
 // exactly as §3–§6 require (before any effect), fetches presigned URLs through fetchPresignedItem with an injected
 // fetch double, and keeps no item, URL, tags, labels or scores: only counters, unless a test asks for a call log.
 import {validateClassifyArgs,validateCapabilitiesArgs,validateCapabilities,refuseUnsupported,afterEffect,classificationError} from '../../packages/sdk/src/item-classification.mjs';
-import {fetchPresignedItem} from '../../packages/sdk/src/item-classification-fetch.mjs';
+import {fetchPresignedItem,CHECKS_CONNECTED_ADDRESS} from '../../packages/sdk/src/item-classification-fetch.mjs';
 
 export const TEXT_CAPABILITIES=Object.freeze({kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline','url'],maxBytes:65536}],maxLabels:16,model:{id:'test/double',version:'1'}});
 const decoder=new TextDecoder();
@@ -14,7 +14,7 @@ const decoder=new TextDecoder();
  * throw before any effect (simulating rate limits and the like). `afterFetch`: optional code thrown after the fetch,
  * which must surface as `indeterminate`. `log`: keep the validated arguments of each call (tests only).
  */
-export function classifierDouble({capabilities=TEXT_CAPABILITIES,now=()=>Date.UTC(2026,9,28,12),fetch,checkHost=async()=>['203.0.113.10'],model=capabilities.model??{id:'test/double',version:'1'},fail,afterFetch,log=false}={}){
+export function classifierDouble({capabilities=TEXT_CAPABILITIES,now=()=>Date.UTC(2026,9,28,12),fetch,checkHost=async()=>['8.8.8.8'],model=capabilities.model??{id:'test/double',version:'1'},fail,afterFetch,log=false}={}){
  const advertised=validateCapabilities(structuredClone(capabilities));if(!advertised)throw new TypeError('Invalid double capabilities');
  const double={counts:{capabilities:0,classify:0,fetched:0,refused:0},calls:[],
   async capabilities(args={}){validateCapabilitiesArgs(args);double.counts.capabilities++;const code=fail?.('capabilities',args);if(code)throw classificationError(code,'Refused.');return structuredClone(capabilities);},
@@ -38,7 +38,8 @@ export function classifierDouble({capabilities=TEXT_CAPABILITIES,now=()=>Date.UT
 }
 /**
  * Presigned-URL fetch double: `objects` maps an href to {status=200, body (string|Uint8Array), headers={}, location}.
- * Records each request's method, redirect mode, credentials mode and header names; never touches the network.
+ * Records each request's method, redirect mode, credentials mode and header names; never touches the network, so it is
+ * marked as checking the connected address (there is none).
  */
 export function presignedFetchDouble(objects={}){
  const requests=[];
@@ -51,6 +52,7 @@ export function presignedFetchDouble(objects={}){
   if(status>=300&&status<400&&init.redirect==='follow'&&object.location)return fetch(object.location,init);
   return new Response(status===204||status===304||status>=300&&status<400?null:body,{status,headers});
  };
+ fetch[CHECKS_CONNECTED_ADDRESS]=true;
  return {fetch,requests};
 }
 /**

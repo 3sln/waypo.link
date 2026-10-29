@@ -77,19 +77,42 @@ const faultResult=(code,message,error={},issuer=null)=>({__federationError:{code
  * against the classifier's capabilities, before any effect; a classifier reports a refusal after an effect as
  * `indeterminate` (packages/sdk/src/item-classification.mjs afterEffect), so journaling it as final is safe. */
 const NO_EFFECT_CODES=new Set(['invalid_args','invalid_actions','unsupported_contract','unsupported_method','not_found','forbidden','conflict','quota_exceeded','account_quota_exceeded','rate_limited','storage_write_unavailable','tx_conflict','app_notifications_unavailable','message_receipt_limited','message_receipt_unavailable','message_receipt_disabled','message_receipt_too_large','operation_expired','body_too_large','claimed','unsupported_peer','approval_required','unsupported_item']);
-// Review L3 (CR-X3-25): where a write's result is not retained, the request fingerprint is the only content-derived value
-// in the journal row, so it is an HMAC under this owner shard's journal key, never a bare digest a store reader could test
-// guesses against. The key is stable, so same-tx deduplication and tx_conflict are unchanged; eraseSubject removes it.
-const JOURNAL_KEY='federation/journal-key/v1';
+// Review L3 (CR-X3-25), revised for security review L1 (2026-10-28): where a write's result is not retained, the request
+// fingerprint is the only content-derived value in the journal row, so it is an HMAC, never a bare digest a store reader
+// could test guesses against. The HMAC key is never stored: it is derived per subject with HKDF-SHA-256 from a deployment
+// secret held outside the owner shard (`journalSecret`, wired from FEDERATION_JOURNAL_KEY, else KEY_ENCRYPTION_KEY, by
+// packages/runtime/federation.mjs federationControllerOptions). A full-store reader, or a backup or dump of the shard,
+// therefore cannot recompute a fingerprint without that secret. The key is stable for a given secret, so same-tx
+// deduplication and tx_conflict are unchanged.
+// - `journalSecret: null` (a production composition with no secret configured) fails closed with
+//   temporarily_unavailable for non-retained writes. It is raised before the journal reservation and before the adapter
+//   runs, so nothing was written and nothing happened (the same position as the missing-durable-journal refusal).
+// - `journalSecret` omitted (direct test or embedded compositions, including a bare `dispatch` host, that do not go through
+//   federationControllerOptions)
+//   uses DEV_JOURNAL_SECRET, a public, deterministic local/dev constant. It protects nothing and is documented as such;
+//   federationControllerOptions passes it only when LOCAL_DEVELOPMENT is 'true'.
+// - The secret is never logged, returned or written; only the derived HMAC output reaches the store.
+// Pre-deploy rows: the earlier design stored a random key at `federation/journal-key/v1`; that row is deleted lazily on the
+// next non-retained write (and by eraseSubject). A non-retained row written before this change holds a fingerprint under
+// the old key (or a bare digest), so a same-tx retry within its 24 h window answers tx_conflict instead of indeterminate.
+// That is acceptable pre-release (no real users; a destructive reset is also fine).
+const LEGACY_JOURNAL_KEY='federation/journal-key/v1';
+export const DEV_JOURNAL_SECRET='bindle-local-development-journal-secret-not-for-production';
 const base64urlBytes=bytes=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-async function journalSecret(transact,crypto){return transact(async tx=>{const prior=await tx.get(JOURNAL_KEY);if(typeof prior?.key==='string'&&/^[A-Za-z0-9_-]{43}$/.test(prior.key))return prior.key;const key=base64urlBytes(crypto.getRandomValues(new Uint8Array(32)));await tx.set(JOURNAL_KEY,{key});return key;});}
-async function keyedFingerprint(crypto,key,value){const raw=Uint8Array.from(atob(key.replace(/-/g,'+').replace(/_/g,'/')+'='),c=>c.charCodeAt(0)),hmac=await crypto.subtle.importKey('raw',raw,{name:'HMAC',hash:'SHA-256'},false,['sign']);return 'hmac:'+base64urlBytes(new Uint8Array(await crypto.subtle.sign('HMAC',hmac,new TextEncoder().encode(value))));}
+/** The per-subject journal HMAC key: HKDF-SHA-256(secret, salt 'bindle/federation-journal/v1', info subject). */
+async function journalKey(crypto,secret,subject){
+ const encoder=new TextEncoder(),ikm=await crypto.subtle.importKey('raw',encoder.encode(secret),'HKDF',false,['deriveKey']);
+ return crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:encoder.encode('bindle/federation-journal/v1'),info:encoder.encode(String(subject))},ikm,{name:'HMAC',hash:'SHA-256',length:256},false,['sign']);
+}
+async function keyedFingerprint(crypto,secret,subject,value){return 'hmac:'+base64urlBytes(new Uint8Array(await crypto.subtle.sign('HMAC',await journalKey(crypto,secret,subject),new TextEncoder().encode(value))));}
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
-  constructor({flagConfig,schemaHostProvider,metadata,auth,issuer,clients=[],pinContract,contractVersion,schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,grantChanged,appSessionLineage,deriveAppSession,incremental,brokering,integrations=false,clientAuth,termsAllowed}){
+  constructor({flagConfig,schemaHostProvider,metadata,auth,issuer,clients=[],pinContract,contractVersion,schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,grantChanged,appSessionLineage,deriveAppSession,incremental,brokering,integrations=false,clientAuth,termsAllowed,journalSecret=DEV_JOURNAL_SECRET}){
     if(!metadata?.transaction||!auth?.owner)throw new TypeError('Transactional metadata and authenticated owner resource required');
     Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost,clientMetadata:clientMetadata===true,manifestDeclarations});
+    // Not enumerable, so the secret never appears in a serialized or logged controller.
+    Object.defineProperty(this,'journalSecret',{value:journalSecret,enumerable:false,writable:false});
     this.clientAuth=clientAuth;this.service=new FederationService({organizations:arguments[0].organizations,relationImports:arguments[0].relationImports,pinContract,contractVersion,integrations,store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,appSessions,brokering,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),termsAllowed,dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
     this.service.incrementalIdentity=incrementalIdentity;this.service.eventBusReader=eventBusReader;this.service.grantChanged=grantChanged;this.service.appSessionLineage=appSessionLineage;this.service.deriveAppSession=deriveAppSession;this.service.incremental=incremental;
     // Persisted metadata-client snapshots load once per instance before any operation that may consult a client.
@@ -170,8 +193,11 @@ export class FederationController {
     if(!writing){try{return await execute();}catch(error){if(NO_EFFECT_CODES.has(error.code))return faultResult(error.code,'The requested operation could not be completed.',error,this.issuer);throw error;}}
     const journalKey=`federation/journal/${encodeURIComponent(ctx.subject)}/${encodeURIComponent(ctx.clientId)}/${ctx.tx}`;
     const fingerprinted=canonical({resource:ctx.resource,addressedResource:ctx.addressedResource??ctx.resource,contract:ctx.contract,method:ctx.method,args:ctx.args,scope:ctx.scope??{},epoch:ctx.epoch??null,resourceGeneration:ctx.resourceGeneration??null,connectionGeneration:ctx.connection?.generation??null});
-    const fingerprint=retain?await digest(crypto,fingerprinted):await keyedFingerprint(crypto,await journalSecret(transact,crypto),fingerprinted);
-    const prior=await transact(async tx=>{const previous=await tx.get(journalKey);if(previous&&previous.expiresAt>this.clock()){if(previous.fingerprint!==fingerprint)fail('tx_conflict','Transaction identifier was reused with different arguments.');return previous;}const rows=await tx.list('federation/journal/');let live=0;for(const row of rows){if(row.value.expiresAt<=this.clock())await tx.delete(row.key);else live++;}if(live>=256)fail('rate_limited','This account has reached its outstanding transaction limit.');await tx.set(journalKey,{fingerprint,status:'reserved',expiresAt:this.clock()+86400000});return null;});
+    // Before the reservation and before the adapter runs: a refusal here wrote nothing and did nothing.
+    const journalSecret=this.journalSecret===undefined?DEV_JOURNAL_SECRET:this.journalSecret;
+    if(!retain&&(typeof journalSecret!=='string'||!journalSecret))fail('temporarily_unavailable','This operation is unavailable until the journal secret is configured.');
+    const fingerprint=retain?await digest(crypto,fingerprinted):await keyedFingerprint(crypto,journalSecret,ctx.subject,fingerprinted);
+    const prior=await transact(async tx=>{if(!retain&&await tx.get(LEGACY_JOURNAL_KEY)!=null)await tx.delete(LEGACY_JOURNAL_KEY);const previous=await tx.get(journalKey);if(previous&&previous.expiresAt>this.clock()){if(previous.fingerprint!==fingerprint)fail('tx_conflict','Transaction identifier was reused with different arguments.');return previous;}const rows=await tx.list('federation/journal/');let live=0;for(const row of rows){if(row.value.expiresAt<=this.clock())await tx.delete(row.key);else live++;}if(live>=256)fail('rate_limited','This account has reached its outstanding transaction limit.');await tx.set(journalKey,{fingerprint,status:'reserved',expiresAt:this.clock()+86400000});return null;});
     if(prior){if(prior.status==='complete'){await ctx.reauthorize?.();if(prior.retained===false)return faultResult('indeterminate','The previous operation completed; its result is not retained. Reconcile through a fresh read.');return prior.result;}return faultResult('indeterminate','The previous operation outcome is unknown. Reconcile through a fresh read.');}
     const save=record=>transact(tx=>tx.set(journalKey,record));
     let result;try{result=await execute();}
