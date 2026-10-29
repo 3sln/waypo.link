@@ -36,7 +36,7 @@ for(const operation of ['logout','logoutSaved','revokeSession','removePasskey','
  const f=identityEngine();try{
   const {owner}=await activate(f.act),child=await derive(f,owner);await step(f,child);const grandchild=await derive(f,child),unrelated=await signInPasskey(f.act,owner.account.handle,'passkey-alice');
   if(operation==='revokeSession')await f.act(operation,{sessionId:owner.sessionContext},sessionContext(unrelated));
-  else if(operation==='removePasskey'){const account=await f.repository.get(owner.account.id);account.credentials.push({id:'parent-key'});account.sessions.find(s=>s.id===owner.sessionContext).credentialId='parent-key';await f.repository.compareAndSwap(account.id,account.revision,account);await f.act(operation,{credentialId:'parent-key'},sessionContext(unrelated));}
+  else if(operation==='removePasskey'){const account=await f.repository.get(owner.account.id);account.credentials[0].createdAt=f.clock.now()-8*86400000;account.credentials.push({id:'parent-key',createdAt:f.clock.now()});account.sessions.find(s=>s.id===owner.sessionContext).credentialId='parent-key';await f.repository.compareAndSwap(account.id,account.revision,account);await step(f,unrelated);/* Tier A: a recent passkey, undone with the established one */await f.act(operation,{credentialId:'parent-key'},sessionContext(unrelated));}
   else if(operation==='cancelDeviceLogin')await f.act(operation,child.request);
   else await f.act(operation,{},sessionContext(owner));
   for(const session of [child,grandchild])await assert.rejects(f.service.authorized(sessionContext(session)),{code:'unauthorized'});await f.service.authorized(sessionContext(unrelated));

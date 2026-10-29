@@ -145,7 +145,8 @@ for (const kind of REPOSITORIES) {
     await expectBump(h, id, 'renamePasskey', 0, () => h.act('renamePasskey', { credentialId: 'cred-1', label: 'Renamed' }, ctx));
     tick(); const { challengeToken } = await h.act('beginPasskeyLogin', { handle: pending.account.handle, turnstileToken: 'verified' });
     const third = await expectBump(h, id, 'finishPasskeyLogin (counter update)', 0, () => h.act('finishPasskeyLogin', { challengeToken, response: { id: 'cred-1' } }));
-    tick(); await expectBump(h, id, 'removePasskey', 1, () => h.act('removePasskey', { credentialId: 'cred-1' }, ctx));
+    // Tier A (review 2026-10-29 M2): the recent cred-1 is removed with a fresh step-up from the aged KEY.
+    tick(); await step(h, ctx); await expectBump(h, id, 'removePasskey', 1, () => h.act('removePasskey', { credentialId: 'cred-1' }, ctx));
     assert.equal((await h.record(id)).sessions.some(s => s.credentialId === 'cred-1'), false, 'the passkey session ended with it');
     await expectBump(h, id, 'revokeOtherSessions', 0, () => h.act('revokeOtherSessions', {}, ctx));
     await expectBump(h, id, 'revokeSession', 0, async () => { const other = await signIn(h, pending.account.handle); return h.act('revokeSession', { sessionId: (await h.owner(sessionContext(other))).devices.find(d => d.current).id }, ctx); });

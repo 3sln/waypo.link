@@ -231,13 +231,15 @@ export function deletionView(request,{fenced=false}={}){
   billing:{pending:request.billing?.pending===true,cancelAtPeriodEnd:Array.isArray(request.billing?.set)?request.billing.set.length:0,...request.billing?.unrestored?{unrestored:request.billing.unrestored.length}:{}},
   hold:request.hold?.reason??null,...request.state==='cancelled'?{cancelledAt:request.cancelledAt}:{}};
 }
-function hasChannels(request){return Boolean(request?.channels?.email)||Boolean(request?.channels?.push?.length);}
+function hasChannels(request){return Boolean(request?.channels?.email)||Boolean(request?.channels?.emails?.length)||Boolean(request?.channels?.push?.length);}
 
 async function channelSnapshot(tx,owner,identity){
  const email=typeof identity.verifiedEmail==='string'&&Number.isSafeInteger(identity.emailVerifiedAt)?identity.verifiedEmail:null;
+ // Every verified address receives the deletion notices (review 2026-10-29 M3); `email` stays the notice address.
+ const emails=[...new Set([...email?[email]:[],...(Array.isArray(identity.emails)?identity.emails:[]).filter(entry=>typeof entry?.address==='string'&&Number.isSafeInteger(entry.verifiedAt)).map(entry=>entry.address)])].slice(0,4);
  // Copies, not references: deleting push-subscription rows after the request cannot suppress notices (R1-M2).
  const push=[...(await tx.list({prefix:key('push-subscription',owner)})).values()].filter(row=>row?.owner===owner&&typeof row.endpoint==='string'&&plain(row.keys)).slice(0,MAX_PUSH).map(row=>({id:row.id,endpoint:row.endpoint,keys:structuredClone(row.keys)}));
- return {email,emailVerifiedAt:email?identity.emailVerifiedAt:null,push};
+ return {email,emailVerifiedAt:email?identity.emailVerifiedAt:null,...emails.length>1?{emails}:{},push};
 }
 
 const NOTICE_KINDS=Object.freeze(['scheduled','reminder-3d','reminder-1d','executing','completed']);
@@ -577,10 +579,10 @@ export class DeletionService{
   const ports=this.ports,billing=ports.billing,clock=()=>this.now(),log=this.log;
   const common=erasureStages(this.executor,{ports,clock,log});
   const owner=request.owner,completedNotice=async(_owner,{state})=>{
-   const notices=ports.notices;if(!request.channels?.email)return {done:true,sent:false,reason:'no-email'};
+   const notices=ports.notices;if(!request.channels?.email&&!request.channels?.emails?.length)return {done:true,sent:false,reason:'no-email'};
    if(typeof notices?.deliver!=='function')return {done:true,sent:false,reason:'notice-unconfigured'};
    state.firstAt??=clock();state.attempts=(state.attempts??0)+1;
-   let accepted=false;try{accepted=(await notices.deliver({owner,kind:'completed',basis:request.basis,handle:request.handle,executeAfter:request.executeAfter,graceDays:request.graceDays,channels:{email:request.channels.email,emailVerifiedAt:request.channels.emailVerifiedAt,push:[]},cancellable:false,attemptId:`${request.id}:completed:${state.attempts}`}))?.accepted===true;}catch{accepted=false;}
+   let accepted=false;try{accepted=(await notices.deliver({owner,kind:'completed',basis:request.basis,handle:request.handle,executeAfter:request.executeAfter,graceDays:request.graceDays,channels:{email:request.channels.email??null,emailVerifiedAt:request.channels.emailVerifiedAt??null,...request.channels.emails?{emails:request.channels.emails}:{},push:[]},cancellable:false,attemptId:`${request.id}:completed:${state.attempts}`}))?.accepted===true;}catch{accepted=false;}
    if(accepted)return {done:true,sent:true};
    // Last point at which the address exists; after a day of failures the wipe proceeds and the drop is logged.
    if(clock()-state.firstAt>=NOTICE_GIVE_UP_MS){log({action:'deletion-notice-dropped',owner,kind:'completed'});return {done:true,sent:false,reason:'undelivered'};}

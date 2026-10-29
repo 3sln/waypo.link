@@ -1,4 +1,4 @@
-import {legacyEmailView} from './emails.mjs';
+import {legacyEmailView,confirmedEmails} from './emails.mjs';
 import {revokeAllLineage} from './linked-approval.mjs';
 import {AdminService} from './admin.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
@@ -43,24 +43,31 @@ export function lifecycleIdentityPort(repository,{clock=()=>Date.now()}={}){
  return Object.freeze({
   async get(owner){
    if(!uuid(owner))throw new TypeError('Invalid account identifier');const account=await repository.get(owner);if(!account)return null;
-   // The notice address stands for the record's email in this projection (sign-in and intents spike §3.2).
+   // The notice address stands for the record's email in the single-address fields (sign-in and intents spike §3.2);
+   // `emails` lists every verified and sign-in address, which all receive security notices: lifecycle and deletion
+   // notices go to each of them (review 2026-10-29 M3).
    const view=legacyEmailView(account),email=view.verifiedEmail;
    // DX-3 adds the canonical handle (typed confirmation), internal provenance (R1-L9), the email sign-in
    // setting (R1-M3) and, once deleted, the reason recorded by the tombstone (restore path, R1-L1).
-   return {status:account.status,assignmentId:account.assignmentId,createdAt:account.createdAt,verifiedEmail:email,emailVerifiedAt:email?view.emailVerifiedAt:null,
+   return {status:account.status,assignmentId:account.assignmentId,createdAt:account.createdAt,verifiedEmail:email,emailVerifiedAt:email?view.emailVerifiedAt:null,emails:confirmedEmails(account).map(entry=>({address:entry.address,verifiedAt:entry.verifiedAt})),
     handle:typeof account.handle==='string'?account.handle:null,systemIdentity:Boolean(account.systemIdentity),emailLoginEnabled:view.emailLoginEnabled===true,
     ...account.status==='deleted'?{deletionReason:deletionReason(account)}:{},...account.status==='moved'?{moved:true}:{}};
   },
-  /** `reason` names the deletion path: 'inactive' (the lifecycle default, unchanged), or the deletion basis
+  /** `expectedRevision` (optional) makes the write conditional on the record still having that revision; otherwise it
+   * throws `lifecycle_identity_changed`. `reason` names the deletion path: 'inactive' (the lifecycle default, unchanged), or the deletion basis
    * ('owner', 'admin-email', 'admin-underage', 'admin-closure'), or 'moved' (PORT-2: the purge after a committed move's
    * export window). It is recorded as `account-deleted-${reason}`. A moved tombstone keeps status `moved` and its
    * `moved` record while the redirect or proof windows run, then answers exactly as a deleted identity. 'moved'
    * only applies to an identity in status `moved`; any other identity refuses it. */
-  async tombstone(owner,{assignmentId,reason='inactive'}={}){
-   if(!uuid(owner)||typeof assignmentId!=='string'&&assignmentId!==undefined||!TOMBSTONE_REASONS.has(reason))throw new TypeError('Invalid tombstone request');
+  async tombstone(owner,{assignmentId,reason='inactive',expectedRevision}={}){
+   if(!uuid(owner)||typeof assignmentId!=='string'&&assignmentId!==undefined||!TOMBSTONE_REASONS.has(reason)||expectedRevision!==undefined&&!Number.isSafeInteger(expectedRevision))throw new TypeError('Invalid tombstone request');
    for(let attempt=0;attempt<4;attempt++){
     const account=await repository.get(owner);if(!account)return false;
     if(assignmentId!==undefined&&account.assignmentId!==assignmentId)throw Object.assign(new Error('Account assignment changed.'),{code:'lifecycle_assignment_changed',status:409});
+    // `expectedRevision` (the password reset, review 2026-10-29 L2): the caller decided on that exact record; any change
+    // since (a recovery started, a passkey added) refuses, and the caller plans again. A lost CAS below re-reads and
+    // lands here with the newer revision.
+    if(expectedRevision!==undefined&&account.revision!==expectedRevision)throw Object.assign(new Error('The identity changed since it was checked.'),{code:'lifecycle_identity_changed',status:409});
     if(account.status==='deleted')return true;
     const moved=reason==='moved';
     if(moved&&account.status!=='moved'||!moved&&account.status==='moved')throw Object.assign(new Error('A moved identity is purged only with reason moved.'),{code:'lifecycle_identity_conflict',status:409});

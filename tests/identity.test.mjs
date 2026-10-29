@@ -45,6 +45,12 @@ async function activate(service, input = signup) {
   await stepUp(service, device, ownerContext);
   return { pending, file, owner, ownerContext, device };
 }
+/** Sign-in method removal tiers (spike §6.4, review 2026-10-29 M2): a recent passkey is removed with a step-up from an
+ * established one (7 days or older). Ages the sign-up passkey, signs in again with it and steps up. */
+async function established(service, advance, device) {
+  advance(7 * 86400000); const session = await signIn(service, device), ctx = { ...context, sessionToken: session.sessionToken, csrfToken: session.csrfToken };
+  await stepUp(service, device, ctx); return ctx;
+}
 /** Binds a test authenticator to the account it signs for (the assertion's user handle). */
 const register = (device, accountId) => Object.assign(device, { accountId });
 /** A real passkey step-up (counter 0: a synced credential, so repeated assertions stay valid). */
@@ -236,7 +242,8 @@ test('dormant lifecycle preserves no-contact accounts and requires signoff, actu
 });
 
 test('multiple real passkeys can be enrolled, renamed and removed with session-bound recent authorization', async () => {
-  const { service } = await fixture(); const { ownerContext, device } = await activate(service); const first = authenticator(); const second = authenticator();
+  const { service, advance } = await fixture(); const { device } = await activate(service); const first = authenticator(); const second = authenticator();
+  const ownerContext = await established(service, advance, device);
   const beginning = await service.credentialBegin({ label: 'Phone passkey' }, ownerContext);
   const anotherSession = await signIn(service, device);
   await assert.rejects(service.credentialFinish({ challengeId: beginning.challengeId, response: first.registration(beginning.registrationOptions.challenge) }, { ...context, ...anotherSession }), { code: 'invalid_challenge' });
@@ -256,20 +263,47 @@ test('multiple real passkeys can be enrolled, renamed and removed with session-b
   await assert.rejects(service.removePasskey({ credentialId: device.id }, ownerContext), { code: 'credential_required' }, 'the last passkey stays (no sign-in email)');
 });
 
+test('passkey removal tiers (spike §6.4, review 2026-10-29 M2): a fresh passkey cannot strip the established ones; Tier B is refused', async () => {
+  const { service, advance } = await fixture(); const { device } = await activate(service); const backup = authenticator(); const intruder = authenticator();
+  // The owner has two established passkeys.
+  const owner = await established(service, advance, device);
+  let begin = await service.credentialBegin({ label: 'Backup' }, owner);
+  await service.credentialFinish({ challengeId: begin.challengeId, response: backup.registration(begin.registrationOptions.challenge) }, owner);
+  const aged = await established(service, advance, device);
+  // Someone holding a session adds their own passkey, signs in with it and steps up with it.
+  begin = await service.credentialBegin({ label: 'Intruder' }, aged);
+  await service.credentialFinish({ challengeId: begin.challengeId, response: intruder.registration(begin.registrationOptions.challenge) }, aged);
+  register(intruder, device.accountId);
+  const session = await signIn(service, intruder), ctx = { ...context, sessionToken: session.sessionToken, csrfToken: session.csrfToken };
+  await stepUp(service, intruder, ctx);
+  // Established passkeys are Tier B (file proof and a delay, not built): refused for everyone, as for emails.
+  for (const id of [device.id, backup.id]) await assert.rejects(service.removePasskey({ credentialId: id }, ctx), { code: 'removal_unavailable' });
+  for (const id of [device.id, backup.id]) await assert.rejects(service.removePasskey({ credentialId: id }, aged), { code: 'removal_unavailable' });
+  // A recent passkey proves nothing for another recent one, nor for itself.
+  await assert.rejects(service.removePasskey({ credentialId: intruder.id }, ctx), { code: 'step_up_required' }, 'an established passkey could prove it: the console prompts');
+  // Tier A: the owner's established passkey, asserted within 5 minutes, undoes the intruder's passkey at once.
+  advance(300001); await assert.rejects(service.removePasskey({ credentialId: intruder.id }, aged), { code: 'step_up_required' }, 'the assertion must be fresh');
+  await stepUp(service, device, aged);
+  const removed = await service.removePasskey({ credentialId: intruder.id }, aged);
+  assert.deepEqual(removed.credentials.map(c => c.id).sort(), [device.id, backup.id].sort());
+  await assert.rejects(service.owner({}, ctx), { code: 'unauthorized' }, 'sessions that signed in with it ended');
+});
+
 test('last passkey cannot be removed without another login method and recovery; removed passkeys stop authenticating', async () => {
   const { service, advance } = await fixture(); const first = authenticator(); const second = authenticator();
   const pending = await service.signup({ ...signup, method: 'passkey' }, context);
   await service.registerPasskey({ ...pending, response: first.registration(pending.registrationOptions.challenge) }, context);
   const file = await service.downloadRecovery(pending, context);
-  const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context); const ownerContext = { ...context, ...owner };
-  await service.recent(ownerContext);assert.equal((await service.authorized(ownerContext)).session.stepUpAt,undefined);
-  const step=await service.stepUpBegin({},ownerContext);await service.stepUp({method:'passkey',response:first.assertion(step.authenticationOptions.challenge,owner.account.id)},ownerContext);
+  const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context); const activation = { ...context, ...owner };
+  await service.recent(activation);assert.equal((await service.authorized(activation)).session.stepUpAt,undefined);
+  register(first, owner.account.id); const ownerContext = await established(service, advance, first);
   await assert.rejects(service.removePasskey({ credentialId: first.id }, ownerContext), { code: 'credential_required' });
   const beginning = await service.credentialBegin({ label: 'Second passkey' }, ownerContext);
   await service.credentialFinish({ challengeId: beginning.challengeId, response: second.registration(beginning.registrationOptions.challenge) }, ownerContext);
+  await assert.rejects(service.removePasskey({ credentialId: first.id }, ownerContext), { code: 'removal_unavailable' }, 'an established passkey is Tier B');
   const login = await service.beginPasskeyLogin({ handle: signup.handle, turnstileToken: 'verified' }, context);
-  await service.removePasskey({ credentialId: first.id }, ownerContext);
-  await assert.rejects(service.finishPasskeyLogin({ challengeToken: login.challengeToken, response: first.assertion(login.authenticationOptions.challenge, owner.account.id) }, context), { code: 'unauthorized' });
+  await service.removePasskey({ credentialId: second.id }, ownerContext);
+  await assert.rejects(service.finishPasskeyLogin({ challengeToken: login.challengeToken, response: second.assertion(login.authenticationOptions.challenge, owner.account.id) }, context), { code: 'unauthorized' });
   advance(900001);
   await assert.rejects(service.credentialBegin({}, ownerContext), { code: 'reauthentication_required' });
 });
@@ -325,7 +359,7 @@ test('device denial, cancellation, expiry and revoked approving sessions never i
 });
 
 test('device handoff fails closed on session-store race, and credential revocation invalidates its login sessions', async () => {
-  const { service, repository, advance } = await fixture(); const { ownerContext } = await activate(service);
+  const { service, repository, advance } = await fixture(); const activated = await activate(service), ownerContext = await established(service, advance, activated.device);
   const device = authenticator(); const begin = await service.credentialBegin({}, ownerContext);
   await service.credentialFinish({ challengeId: begin.challengeId, response: device.registration(begin.registrationOptions.challenge) }, ownerContext);
   const login = await service.beginPasskeyLogin({ handle: 'alice', turnstileToken: 'verified' }, context);

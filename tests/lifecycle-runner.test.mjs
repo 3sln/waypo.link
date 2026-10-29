@@ -285,3 +285,10 @@ test('lifecycle freeze severs connections with cold tiering disabled; tombstone 
  await toSuspended(f);assert.deepEqual(calls,[{id:owner,reason:'lifecycle-frozen'}]);
  await noticeEpisode(f,SUSPENDED_SPACING);await jumpTo(f,(await f.controller.lifecycle.status(owner)).deadline);await f.tick();f.advance(60000);await f.tick();assert.ok(calls.some(c=>c.id===owner&&c.reason==='lifecycle-tombstone'));assert.equal((await f.repository.get(owner)).status,'deleted');
 });
+
+test('lifecycle notices go to every verified address of the account (review 2026-10-29 M3)',async()=>{
+ const sent=[],owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',attemptId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+ const mail={async sendAccountNotice(input){sent.push(input.email);return {messageId:'m'+sent.length};}};
+ const result=await dispatchLifecycleNotice({mail,owner,phase:'warning',days:3,attemptId,email:'one@mail.example',emails:['one@mail.example','two@mail.example'],subscriptions:[]});
+ assert.equal(result.accepted,true);assert.deepEqual(sent,['one@mail.example','two@mail.example']);assert.equal(result.receipt,'email:m1');
+});

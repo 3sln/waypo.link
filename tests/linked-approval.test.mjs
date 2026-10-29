@@ -235,7 +235,7 @@ for (const path of ['revokeSession', 'revokeOtherSessions', 'removePasskey', 're
     const { owner, file } = await activate(f.act), { approver, ref, request } = await approvedApp(f, 'ongoing'), unrelated = await f.login();
     if (path === 'revokeSession') await f.act(path, { sessionId: approver.sessionContext }, sessionContext(owner));
     else if (path === 'revokeOtherSessions') { await f.step(unrelated); await f.act(path, {}, sessionContext(unrelated)); }
-    else if (path === 'removePasskey') { const account = await f.repository.get(ref.owner); account.credentials = [{ id: 'approver-key' }, { id: 'other-key' }]; account.sessions.find(s => s.id === approver.sessionContext).credentialId = 'approver-key'; await f.repository.compareAndSwap(account.id, account.revision, account); await f.act(path, { credentialId: 'approver-key' }, sessionContext(owner)); }
+    else if (path === 'removePasskey') { const account = await f.repository.get(ref.owner); account.credentials = [{ id: 'approver-key', createdAt: f.clock.now() }, { ...account.credentials[0], createdAt: f.clock.now() - 8 * DAY }]; account.sessions.find(s => s.id === approver.sessionContext).credentialId = 'approver-key'; await f.repository.compareAndSwap(account.id, account.revision, account); await f.step(owner); /* Tier A: a recent passkey, undone with the established one */ await f.act(path, { credentialId: 'approver-key' }, sessionContext(owner)); }
     else if (path === 'recover') { f.clock.advance(2 * DAY); assert.equal(await f.live(ref), true, 'natural expiry keeps the lineage'); await f.act('recover', { recoveryToken: file.recoveryToken, turnstileToken: 'verified' }); }
     else if (path === 'linkedLineageRevoke') assert.deepEqual(await f.sys(path, { owner: ref.owner, lineageId: ref.lineageId }), { revoked: true });
     else if (path === 'linkedCancelApp') assert.deepEqual(await f.sys(path, { deviceCode: request.deviceCode, clientId: 'https://acme.example/client', dpopJkt: 'J'.repeat(43) }), { cancelled: true });
@@ -408,4 +408,35 @@ test('session rollout checks the authenticated owner again at approval and consu
   allowed=true;await approve(f,request,owner);f.clock.advance(5000);allowed=false;
   assert.equal((await f.la('linkedAccept',request,tv)).status,'access_denied');assert.equal((await f.la('linkedCancel',request,tv)).cancelled,true);
  }finally{await f.engine.dispose();}
+});
+
+test('password-derived authority is refused through lineage at use time (review 2026-10-29 L1): children, approved requests and older app lineages', async () => {
+  const f = fixture(); try {
+    const { owner } = await activate(f.act), child = await derive(f, owner);
+    const pending = await startSession(f); await approve(f, pending, owner); f.clock.advance(5000);
+    const { approver, ref } = await approvedApp(f, 'ongoing');
+    // Before: all live.
+    await f.service.authorized(sessionContext(child)); assert.equal(await f.live(ref), true);
+    // The owner's session turns out to be password-derived (a legacy record); the app lineage predates `passwordFree`.
+    const account = await f.repository.get(owner.account.id), revision = account.revision;
+    account.sessions.find(s => s.id === owner.sessionContext).stepUpCredential = { kind: 'password' };
+    account.sessions.find(s => s.id === approver.sessionContext).stepUpCredential = { kind: 'password' };
+    for (const entry of account.linkedLineage) delete entry.passwordFree;
+    account.revision = revision + 1; assert.ok(await f.repository.compareAndSwap(account.id, revision, account));
+    await gone(f, owner); await gone(f, child);
+    assert.equal((await f.la('linkedPoll', pending, tv)).status, 'access_denied', 'an approved request whose approver is password-derived yields nothing');
+    assert.equal((await f.la('linkedAccept', pending, tv)).status, 'access_denied');
+    assert.equal(await f.live(ref), false, 'an older app lineage approved from a password-derived session is not live');
+  } finally { await f.engine.dispose(); }
+});
+
+test('an older app lineage whose approving session is gone stays live unless the record still carries password fields (review 2026-10-29 L1)', async () => {
+  const f = fixture(); try {
+    await activate(f.act); const { approver, ref } = await approvedApp(f, 'ongoing');
+    const patch = async change => { const account = await f.repository.get(ref.owner), revision = account.revision; change(account); account.revision = revision + 1; assert.ok(await f.repository.compareAndSwap(account.id, revision, account)); };
+    await patch(account => { account.sessions = account.sessions.filter(s => s.id !== approver.sessionContext); for (const entry of account.linkedLineage) { delete entry.passwordFree; entry.sessionExpiresAt = f.clock.now() - 1; } });
+    assert.equal(await f.live(ref), true, 'natural expiry keeps it');
+    await patch(account => { account.passwordHash = 'argon2id$legacy'; });
+    assert.equal(await f.live(ref), false, 'with password fields its chain cannot be shown to be passkey-approved');
+  } finally { await f.engine.dispose(); }
 });

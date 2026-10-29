@@ -9,7 +9,7 @@ import {compilePortalModules} from '../../packages/portal/index.mjs';
 import StateProvider from '../../apps/web/src/providers/browser-state.mjs';
 import {createContinuation,CONTINUATION_KEY,CONTINUATION_TTL_MS,LEGACY_CONTINUATION_KEYS} from '../../apps/web/src/shared/continuation.mjs';
 import {createIntentBrowser,SignInIntent,initialIntentState,intentState,singleton} from '../../apps/web/src/bl/intent-flow.mjs';
-import {BrowserState,InitializeSpace,SignIn,ConfirmRecovery,ConfirmEmail,StartDeviceLogin,PrepareDeviceQR,PollDeviceLogin,EncryptRecovery,DownloadRecovery,VerifyRecovery,PrepareRecovery} from '../../apps/web/src/bl/release.mjs';
+import {BrowserState,InitializeSpace,SignIn,SignOut,ConfirmRecovery,ConfirmEmail,StartDeviceLogin,PrepareDeviceQR,PollDeviceLogin,EncryptRecovery,DownloadRecovery,VerifyRecovery,PrepareRecovery} from '../../apps/web/src/bl/release.mjs';
 
 const MINUTE=60000,AUTHORIZE='/oauth/authorize?request_id='+'a'.repeat(43);
 function memoryStorage(){const rows=new Map();return {rows,getItem:key=>rows.has(key)?rows.get(key):null,setItem:(key,value)=>{rows.set(key,String(value));},removeItem:key=>{rows.delete(key);}};}
@@ -101,5 +101,15 @@ test('console: an app authorization entry resumes after sign-in and is consumed'
  const f=consoleFixture();try{
   f.store.saveReturn(AUTHORIZE);f.advance(20*MINUTE);await f.act(new InitializeSpace());await f.act(new SignIn({values:{handle:'river'}}));
   assert.deepEqual(f.navigations,[AUTHORIZE]);assert.equal(f.store.peek(),null);
+ }finally{await f.close();}
+});
+
+test('console: signing out discards a kept intent so the next person who signs in here does not land on it (review 2026-10-29 L3)',async()=>{
+ const f=consoleFixture();try{
+  await f.act(new InitializeSpace());await f.act(new SignIn({values:{handle:'river'}}));
+  await keepIntentFor(f,MINUTE);assert.equal(f.store.peek()?.target,'/i');
+  await f.act(new SignOut({}));
+  assert.ok(f.calls.some(call=>call.path==='/api/auth/logout'));assert.equal(f.store.peek(),null);assert.equal(f.storage.rows.has(CONTINUATION_KEY),false);
+  await f.act(new SignIn({values:{handle:'river'}}));assert.deepEqual(f.navigations,[],'nothing is resumed for the next sign-in');
  }finally{await f.close();}
 });

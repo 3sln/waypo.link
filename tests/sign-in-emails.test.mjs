@@ -34,6 +34,12 @@ async function addAndVerify(h, ctx, email) {
   return h.act('emailConfirm', { token: lastToken(h, 'link', email), confirmed: true }, ctx);
 }
 const emails = result => result.account.emails;
+/** Makes an account sign in only by email (as an email sign-up or the password reset leaves it): no passkey. */
+const emailOnly = (h, id) => { const record = h.repository.records.get(id); record.credentials = []; };
+async function emailSession(h, address) {
+  await h.act('emailLoginStart', { email: address, turnstileToken: 'verified' }); await h.settle();
+  return sessionContext(await h.act('emailLoginConfirm', { token: lastToken(h, 'login', address), confirmed: true }));
+}
 async function code(h, run) { try { await run(); } catch (error) { return error.code; } return 'ok'; }
 
 for (const kind of REPOSITORIES) {
@@ -133,9 +139,11 @@ test('RM-1 floor, RM-3 undo by email of an email-added sign-in email, and email 
   const h = harness(t, 'memory', { identityBackup: { reissue: async () => ({}), reissueCommit: async () => ({}) } }), { owner, ownerContext } = await activate(h.act);
   await addAndVerify(h, ownerContext, A); await stepUpPasskey(h.act, ownerContext, 'passkey-alice');
   await h.act('configureEmailLogin', { address: A, enabled: true }, ownerContext);
-  // Remove the only passkey: a sign-in email remains, so the floor holds.
-  const removed = await h.act('removePasskey', { credentialId: 'passkey-alice' }, ownerContext);
-  assert.equal(removed.removed, true);
+  // The only passkey cannot be removed (review 2026-10-29 M2): while it is recent no established passkey can undo it, and
+  // once established it is Tier B (file proof, not built). So the email-only state below is the one an email sign-up
+  // (P3) or the password reset leaves; it is set directly.
+  assert.equal(await code(h, () => h.act('removePasskey', { credentialId: 'passkey-alice' }, ownerContext)), 'removal_proof_required');
+  emailOnly(h, owner.account.id);
   // Email-only account: sign in by email; the only sign-in email cannot be turned off (RM-1).
   h.clock.advance(ESTABLISHED_METHOD_AGE_MS);
   await h.act('emailLoginStart', { email: A, turnstileToken: 'verified' }); await h.settle();
@@ -155,6 +163,62 @@ test('RM-1 floor, RM-3 undo by email of an email-added sign-in email, and email 
   assert.equal(emails(off).find(e => e.address === B).state, 'verified');
   // An email session cannot reissue the recovery file (SI-4; no passkey: add one first).
   assert.equal(await code(h, () => h.act('reissueRecoveryBegin', { acknowledged: true }, again)), 'passkey_required');
+});
+
+test('SI-4/Q8 (review 2026-10-29 M1): an email-only account adds a passkey from a fresh email session; every channel is told; RM-3 undoes it from an established sign-in email', async t => {
+  const h = harness(t), { owner, ownerContext } = await activate(h.act), id = owner.account.id;
+  await addAndVerify(h, ownerContext, A); await addAndVerify(h, ownerContext, B); await stepUpPasskey(h.act, ownerContext, 'passkey-alice');
+  await h.act('configureEmailLogin', { address: A, enabled: true }, ownerContext); await h.act('configureEmailLogin', { address: B, enabled: true }, ownerContext);
+  emailOnly(h, id); h.clock.advance(ESTABLISHED_METHOD_AGE_MS);
+  // A stale email session (over 5 minutes) is not the SI-4 step-up.
+  const stale = await emailSession(h, A); h.clock.advance(6 * MINUTE);
+  assert.equal(await code(h, () => h.act('credentialBegin', { label: 'Laptop' }, stale)), 'reauthentication_required');
+  // A fresh email session may add a passkey (and only that among credential changes).
+  const ectx = await emailSession(h, A), alertsBefore = h.alerts.length;
+  const begin = await h.act('credentialBegin', { label: 'Laptop' }, ectx);
+  await h.act('credentialFinish', { challengeId: begin.challengeId, response: passkeyResponse(begin, 'passkey-mail') }, ectx); await h.settle();
+  const added = (await h.record(id)).credentials.find(c => c.id === 'passkey-mail');
+  assert.deepEqual({ session: added.addedBy.session, emailAddress: added.addedBy.emailAddress }, { session: 'email', emailAddress: A });
+  assert.equal(typeof added.addedBy.sessionId, 'string');
+  assert.deepEqual(h.alerts.slice(alertsBefore).filter(a => a.type === 'passkey-added').map(a => a.email).sort(), [A, B], 'every address is told');
+  assert.ok(h.push.some(p => p.event === 'passkey-added'));
+  // With a passkey on the account, an email session no longer counts: a second passkey needs a passkey step-up.
+  assert.equal(await code(h, () => h.act('credentialBegin', { label: 'Second' }, ectx)), 'reauthentication_required');
+  // An email session never removes a passkey except by RM-3, and a stale one is not a fresh round trip.
+  h.clock.advance(11 * MINUTE);
+  assert.equal(await code(h, () => h.act('removePasskey', { credentialId: 'passkey-mail' }, ectx)), 'removal_proof_required');
+  // RM-3: a fresh email session from the established sign-in email B undoes the email-added passkey at once.
+  const undo = await emailSession(h, B), mark = h.alerts.length;
+  const removed = await h.act('removePasskey', { credentialId: 'passkey-mail' }, undo); await h.settle();
+  assert.deepEqual(removed.credentials, []);
+  assert.ok((await h.record(id)).audit.some(e => e.type === 'passkey-removed-by-email'));
+  assert.deepEqual(h.alerts.slice(mark).filter(a => a.type === 'passkey-removed').map(a => a.email).sort(), [A, B]);
+});
+
+test('RM-3 never removes a passkey added through setup or a passkey; SI-4 does not cover the notice address or removing a verified address', async t => {
+  const h = harness(t), { owner, ownerContext } = await activate(h.act), id = owner.account.id;
+  await addAndVerify(h, ownerContext, A); await addAndVerify(h, ownerContext, B); await stepUpPasskey(h.act, ownerContext, 'passkey-alice');
+  await h.act('configureEmailLogin', { address: A, enabled: true }, ownerContext);
+  h.clock.advance(ESTABLISHED_METHOD_AGE_MS);
+  // Keep the sign-up passkey recent (as if just added) while A is established: it was added through setup, not by email.
+  h.repository.records.get(id).credentials[0].createdAt = h.clock.now();
+  const ectx = await emailSession(h, A);
+  assert.equal(await code(h, () => h.act('removePasskey', { credentialId: 'passkey-alice' }, ectx)), 'removal_proof_required');
+  // SI-4 lists adding a passkey, verifying an address and turning sign-in on; the notice address and removals need a passkey.
+  emailOnly(h, id); const fresh = await emailSession(h, A);
+  assert.equal(await code(h, () => h.act('emailNotices', { address: B }, fresh)), 'reauthentication_required');
+  assert.equal(await code(h, () => h.act('emailRemove', { address: B, confirmed: true }, fresh)), 'step_up_required');
+});
+
+test('choosing another notice address notifies every address, including the previous and the new one (review 2026-10-29 M3)', async t => {
+  const h = harness(t), { ownerContext } = await activate(h.act);
+  await addAndVerify(h, ownerContext, A); await addAndVerify(h, ownerContext, B); await addAndVerify(h, ownerContext, C);
+  const mark = h.alerts.length;
+  await h.act('emailNotices', { address: B }, ownerContext); await h.settle();
+  assert.deepEqual(h.alerts.slice(mark).filter(a => a.type === 'notice-email-changed').map(a => a.email).sort(), [A, B, C]);
+  assert.ok(h.push.some(p => p.event === 'notice-email-changed'));
+  const again = h.alerts.length; await h.act('emailNotices', { address: B }, ownerContext); await h.settle();
+  assert.equal(h.alerts.slice(again).filter(a => a.type === 'notice-email-changed').length, 0, 'no change, no notice');
 });
 
 test('email sign-in links bind (address, signInSince): turning sign-in off and on again invalidates an outstanding link', async t => {

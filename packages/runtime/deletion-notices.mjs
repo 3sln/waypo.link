@@ -30,12 +30,14 @@ export class SendAccountDeletionNotice extends AppAction{
   if(this.actor?.kind!=='system'||this.actor.owner!==notice?.owner)throw new TypeError('Invalid deletion notice actor.');
   if(!deletionBackground(flags,notice.owner))return {accepted:false,channels:[]};
   const template=deletionNoticeTemplate(notice,config),channels=notice.channels;
-  if(!channels||!Array.isArray(channels.push)||channels.push.length>16||channels.email!==null&&typeof channels.email!=='string')throw new TypeError('Invalid deletion notice channels.');
+  if(!channels||!Array.isArray(channels.push)||channels.push.length>16||channels.email!==null&&typeof channels.email!=='string'||channels.emails!==undefined&&(!Array.isArray(channels.emails)||channels.emails.length>4||channels.emails.some(value=>typeof value!=='string'||!value)))throw new TypeError('Invalid deletion notice channels.');
+  // Every verified address of the account (review 2026-10-29 M3); older requests carry only `email`.
+  const recipients=[...new Set([...channels.email?[channels.email]:[],...channels.emails??[]])];
   const attempts=[];
   if(notice.kind!=='completed'&&typeof push.send==='function')for(const subscription of channels.push)attempts.push(Promise.resolve().then(()=>push.send(subscription,template.push)).then(result=>result?.accepted===true?'push':null,()=>null));
   // The mail adapter's sendDeletionNotice uses its fixed accounts@ sender and deletionNoticeTemplate.
   // sendAccountNotice cannot substitute: its older fixed templates discard the cancel link.
-  if(channels.email&&typeof mail.sendDeletionNotice==='function')attempts.push(Promise.resolve().then(()=>mail.sendDeletionNotice({email:channels.email,notice:{owner:notice.owner,kind:notice.kind,basis:notice.basis,handle:notice.handle,executeAfter:notice.executeAfter,graceDays:notice.graceDays,cancellable:notice.cancellable,...notice.cancellable?{cancelToken:notice.cancelToken}:{}},locale:config.locale??'en'})).then(result=>typeof result?.messageId==='string'&&!!result.messageId?'email':null,()=>null));
+  if(typeof mail.sendDeletionNotice==='function')for(const address of recipients)attempts.push(Promise.resolve().then(()=>mail.sendDeletionNotice({email:address,notice:{owner:notice.owner,kind:notice.kind,basis:notice.basis,handle:notice.handle,executeAfter:notice.executeAfter,graceDays:notice.graceDays,cancellable:notice.cancellable,...notice.cancellable?{cancelToken:notice.cancelToken}:{}},locale:config.locale??'en'})).then(result=>typeof result?.messageId==='string'&&!!result.messageId?'email':null,()=>null));
   const accepted=[...new Set((await Promise.all(attempts)).filter(Boolean))];return {accepted:accepted.length>0,channels:accepted};
  }
 }

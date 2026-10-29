@@ -143,7 +143,9 @@ export class SignIn extends Flow {
  const begin=await r.api.request('/api/auth/login/passkey/begin',payload);if(!live())return;const response=await r.browser.authenticatePasskey(begin.authenticationOptions);if(!live())return;const result=await r.api.request('/api/auth/login/passkey/finish',{challengeToken:begin.challengeToken,response});if(live())await acceptSignIn(r,ctx,result);
  }
 }
-export class SignOut extends Flow {async perform(r,ctx,detail){if(devicesEnabled(current(r))&&!detail.termsPending&&!(detail.confirmed===true&&current(r).modal?.kind==='signout-impact')){r.browser.captureFocus?.();update(r,ctx,{modal:{kind:'signout-impact'}});r.browser.modalFocus?.();return;}const push=await r.browser.pushSubscriptionId?.();await r.api.request('/api/auth/logout',push?{pushSubscription:push}:{});clearAccount(r,ctx);update(r,ctx,{auth:'login'});r.browser.setCaptchaAction('login');r.browser.installCaptcha(current(r).config);}}
+// Signing out, switching accounts and signing out the tab's account discard a held sign-in continuation (review
+// 2026-10-29 L3): an intent abandoned in this tab must not wait for the next person who signs in here.
+export class SignOut extends Flow {async perform(r,ctx,detail){if(devicesEnabled(current(r))&&!detail.termsPending&&!(detail.confirmed===true&&current(r).modal?.kind==='signout-impact')){r.browser.captureFocus?.();update(r,ctx,{modal:{kind:'signout-impact'}});r.browser.modalFocus?.();return;}const push=await r.browser.pushSubscriptionId?.();await r.api.request('/api/auth/logout',push?{pushSubscription:push}:{});clearAccount(r,ctx);r.browser.discardContinuation?.();update(r,ctx,{auth:'login'});r.browser.setCaptchaAction('login');r.browser.installCaptcha(current(r).config);}}
 export class StartRecovery extends Flow {
  async perform(r,ctx){const s=current(r),token=r.browser.captcha(s.config).turnstileToken;if(!token)throw new Error('Complete the recovery security check before continuing.');r.browser.storeRecoveryChallenge(token);r.browser.navigate('/recovery/restore');}
 }

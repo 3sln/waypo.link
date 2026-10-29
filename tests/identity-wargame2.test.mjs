@@ -502,8 +502,10 @@ test('V1 boundary: an event inside the lookback at the begin still counts at a c
 
 test('passkey removal records an authority event and notifies; credential begin is rate limited', async t => {
   let open = true; const f = await reissueFixture(t); f.service.rateLimiter = { check: async input => input.operation !== 'credential-begin' || open };
+  // Spike §6.4 Tier A (review 2026-10-29 M2): the recent passkey 'b' is removed with a fresh step-up from the established 'a'.
+  await f.patch(a => ({ ...a, credentials: [{ id: 'a', publicKey: 'pk', counter: 0, createdAt: f.now() - 8 * DAY }, { id: 'b', publicKey: 'pk', counter: 0, createdAt: f.now() - DAY }] }));
+  await f.stepUp('passkey', f.ctx, 'a');
   f.service.webauthn = { registrationOptions: async () => ({ challenge: 'r' }) };
-  await f.patch(a => ({ ...a, credentials: [{ id: 'a', publicKey: 'pk', counter: 0, createdAt: f.now() - DAY }, { id: 'b', publicKey: 'pk', counter: 0, createdAt: f.now() - DAY }] }));
   await f.service.removePasskey({ credentialId: 'b' }, f.ctx);
   assert.ok((await f.identity()).authorityEvents.some(e => e.kind === 'passkey-removed')); assert.ok(f.mail.some(m => m.type === 'passkey-removed'));
   open = false; await assert.rejects(f.service.credentialBegin({ label: 'x' }, f.ctx), { code: 'rate_limited' });

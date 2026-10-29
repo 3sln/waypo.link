@@ -182,6 +182,26 @@ test('P17 compares the step-up credential: a session signed in with the aborting
  assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
 });
 
+test('every verified and sign-in address gets move notices with its own dispute token and can be named as a disputer (review 2026-10-29 M3)',async t=>{
+ const SECOND='second@mover.example',at=Date.UTC(2026,8,1);
+ const fx=await transferFixture(t,{identity:{verifiedEmail:undefined,emailVerifiedAt:undefined,emailLoginEnabled:undefined,emails:[
+  {address:'owner@mover.example',state:'sign-in',verifiedAt:at,signInSince:at,notices:true,source:'legacy',addedBy:{session:'legacy',at}},
+  {address:SECOND,state:'verified',verifiedAt:at,notices:false,source:'linked',addedBy:{session:'passkey',at}}]}});
+ const port=await fx.ports.identity.get(OWNER);assert.deepEqual(port.emails.map(e=>e.address),['owner@mover.example',SECOND]);assert.equal(port.email.address,'owner@mover.example','the notice address stays the single-address view');
+ await fx.start();await fx.post();
+ const pending=fx.notices.filter(n=>n.kind==='pending');
+ assert.deepEqual(pending.filter(n=>n.channel.email).map(n=>n.channel.email).sort(),['owner@mover.example',SECOND],'the non-notice address is told too');
+ assert.equal(new Set(pending.map(n=>n.disputeToken)).size,pending.length,'one dispute token per channel');
+ const secondToken=pending.find(n=>n.channel.email===SECOND).disputeToken;
+ await fx.dispute({choice:'hold',token:secondToken});
+ const view=await fx.elevate({side:'requester',remove:{emails:[SECOND]}});
+ assert.equal(view.state,'pending');
+ const account=await fx.identityRecord();
+ assert.deepEqual(account.emails.map(e=>e.address),['owner@mover.example']);assert.equal(account.removedEmails.at(-1).address,SECOND);
+ assert.ok(fx.notices.some(n=>n.kind==='restarted'&&n.channel.email==='owner@mover.example'));
+ assert.ok(fx.notices.some(n=>n.kind==='restarted'&&n.channel.email===SECOND),'the detached address is re-notified');
+});
+
 test('elevated proof by the requester removes named devices and emails and restarts a 72 h notified delay; a further dispute is contested',async t=>{
  const fx=await transferFixture(t);await fx.start();await fx.post();
  const emailToken=fx.tokenFor('email'),pushToken=fx.tokenFor('push');

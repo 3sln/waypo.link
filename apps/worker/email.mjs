@@ -39,6 +39,8 @@ const SECURITY_ALERTS = Object.freeze({
   // Sign-in emails (sign-in and intents spike §3.3, §6.4): sent to every address and push channel of the account.
   'email-sign-in-enabled': ['{brand} sign-in email turned on', 'An email address on your account can now be used to sign in. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
   'email-sign-in-removed': ['{brand} sign-in email turned off', 'An email address on your account can no longer be used to sign in. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
+  // Choosing another notice address (review 2026-10-29 M3): sent to every address, including the previous and the new one.
+  'notice-email-changed': ['{brand} notice email changed', 'Your account now sends its ordinary notices to a different email address. Security notices still go to every verified address. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
   // DX-6: sent to the removed address. No other account detail is included.
   'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.'],
   // DX-1 export notices (§1.4): sent on creation and on the first download from each session or CLI grant.

@@ -102,5 +102,7 @@ export default {
    // Account lifecycle sweep (present only when LIFECYCLE_ENABLED): arms schedules and nudges bounded ticks;
    // per-account alarms drive notices, suspension and, only when separately enabled, purge.
    if(env.LIFECYCLE_SWEEP)ctx.waitUntil(env.LIFECYCLE_SWEEP.run({trigger:'cron'}).catch(()=>{}));
+   // The password retirement reset on the Worker (packages/identity/password-retirement.mjs): one bounded batch per trigger.
+   if(env.PASSWORD_RETIREMENT)ctx.waitUntil(Promise.resolve().then(()=>env.PASSWORD_RETIREMENT.run()).catch(()=>{}));
  }
 };

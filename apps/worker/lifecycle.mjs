@@ -22,6 +22,7 @@ import {createPortabilityFetch,portabilityClient} from '../../packages/identity/
 import {createDohResolver} from '../../packages/federation/resource-discovery.mjs';
 import {redirectRecordsPort,createRedirectReminders} from '../../packages/identity/redirect-records.mjs';
 import {redirectCapability} from '../../packages/runtime/redirect-extension.mjs';
+import {retirePasswordsStep,retirementIdentity} from '../../packages/identity/password-retirement.mjs';
 
 export const LIFECYCLE_SCHEDULER_NAME='lifecycle-sweep-v1';
 const repositoryOf=env=>new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT,config:env});
@@ -88,8 +89,18 @@ export class LifecycleScheduler extends DurableObject {
  transferDuePut(owner,at,kind){return this.transferDue.put(owner,at,kind);}
  transferDueDelete(owner,at,kind){return this.transferDue.delete(owner,at,kind);}
  async sweepTransfers(){try{return await sweepTransferDue({index:this.transferDue,identity:this.transferIdentity,accounts:this.accounts,reminders:this.redirectReminders});}catch{return {done:0,failed:1};}}
- async run(input){const result=await this.sweep.run(input);await this.sweepTransfers();return result;}
+ async run(input){const result=await this.sweep.run(input);await this.sweepTransfers();await this.retirePasswords();return result;}
  status(){return this.sweep.status();}
- async alarm(){const result=await this.sweep.run({trigger:'alarm'});await this.sweepTransfers();return result;}
+ async alarm(){const result=await this.sweep.run({trigger:'alarm'});await this.sweepTransfers();await this.retirePasswords();return result;}
+ /** Password retirement reset `passwords-retired-v1` on the Worker (sign-in and intents spike §6.3; review 2026-10-29
+  * L1): one time-bounded batch of slices per cron trigger (`PASSWORD_RETIREMENT`, independent of the lifecycle flags)
+  * and per lifecycle run or alarm (overlapping triggers share one run), with the cursor and completion marker in this
+  * object's storage. Never throws; a failed record is retried by the next full pass. Safety does not wait for it (`passwordDerived` is checked at use). */
+ retirePasswords(){return this.passwordRun??=this.retirePasswordsOnce().finally(()=>{this.passwordRun=null;});}
+ async retirePasswordsOnce(){
+  try{this.passwordIdentity??=retirementIdentity({repository:repositoryOf(this.env),origin:this.env.APP_ORIGIN,rpID:this.env.RP_ID,termsVersion:this.env.TERMS_VERSION??undefined,allowInsecureLocalhost:this.env.LOCAL_DEVELOPMENT==='true'});
+   const storage=this.ctx.storage;return await retirePasswordsStep(this.passwordIdentity,{get:key=>storage.get(key),put:(key,value)=>storage.put(key,value),delete:key=>storage.delete(key)},{budgetMs:10000});}
+  catch(error){console.error(JSON.stringify({event:'password-retirement-failed',code:error?.code??'unknown'}));return {done:false,failed:1};}
+ }
 }
 

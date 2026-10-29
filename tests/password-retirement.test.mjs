@@ -6,8 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { identityEngine, MemoryAccounts, memoryShards, signupInput, sessionContext, activate, context } from './helpers/identity-engine.mjs';
 import { fakeClock } from './helpers/chaos.mjs';
-import { planPasswordRetirement, retirePassword, retirePasswords, retireAllPasswords, PASSWORD_RETIREMENT_MARKER } from '../packages/identity/password-retirement.mjs';
-import { passwordSession } from '../packages/identity/service.mjs';
+import { planPasswordRetirement, retirePassword, retirePasswords, retireAllPasswords, retirePasswordsStep, PASSWORD_RETIREMENT_MARKER } from '../packages/identity/password-retirement.mjs';
+import { passwordSession, passwordDerived } from '../packages/identity/service.mjs';
 import { TransferEnrollment } from '../packages/identity/transfer-enrollment.mjs';
 
 const DAY = 86400000;
@@ -85,4 +85,52 @@ test('the marker makes later full runs skip; a run with failures leaves no marke
   const failed = await retireAllPasswords(broken, { marker: marker2 });
   assert.equal(failed.failed, 1); assert.equal(rows2.size, 0);
   assert.ok(context.origin);
+});
+
+test('review 2026-10-29 L1: an activation session of a record that still carries password fields, and any session approved from a password session, are refused', async () => {
+  const h = identityEngine(), { owner, ownerContext } = await activate(h.act), id = owner.account.id, record = h.repository.records.get(id);
+  const activation = record.sessions.find(s => s.source === 'activation');
+  assert.equal(passwordDerived(record, activation), false); await h.owner(ownerContext);
+  record.passwordSetAt = h.clock.now() - DAY;
+  assert.equal(passwordDerived(record, activation), true);
+  assert.equal(await code(() => h.owner(ownerContext)), 'unauthorized', 'a password sign-up activation');
+  delete record.passwordSetAt;
+  const child = { id: 'child', source: 'linked-approval', parentSessionId: activation.id }, grandchild = { id: 'grandchild', source: 'linked-approval', parentSessionId: 'child' };
+  record.sessions.push(child, grandchild);
+  assert.equal(passwordDerived(record, grandchild), false);
+  activation.stepUpCredential = { kind: 'password' };
+  assert.equal(passwordDerived(record, grandchild), true, 'derived through the chain');
+  assert.equal(passwordDerived({ ...record, sessions: [grandchild] }, grandchild), false, 'a missing parent without password fields is not evidence');
+  assert.equal(passwordDerived({ ...record, passwordHash: 'x', sessions: [grandchild] }, grandchild), true, 'with password fields a missing parent fails closed');
+});
+
+test('review 2026-10-29 L2: the reset is revision-checked; a record that changed after planning (a passkey added) is planned again and stripped, not deleted', async () => {
+  const repository = new PagedAccounts(), h = identityEngine({ repository }), identity = await h.engine.container.use(['identity'], ({ identity }) => identity);
+  const { owner } = await activate(h.act), id = owner.account.id;
+  Object.assign(repository.records.get(id), { passwordHash: 'argon2id$legacy', passwordSetAt: h.clock.now() - DAY, credentials: [] });
+  assert.equal(planPasswordRetirement(await repository.get(id)), 'reset');
+  // Between the plan's read and the tombstone, the owner registers a passkey (another writer, one revision later).
+  const get = repository.get.bind(repository); let raced = false;
+  repository.get = async key => { const value = await get(key); if (!raced && key === id) { raced = true; const live = repository.records.get(id); live.credentials = [{ id: 'passkey-new', publicKey: 'pk', counter: 0, createdAt: h.clock.now() }]; live.revision++; } return value; };
+  assert.deepEqual(await retirePassword(identity, id), { action: 'stripped' });
+  const kept = await get(id); assert.equal(kept.status, 'active'); assert.equal('passwordHash' in kept, false); assert.equal(kept.credentials[0].id, 'passkey-new');
+  assert.equal(kept.sessions.some(s => s.source === 'activation'), false, 'the password sign-up activation session ended with the strip');
+});
+
+test('the strip ends app lineages approved before password removal that cannot be checked; the Worker step keeps a cursor and a marker', async () => {
+  const repository = new PagedAccounts(), h = identityEngine({ repository }), identity = await h.engine.container.use(['identity'], ({ identity }) => identity);
+  const a = await activate(h.act), b = await activate(h.act, signupInput({ handle: 'bob' }));
+  const record = repository.records.get(a.owner.account.id);
+  Object.assign(record, { passwordHash: 'argon2id$legacy', linkedLineage: [
+    { id: 'old', sessions: ['gone'], sessionExpiresAt: 1, families: ['f-old'], expiresAt: Number.MAX_SAFE_INTEGER },
+    { id: 'new', sessions: ['gone'], sessionExpiresAt: 1, families: ['f-new'], expiresAt: Number.MAX_SAFE_INTEGER, passwordFree: true }] });
+  const rows = new Map(), store = { get: async key => rows.get(key), put: async (key, value) => { rows.set(key, value); }, delete: async key => { rows.delete(key); } };
+  const first = await retirePasswordsStep(identity, store, { limit: 1, budgetMs: 0 });
+  assert.equal(first.done, false); assert.ok(rows.has(`${PASSWORD_RETIREMENT_MARKER}/progress`), 'one slice, cursor kept');
+  let result = first; while (!result.done) result = await retirePasswordsStep(identity, store, { limit: 1, budgetMs: 0 });
+  assert.equal(result.stripped, 1); assert.ok(rows.has(PASSWORD_RETIREMENT_MARKER)); assert.equal(rows.has(`${PASSWORD_RETIREMENT_MARKER}/progress`), false);
+  const after = await repository.get(a.owner.account.id);
+  assert.deepEqual(after.linkedLineage.map(entry => entry.id), ['new']); assert.deepEqual(after.lineageOutbox.map(item => item.familyId), ['f-old']);
+  assert.deepEqual(await retirePasswordsStep(identity, store), { done: true, skipped: true });
+  assert.ok(b.owner);
 });

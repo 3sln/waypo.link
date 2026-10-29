@@ -33,7 +33,9 @@ const plain = value => value !== null && typeof value === 'object' && !Array.isA
 function legacyEntries(account) {
   if (typeof account?.verifiedEmail !== 'string' || !account.verifiedEmail) return [];
   // A legacy record always held the uniqueness claim for `verifiedEmail`; one written without `emailVerifiedAt` keeps it
-  // (verified at 0) rather than silently losing its index.
+  // (verified at 0) rather than silently losing its index. A legacy sign-in email counts as established from that time
+  // (spike §6.4), so it is Tier B at once and cannot be turned off until Tier B exists: this fails closed (review
+  // 2026-10-29 L4; data resets are acceptable).
   const signIn = account.emailLoginEnabled === true, at = time(account.emailVerifiedAt) ? account.emailVerifiedAt : 0;
   return [{ address: account.verifiedEmail, state: signIn ? 'sign-in' : 'verified', verifiedAt: at, ...signIn ? { signInSince: at } : {}, notices: true, source: 'legacy', addedBy: { session: 'legacy', at } }];
 }
@@ -65,8 +67,9 @@ export const noticeEmail = account => noticeEntry(account)?.address ?? null;
 export const emailEntry = (account, address, now) => accountEmails(account, now).find(entry => entry.address === address) ?? null;
 /** Whether `address` is a confirmed (verified or sign-in) address of `account`. */
 export const ownsEmail = (account, address) => confirmedEmails(account).some(entry => entry.address === address);
-/** The legacy single-address view, for internal projections whose contract still names one address (lifecycle,
- * deletion and admin evidence): the notice address, when it was verified, and whether it is a sign-in email. */
+/** The legacy single-address view, for internal projections whose contract still names one address (admin-assisted
+ * deletion evidence and the single-address fields of the lifecycle port): the notice address, when it was verified, and
+ * whether it is a sign-in email. Security notices use every confirmed address (`confirmedEmails`), never only this. */
 export function legacyEmailView(account) {
   const entry = noticeEntry(account);
   return { verifiedEmail: entry?.address ?? null, emailVerifiedAt: entry ? entry.verifiedAt : null, emailLoginEnabled: entry?.state === 'sign-in' };

@@ -12,7 +12,8 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const SCANNED = ['packages', 'apps/web/src', 'apps/worker', 'apps/node', 'apps/server', 'apps/parlay'];
 // The operator boot principal (N5 open) and the code that deliberately recognises or erases legacy password state.
 const BOOT = new Set(['packages/identity/admin.mjs', 'packages/identity/crypto.mjs', 'apps/worker/password.mjs', 'apps/web/src/ui/admin-access.mjs', 'apps/web/src/bl/admin-access.mjs', 'apps/web/src/ui/admin-console.mjs', 'apps/web/src/bl/admin-console.mjs', 'apps/web/src/admin-entry.mjs', 'packages/core/abuse-policy.mjs']);
-const LEGACY = new Set(['packages/identity/password-retirement.mjs', 'packages/identity/service.mjs', 'packages/runtime/export-contributors.mjs']);
+// password-authority.mjs recognises legacy password state so every check refuses it (review 2026-10-29 L1).
+const LEGACY = new Set(['packages/identity/password-retirement.mjs', 'packages/identity/password-authority.mjs', 'packages/identity/service.mjs', 'packages/runtime/export-contributors.mjs']);
 async function* files(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);

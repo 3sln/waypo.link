@@ -95,6 +95,9 @@ function resources(bindings,resolveIdentityBadges,flags){
  // The sweep also ticks due account deletions (DX-3), so it runs whenever the deletion flag is on, whatever the lifecycle mode.
  // PORT-2: it also sweeps the transfer-due index while IDENTITY_TRANSFER_OUT_ENABLED is globally on.
  if(env.LIFECYCLE_SCHEDULER&&(lifecycleMode(env)!=='off'||siteGlobal(env,'ACCOUNT_DELETION_ENABLED')||siteGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')))value.LIFECYCLE_SWEEP={run:input=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)).run(input)};
+ // Password retirement reset (review 2026-10-29 L1): every cron trigger runs one bounded batch in the lifecycle scheduler
+ // object, whatever the lifecycle flags; it stops once its marker is written.
+ if(env.LIFECYCLE_SCHEDULER)value.PASSWORD_RETIREMENT={run:()=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)).retirePasswords()};
  value.PUSH_AVAILABLE=Boolean(pushTransport);value.EMAIL_SETUP_AVAILABLE=typeof mailer?.sendSetupCode==='function';
  if(env.MCP_AUTH)value.MCP_AUTHORITY=mcpAuthorities(shard=>({invoke:(method,args)=>env.MCP_AUTH.get(env.MCP_AUTH.idFromName(`${MCP_LAYOUT}-${shard}`)).invoke(shard,method,args)}));
  // The entry store, sharded by entry ID over FederationObject instances (review M5); null unless FEDERATION_ENTRY_ENABLED.

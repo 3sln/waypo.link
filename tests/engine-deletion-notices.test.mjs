@@ -39,6 +39,13 @@ test('engine notice acceptance: mail and push fail independently, explicit provi
  state.killed=false;await assert.rejects(h.perform(action(notice({channels:{email:null,push:Array(17).fill({})}}))),TypeError);
  await assert.rejects(h.perform(new SendAccountDeletionNotice({actor:{kind:'owner',owner:OWNER},input:notice()})),TypeError);
 });
+test('engine notice: every listed address gets the deletion mail with its cancel link (review 2026-10-29 M3); a malformed list is refused',async t=>{
+ const calls=[];const h=await createTestEngine({providers:{config:{origin:ORIGIN},flags,mail:{async sendDeletionNotice(input){calls.push(input);return {messageId:'m'+calls.length};}},push:{}}});t.after(()=>h.dispose());
+ const result=await h.perform(action(notice({channels:{email:'owner@notices.example',emailVerifiedAt:1,emails:['owner@notices.example','second@notices.example'],push:[]}})));
+ assert.deepEqual(result,{accepted:true,channels:['email']});assert.deepEqual(calls.map(c=>c.email),['owner@notices.example','second@notices.example']);
+ assert.ok(calls.every(c=>c.notice.cancelToken==='a'.repeat(43)));
+ for(const emails of [['x',''],'owner@notices.example',Array(5).fill('a@b.example')])await assert.rejects(h.perform(action(notice({channels:{email:null,emails,push:[]}}))),TypeError);
+});
 test('cancel-link client Action: real engine dispatch forwards only the input to the injected API and propagates refusal',async t=>{
  const calls=[],api={cancel:async input=>{calls.push(input);if(input.token==='bad')throw Object.assign(new Error('invalid'),{code:'invalid_token'});return {cancelled:true};}},engine=new Engine({providers:{api:Provider.fromSingleton(api)}});t.after(()=>engine.dispose());
  const value={owner:OWNER,token:'a'.repeat(43)};assert.deepEqual((await engine.dispatch(new CancelDeletionLink(value)).next('result')).detail,{cancelled:true});assert.deepEqual(calls,[value]);await assert.rejects(engine.dispatch(new CancelDeletionLink({owner:OWNER,token:'bad'})).next('complete'),{code:'invalid_token'});

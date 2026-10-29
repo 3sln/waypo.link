@@ -4,6 +4,7 @@
 // The operation contract for LA2/LA4/LA5 is in linked-approval.md §10.1. New entry points are gated by
 // config.deviceAuthorizationEnabled; the legacy /api/auth/device/* aliases (device-login.mjs) are not.
 import { secureEqual, encode } from './crypto.mjs';
+import { passwordDerived, passwordFields } from './password-authority.mjs';
 
 export const LINKED_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ', LINKED_CODE_SPACE = 20 ** 8;
 const HOUR = 3600000, DAY = 86400000;
@@ -286,7 +287,10 @@ export class LinkedApproval {
     if (await limits.consume(`poll:${request.id}`, { windowMs: interval * 1000, limit: 1 })) return { ok: true, interval };
     await limits.consume(`poll-slow:${request.id}`, { windowMs: 300000, limit: 1000 }); return { ok: false, interval: Math.min(interval + 5, LINKED.maxInterval) };
   }
-  parent(account, request) { const now = this.now(); return account?.status === 'active' ? account.sessions.find(s => secureEqual(s.hash, request.approval?.sessionHash) && s.expiresAt > now) : undefined; }
+  /** The live approving session, or undefined. A session holding password-derived authority (review 2026-10-29 L1:
+   * itself, an ancestor or its activation came from a password) never approves, so an approved-but-unconsumed request
+   * whose approver was such a session yields nothing. */
+  parent(account, request) { const now = this.now(), session = account?.status === 'active' ? account.sessions.find(s => secureEqual(s.hash, request.approval?.sessionHash) && s.expiresAt > now) : undefined; return session && !passwordDerived(account, session) ? session : undefined; }
   state(request) {
     if (request.status === 'consumed') return { status: 'expired_token' };
     if (['denied', 'cancelled'].includes(request.status)) return { status: 'access_denied' };
@@ -403,7 +407,7 @@ export class LinkedApproval {
       for (let id = parent.parentSessionId; id && !sessions.includes(id) && sessions.length < 16; id = account.sessions.find(s => s.id === id)?.parentSessionId) sessions.push(id);
       pruneLineage(account, now);
       if ((account.linkedLineage ?? []).length >= LINKED.lineageLimit) this.fail('temporarily_unavailable', 'Too many apps are signed in from this account. Sign out of some apps first.');
-      account.linkedLineage = [...account.linkedLineage ?? [], { id: request.lineageId, sessions, sessionExpiresAt: parent.expiresAt, families: [request.issuedFamilyId], clientId: request.app.clientId, host: request.app.host, createdAt: now, expiresAt: request.approval.expiresAt ?? LINEAGE_OPEN }];
+      account.linkedLineage = [...account.linkedLineage ?? [], { id: request.lineageId, sessions, sessionExpiresAt: parent.expiresAt, families: [request.issuedFamilyId], clientId: request.app.clientId, host: request.app.host, createdAt: now, expiresAt: request.approval.expiresAt ?? LINEAGE_OPEN, passwordFree: true }];
       parent.derivedFamilies = [...parent.derivedFamilies ?? [], request.issuedFamilyId];
       identity.audit(account, 'linked-app-approved');
       try { await identity.save(account, revision); return true; }
@@ -420,6 +424,15 @@ export class LinkedApproval {
     const entry = account.linkedLineage?.find(item => item.id === lineageId); if (!entry || !entry.families.includes(familyId) || (entry.expiresAt !== null && entry.expiresAt <= now)) return false;
     // Before its natural end the approving session must still exist: catches any removal path that bypassed lineage.
     if (now < entry.sessionExpiresAt && !account.sessions.some(s => s.id === entry.sessions[0] && s.expiresAt > now)) return false;
+    // Review 2026-10-29 L1, checked at use time so it holds on the Worker before the password reset has run: no app family
+    // approved from password-derived authority stays live. Entries written since password removal carry `passwordFree`
+    // (the approving session passed `parent`). An older entry is refused when a session of its chain that is still on the
+    // record is password-derived, or when the record still carries password fields and its chain cannot be checked.
+    if (entry.passwordFree !== true) {
+      const chain = entry.sessions.map(id => account.sessions.find(s => s.id === id));
+      if (chain.some(session => session && passwordDerived(account, session))) return false;
+      if (passwordFields(account) && chain.some(session => !session)) return false;
+    }
     return true;
   }
   async withAccount(owner, change) {

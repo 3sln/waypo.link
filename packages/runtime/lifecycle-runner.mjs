@@ -47,20 +47,24 @@ const deletionIdentity=c=>c.config.ACCOUNT_DELETION_PORTS?.identity??c.config.LI
 function revision(text){let a=0x811c9dc5,b=0x01000193;for(let i=0;i<text.length;i++){const code=text.charCodeAt(i);a=Math.imul(a^code,16777619)>>>0;b=Math.imul(b^code,2246822507)>>>0;}return `c1-${text.length}-${a.toString(16)}-${b.toString(16)}`;}
 async function pushSubscriptions(reader,owner){return [...(await reader.list({prefix:key('push-subscription',owner)})).values()].filter(row=>row?.owner===owner&&typeof row.endpoint==='string');}
 
+/** The lifecycle contact's addresses: every verified address when the identity port lists them, else the one address. */
+const contactEmails=identity=>Array.isArray(identity?.emails)?identity.emails:identity?.verifiedEmail?[{address:identity.verifiedEmail,verifiedAt:identity.emailVerifiedAt??null}]:[];
 function lifecycleOf(c){
  if(c.lifecycle)return c.lifecycle;
  const settings=lifecycleSettings(c.config),clock=clockOf(c),config=c.config;
  c.lifecycle=new AccountLifecycle({metadata:c.metadata,gate:c.gate,config,clock,purge:settings.purge,
   // A channel is ready only if a configured transport can actually reach it.
-  contact:async(tx,owner)=>{const identity=c.lifecycleContact?.owner===owner?c.lifecycleContact:null,email=config.LIFECYCLE_MAIL?.sendAccountNotice&&identity?.verifiedEmail?identity.verifiedEmail:null,subscriptions=config.LIFECYCLE_PUSH?.send?await pushSubscriptions(tx,owner):[];
-   return {verified:Boolean(email||subscriptions.length),available:Boolean(email||subscriptions.length),revision:revision(`${email??''}|${identity?.emailVerifiedAt??''}|${subscriptions.map(row=>row.id).sort().join(',')}`)};},
+  // Every verified address is a channel (review 2026-10-29 M3); the revision covers all of them.
+  contact:async(tx,owner)=>{const identity=c.lifecycleContact?.owner===owner?c.lifecycleContact:null,emails=config.LIFECYCLE_MAIL?.sendAccountNotice?contactEmails(identity):[],subscriptions=config.LIFECYCLE_PUSH?.send?await pushSubscriptions(tx,owner):[];
+   const email=emails.length<=1?`${emails[0]?.address??''}|${identity?.emailVerifiedAt??''}`:emails.map(entry=>`${entry.address}|${entry.verifiedAt??''}`).sort().join(';');
+   return {verified:Boolean(emails.length||subscriptions.length),available:Boolean(emails.length||subscriptions.length),revision:revision(`${email}|${subscriptions.map(row=>row.id).sort().join(',')}`)};},
   reviewFinance:async({owner,context,generation,activityEpoch})=>{
    const now=clock();
    // Purge always requires this live lookup to succeed; failure or ambiguity throws and the step holds.
    if(settings.finance!=='local-only'){const review=await everPaidReview({billing:c.billing,config,owner,metadata:c.metadata,now});if(review.everPaid)return {owner,context,generation,activityEpoch,neverPaid:false,checkedAt:now,expiresAt:now+60000};}
    return {owner,context,generation,activityEpoch,neverPaid:true,checkedAt:now,expiresAt:now+60000};
   },
-  sendNotice:async delivery=>{const identity=c.lifecycleContact?.owner===delivery.owner?c.lifecycleContact:null;return dispatchLifecycleNotice({push:config.LIFECYCLE_PUSH,mail:config.LIFECYCLE_MAIL,owner:delivery.owner,phase:delivery.phase,deletion:settings.purge,days:delivery.deadlineDays,attemptId:delivery.attemptId,email:identity?.verifiedEmail??null,subscriptions:config.LIFECYCLE_PUSH?.send?await pushSubscriptions(c.metadata,delivery.owner):[]});},
+  sendNotice:async delivery=>{const identity=c.lifecycleContact?.owner===delivery.owner?c.lifecycleContact:null;return dispatchLifecycleNotice({push:config.LIFECYCLE_PUSH,mail:config.LIFECYCLE_MAIL,owner:delivery.owner,phase:delivery.phase,deletion:settings.purge,days:delivery.deadlineDays,attemptId:delivery.attemptId,emails:contactEmails(identity).map(entry=>entry.address),subscriptions:config.LIFECYCLE_PUSH?.send?await pushSubscriptions(c.metadata,delivery.owner):[]});},
   // The HTTP layer verified the owner session and CSRF; reactivation needs a recent sign-in.
   authorizeReactivation:async({owner,authority,generation,capabilityEpoch,context})=>{const now=clock();if(authority?.kind!=='owner-session'||authority.owner!==owner||!Number.isSafeInteger(authority.authenticatedAt)||authority.authenticatedAt>now||now-authority.authenticatedAt>RECENT_SESSION_MS)return null;return {owner,context,generation,capabilityEpoch,verifiedAt:now,expiresAt:now+60000};},
   adminHold:async owner=>{if(typeof config.LIFECYCLE_ADMIN_HOLD!=='function')throw new Error('Administrator hold port unavailable');return config.LIFECYCLE_ADMIN_HOLD(owner);},
@@ -141,7 +145,7 @@ export async function lifecycleTick(c,{source='alarm'}={}){
  if(['scheduled','executing'].includes((await c.metadata.get(REQUEST_KEY))?.state)){log({owner,action:'hold',reason:'deletion-scheduled'});await c.scheduleAlarm(clock()+DAY);return {mode,action:'hold',reason:'deletion-scheduled'};}
  let identity;try{identity=await c.config.LIFECYCLE_IDENTITY?.get(owner);}catch{identity=undefined;}
  if(identity===undefined){log({owner,action:'hold',reason:'identity-unavailable'});await c.scheduleAlarm(clock()+DAY);return {mode,action:'hold',reason:'identity-unavailable'};}
- c.lifecycleContact=identity?{owner,verifiedEmail:identity.verifiedEmail,emailVerifiedAt:identity.emailVerifiedAt}:null;
+ c.lifecycleContact=identity?{owner,verifiedEmail:identity.verifiedEmail,emailVerifiedAt:identity.emailVerifiedAt,...Array.isArray(identity.emails)?{emails:identity.emails.filter(entry=>typeof entry?.address==='string').slice(0,4).map(entry=>({address:entry.address,verifiedAt:entry.verifiedAt??null}))}:{}}:null;
  let result;
  try{
   const armed=await armIfNeeded(c,lifecycle,owner,identity);if(!armed.armed){return {mode,action:'unarmed',identityStatus:identity?.status??null};}

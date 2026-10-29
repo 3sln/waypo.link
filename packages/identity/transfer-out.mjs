@@ -68,6 +68,11 @@ const hex = bytes => [...new Uint8Array(bytes)].map(byte => byte.toString(16).pa
 const sha256 = async text => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
 const seconds = ms => Math.floor(ms / 1000);
 const time = value => Number.isSafeInteger(value) && value >= 0;
+/** The identity port's current addresses: `emails` (every verified and sign-in address) when present, else the single
+ * `email` (identity ports written before review 2026-10-29 M3). */
+const identityEmails = identity => (Array.isArray(identity?.emails) ? identity.emails : identity?.email ? [identity.email] : []).filter(entry => typeof entry?.address === 'string' && entry.address);
+/** A move record's current address channels: `channels.emails` when recorded, else the single `channels.email`. */
+const channelEmails = channels => Array.isArray(channels?.emails) ? channels.emails : channels?.email ? [channels.email] : [];
 const channelKey = channel => `${channel.kind}:${channel.id}`;
 /** The identity URI 3sln.me uses for `sub` (organizations spec §3a: `<issuer>/identity/<sub>`). */
 export const identityURI = (issuer, sub) => `${issuer}/identity/${sub}`;
@@ -174,16 +179,18 @@ export class TransferOutService {
   }
   restartAllowed(lock, credential) { return !lock.restart || lock.restart.ref !== credential.ref; }
   destination(value) { if (!httpsOrigin(value) || value === this.issuer) fail('invalid_destination', 'Name the new provider by its https origin.'); return value; }
-  /** Notice channels at the start of a move (spec §6.1(a)/(b)). Copies, never references (as deletion R1-M2). */
+  /** Notice channels at the start of a move (spec §6.1(a)/(b)). Copies, never references (as deletion R1-M2). Every
+   * verified and sign-in address is a channel (`emails`; sign-in and intents spike §3.2, review 2026-10-29 M3); `email`
+   * stays the notice address for records and readers that know only one. */
   async channels(owner, identity, { removed = false, now }) {
     const push = [...(await this.metadata.list({ prefix: `push-subscription/${encodeURIComponent(owner)}/` })).values()].filter(row => row?.owner === owner && typeof row.endpoint === 'string' && plain(row.keys)).slice(0, MAX_PUSH).map(row => ({ id: row.id, endpoint: row.endpoint, keys: structuredClone(row.keys) }));
-    const removedEmails = removed ? (identity.removedEmails ?? []).filter(entry => now - entry.removedAt < TIMING.removedChannels && entry.address !== identity.email?.address).slice(0, 8) : [];
-    return { email: identity.email ? { address: identity.email.address, verifiedAt: identity.email.verifiedAt } : null, removedEmails, push,
+    const current = identityEmails(identity), removedEmails = removed ? (identity.removedEmails ?? []).filter(entry => now - entry.removedAt < TIMING.removedChannels && !current.some(item => item.address === entry.address)).slice(0, 8) : [];
+    return { email: identity.email ? { address: identity.email.address, verifiedAt: identity.email.verifiedAt } : null, emails: current.map(entry => ({ address: entry.address, verifiedAt: entry.verifiedAt })), removedEmails, push,
       sessions: identity.sessions.map(session => ({ id: session.id, createdAt: session.createdAt })), passkeys: identity.credentials.map(credential => ({ id: credential.id, createdAt: credential.createdAt })) };
   }
   noticeTargets(record) {
     const out = [], channels = record.channels; if (!channels) return out;
-    if (channels.email) out.push({ kind: 'email', id: channels.email.address, email: channels.email.address, contestOnly: false });
+    for (const entry of channelEmails(channels)) out.push({ kind: 'email', id: entry.address, email: entry.address, contestOnly: false });
     for (const entry of channels.removedEmails ?? []) out.push({ kind: 'email', id: entry.address, email: entry.address, contestOnly: entry.detached === true });
     for (const subscription of channels.push ?? []) out.push({ kind: 'push', id: subscription.id, push: subscription, contestOnly: false });
     return out;
@@ -252,7 +259,7 @@ export class TransferOutService {
     if (identity.recovery?.ref !== credential.ref || identity.recovery?.issuedAt !== credential.issuedAt) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
     if (!this.restartAllowed(lock, credential)) fail('restart_blocked', 'Choose whether to reissue your recovery file before starting again.', 409);
     const channels = await this.channels(owner, identity, { removed: true, now });
-    if (!channels.email && !channels.removedEmails.length && !channels.push.length) fail('notice_channel_required', 'A waiting-period move needs an email address or a device that can receive notices.', 409);
+    if (!channelEmails(channels).length && !channels.removedEmails.length && !channels.push.length) fail('notice_channel_required', 'A waiting-period move needs an email address or a device that can receive notices.', 409);
     const chain = await this.chainPosition(owner, identity);
     return this.create(owner, { path: 'b', destination, redirect: v.redirect !== false, reminder, credential, security: identity.security, channels, now, requester: { sessionId: null, credentialId: null }, delay: TIMING.waitingPeriod, elevated: false, chain, statementDigest });
   }
@@ -677,7 +684,7 @@ export class TransferOutService {
     if (!named.sessions.length && !named.passkeys.length && !named.emails.length && !named.push.length) fail('invalid_request', 'Name at least one device or email.');
     for (const id of named.sessions) if (!identity.sessions.some(s => s.id === id)) fail('unknown_device', 'One of the named devices is not on this account.', 409);
     for (const id of named.passkeys) if (!identity.credentials.some(c => c.id === id)) fail('unknown_device', 'One of the named devices is not on this account.', 409);
-    for (const address of named.emails) if (identity.email?.address !== address) fail('unknown_email', 'One of the named emails is not on this account.', 409);
+    for (const address of named.emails) if (!identityEmails(identity).some(entry => entry.address === address)) fail('unknown_email', 'One of the named emails is not on this account.', 409);
     const pushRows = [...(await this.metadata.list({ prefix: `push-subscription/${encodeURIComponent(owner)}/` })).entries()];
     for (const id of named.push) if (!pushRows.some(([, row]) => row?.id === id)) fail('unknown_device', 'One of the named devices is not on this account.', 409);
     const disputing = kind => new Set(disputers.filter(entry => entry?.kind === kind && typeof entry.id === 'string').map(entry => entry.id));
@@ -686,7 +693,7 @@ export class TransferOutService {
     if (named.sessions.some(id => !sessions.has(id)) || named.passkeys.some(id => !passkeys.has(id)) || named.emails.some(address => !emails.has(address)) || named.push.some(id => !push.has(id))) fail('not_a_disputer', 'Name only the devices and emails that disputed the move.', 409);
     if (lookback && this.now() - identity.security.changedAt < TIMING.securityLookback) fail('recent_security_change', 'Wait 7 days after a security change before moving your identity.', 409);
     const now = this.now(), detached = named.emails.map(address => ({ address, removedAt: now, detached: true }));
-    const next = { ...channels, email: channels.email && named.emails.includes(channels.email.address) ? null : channels.email,
+    const next = { ...channels, email: channels.email && named.emails.includes(channels.email.address) ? null : channels.email, ...Array.isArray(channels.emails) ? { emails: channels.emails.filter(entry => !named.emails.includes(entry.address)) } : {},
       removedEmails: [...(channels.removedEmails ?? []).filter(entry => !named.emails.includes(entry.address)), ...detached],
       push: (channels.push ?? []).filter(row => !named.push.includes(row.id)), sessions: channels.sessions.filter(s => !named.sessions.includes(s.id)), passkeys: channels.passkeys.filter(p => !named.passkeys.includes(p.id)) };
     if (!this.noticeTargets({ channels: next }).length) fail('notice_channel_required', 'Removing these would leave no email or device to notify about the move.', 409);
@@ -891,6 +898,8 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
       return {
         status: account.status, kind: account.kind === 'organization' ? 'organization' : 'person', handle: account.handle ?? null,
         email: noticeEntry(account) ? { address: noticeEntry(account).address, verifiedAt: noticeEntry(account).verifiedAt } : null,
+        // Every verified and sign-in address (review 2026-10-29 M3): all receive move notices and may be named as disputers.
+        emails: confirmedEmails(account).map(entry => ({ address: entry.address, verifiedAt: entry.verifiedAt })),
         removedEmails: Array.isArray(account.removedEmails) ? account.removedEmails.filter(entry => typeof entry?.address === 'string' && time(entry.removedAt)).map(entry => ({ address: entry.address, removedAt: entry.removedAt })) : [],
         recovery: credential ? { issuedAt: credential.issuedAt, version: credential.version, keyKid: credential.keyKid, ref: await ref(account.recoveryHash) } : null,
         security: securityState(account), ...account.aep === undefined ? {} : { aep: account.aep },

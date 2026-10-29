@@ -115,6 +115,16 @@ test('request: flag, step-up, typed handle, acknowledgements, idempotent operati
  assert.equal(JSON.stringify(await x.status()).includes(EMAIL),false,'status never exposes channels');
 });
 
+test('request: every verified and sign-in address is a deletion notice channel, not only the notice address (review 2026-10-29 M3)',async t=>{
+ const at=Date.UTC(2026,8,1),SECOND='second@deletion.example';
+ const x=await deletionFixture(t,{identity:{verifiedEmail:undefined,emailVerifiedAt:undefined,emailLoginEnabled:undefined,emails:[
+  {address:EMAIL,state:'sign-in',verifiedAt:at,signInSince:at,notices:true,source:'legacy',addedBy:{session:'legacy',at}},
+  {address:SECOND,state:'verified',verifiedAt:at,notices:false,source:'linked',addedBy:{session:'passkey',at}}]}});
+ assert.deepEqual((await x.identityPort.get(OWNER)).emails.map(e=>e.address),[EMAIL,SECOND]);
+ await x.request();const record=await x.record();
+ assert.equal(record.channels.email,EMAIL,'the notice address stays the single-address field');assert.deepEqual(record.channels.emails,[EMAIL,SECOND]);
+ assert.deepEqual(x.notices[0].channels.emails,[EMAIL,SECOND],'the scheduled notice is delivered to both');
+});
 test('request refusals: recovering, suspended, admin role, internal identity, unreadable security state',async t=>{
  for(const [overrides,code] of [[{status:'recovering'},'recovery_pending'],[{status:'suspended'},'account_suspended']]){
   const x=await deletionFixture(t,{identity:overrides});await assert.rejects(x.request(),{code});

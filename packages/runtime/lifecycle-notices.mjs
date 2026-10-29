@@ -6,8 +6,9 @@ const LIFECYCLE_PHASES=Object.freeze({warning:'suspension-warning',suspended:'de
  * notification preferences do not suppress them. Each channel is tried once per
  * attempt; the lifecycle executor owns spaced repetition. Acceptance means a
  * provider accepted the request, never that the owner read it. The payload and
- * mail carry no secret; links require signing in. */
-export async function dispatchLifecycleNotice({push,mail,owner,phase,deletion=true,days,attemptId,email,subscriptions=[]}){
+ * mail carry no secret; links require signing in. `emails` (review 2026-10-29 M3) lists every verified address of the
+ * account, each of which receives the notice; `email` alone (one address) is still accepted. */
+export async function dispatchLifecycleNotice({push,mail,owner,phase,deletion=true,days,attemptId,email,emails,subscriptions=[]}){
  if(typeof deletion!=='boolean'||!uuid(owner)||!uuid(attemptId)||!Object.hasOwn(LIFECYCLE_PHASES,phase)||!Number.isSafeInteger(days)||days<0||!Array.isArray(subscriptions))throw new TypeError('Invalid lifecycle notice');
  // With deletion disabled, a suspended account is retained indefinitely, so notices never announce a deletion date.
  const remaining=Math.max(1,Math.min(3650,days)),type=phase==='suspended'&&!deletion?'suspended-notice':LIFECYCLE_PHASES[phase],channels=[];let receipt=null,uncertain=false,suppressed=false;
@@ -15,8 +16,9 @@ export async function dispatchLifecycleNotice({push,mail,owner,phase,deletion=tr
   try{await push.send(subscription,{type:'bindle-account-notice',owner,phase,...type==='suspended-notice'?{deletion:false}:{},days:remaining,path:`/console?account=${owner}&lifecycle=review`});channels.push('push');receipt??=`push:${attemptId}`;}
   catch(error){if(![400,404,410].includes(error?.status))uncertain=true;}
  }
- if(email&&typeof mail?.sendAccountNotice==='function'){
-  try{const result=await mail.sendAccountNotice({email,type,...type==='suspended-notice'?{}:{days:remaining},owner});if(typeof result?.messageId==='string'&&result.messageId){channels.push('email');receipt=`email:${result.messageId}`.slice(0,256);}}
+ const recipients=[...new Set([...Array.isArray(emails)?emails:[],...email?[email]:[]].filter(value=>typeof value==='string'&&value))].slice(0,4);
+ if(typeof mail?.sendAccountNotice==='function')for(const address of recipients){
+  try{const result=await mail.sendAccountNotice({email:address,type,...type==='suspended-notice'?{}:{days:remaining},owner});if(typeof result?.messageId==='string'&&result.messageId){channels.push('email');if(!receipt?.startsWith('email:'))receipt=`email:${result.messageId}`.slice(0,256);}}
   catch(error){if(error?.code==='E_RECIPIENT_SUPPRESSED')suppressed=true;else if(!['E_VALIDATION_ERROR','E_RECIPIENT_NOT_ALLOWED'].includes(error?.code))uncertain=true;}
  }
  if(receipt)return {accepted:true,receipt,channels:[...new Set(channels)]};

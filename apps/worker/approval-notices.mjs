@@ -1,4 +1,4 @@
-import {noticeEmail} from '../../packages/identity/emails.mjs';
+import {noticeEmail,confirmedEmails} from '../../packages/identity/emails.mjs';
 import {siteGlobal} from '../../packages/flags/read.mjs';
 // LA7: injected after-approval port. The integrator supplies verified owner contacts;
 // no account lookup, production delivery, or notification on pending requests is implied.
@@ -29,7 +29,9 @@ export class SendApprovalNotice extends Action {
   approvalNoticeTemplate(this.notice,{origin:p.origin});const owner=await p.owner(this.notice.owner),template=approvalNoticeTemplate(this.notice,{origin:p.origin,locale:owner?.locale});
   const attempts=[];
   if(typeof p.push?.send==='function')for(const subscription of owner?.subscriptions??[])attempts.push(Promise.resolve().then(()=>p.push.send(subscription,template.push)).then(()=>({channel:'push',accepted:true}),()=>({channel:'push',accepted:false})));
-  if(owner?.verifiedEmail&&typeof p.mail?.sendApprovalNotice==='function')attempts.push(Promise.resolve().then(()=>p.mail.sendApprovalNotice({email:owner.verifiedEmail,notice:this.notice,locale:owner.locale})).then(result=>({channel:'email',accepted:typeof result?.messageId==='string'&&!!result.messageId}),()=>({channel:'email',accepted:false})));
+  // A sign-in approval is a security notice: every verified address of the account receives it (review 2026-10-29 M3).
+  const emails=[...new Set([...owner?.verifiedEmail?[owner.verifiedEmail]:[],...Array.isArray(owner?.emails)?owner.emails:[]].filter(value=>typeof value==='string'&&value))].slice(0,4);
+  if(typeof p.mail?.sendApprovalNotice==='function')for(const email of emails)attempts.push(Promise.resolve().then(()=>p.mail.sendApprovalNotice({email,notice:this.notice,locale:owner.locale})).then(result=>({channel:'email',accepted:typeof result?.messageId==='string'&&!!result.messageId}),()=>({channel:'email',accepted:false})));
   dispatchFeed.dispatchEvent(new CustomEvent('result',{detail:{enabled:true,attempts:await Promise.all(attempts)}}));
  }
 }
@@ -40,6 +42,6 @@ export function hostApprovalNotices({config,repository,accounts,mail,push}){
  return createApprovalNotices({enabled:true,origin:config.APP_ORIGIN,mail,push,owner:async id=>{
   const owner=await repository.get(id);if(owner?.status!=='active')return null;
   const result=await accounts.get(id).invoke({method:'approvalNoticeContacts',args:[id]});if(result?.$fault)throw new Error('Notice contacts unavailable.');
-  return {verifiedEmail:noticeEmail(owner),locale:owner.locale??'en',subscriptions:result?.subscriptions??[]};
+  return {verifiedEmail:noticeEmail(owner),emails:confirmedEmails(owner).map(entry=>entry.address),locale:owner.locale??'en',subscriptions:result?.subscriptions??[]};
  }});
 }

@@ -51,3 +51,20 @@ test('Worker adapter: suspension fences HTTP APIs, restricted reactivation, cron
  assert.equal((await h.request('/api/account',{headers})).status,401);
  const again=await h.passkeyLogin(handle,{credentialId});assert.equal(again.status,401);
 });
+
+test('Worker adapter: the password retirement reset runs from the lifecycle scheduler with its marker in the scheduler storage (review 2026-10-29 L1)',async t=>{
+ const h=await createHarness();t.after(()=>h.close());
+ const {result,cookie}=await h.signup(),owner=result.account.id;
+ const headers={Cookie:cookie,'X-Bindle-Account':owner,'X-Bindle-Session-Context':result.sessionContext};
+ assert.equal((await h.request('/api/account',{headers})).status,200);
+ // A legacy password-only record (the strip path is covered at engine level over the Worker repository). Before the
+ // reset runs, the activation session of a record that still carries password fields is already refused at use time.
+ const record=await h.directory.get(owner),revision=record.revision;
+ Object.assign(record,{passwordHash:'argon2id$legacy',passwordSetAt:Date.now()-DAY,credentials:[],revision:revision+1});assert.ok(await h.directory.compareAndSwap(owner,revision,record));
+ assert.equal((await h.request('/api/account',{headers})).status,401,'password-derived authority is refused before the sweep');
+ const scheduler=await h.mf.getDurableObjectNamespace('LIFECYCLE_SCHEDULER'),stub=scheduler.get(scheduler.idFromName('lifecycle-sweep-v1'));
+ const run=await stub.retirePasswords();
+ assert.equal(run.done,true);assert.equal(run.failed,0);assert.equal(run.reset,1);
+ const gone=await h.directory.get(owner);assert.equal(gone.status,'deleted');assert.equal(gone.audit[0].event,'account-deleted-password-retired');assert.equal('passwordHash' in gone,false);
+ const again=await stub.retirePasswords();assert.deepEqual({done:again.done,skipped:again.skipped},{done:true,skipped:true},'the marker makes later runs skip');
+});
