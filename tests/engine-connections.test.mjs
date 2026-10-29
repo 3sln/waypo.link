@@ -11,7 +11,7 @@ import {AppConnections,RECOGNIZED_FIELDS} from '../packages/apps/connections.mjs
 import * as C from '../packages/app/domains/connections.mjs';
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {createFieldOperation,nextFieldDispatch,recordFieldOutcome,fieldOperationResult} from '../packages/federation/extensions.mjs';
-import {PROVIDER_EXT,EXT,declare} from '../packages/core/extensions.mjs';
+import {EXT,declare} from '../packages/core/extensions.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../packages/identity/messaging-ingress.mjs';
 import {DELEGATION_PURPOSES,signDelegationPop,jwkThumbprint} from '../packages/identity/delegation.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
@@ -25,7 +25,7 @@ const ALL=Object.values(DELEGATION_PURPOSES).sort();
 // consumer-choice were cut, §10.1).
 const ORDERED={id:'https://spec.bindle.example/fragments/ordered-test/v1',title:'ordered-test',description:'Test field.',publisher:'https://spec.bindle.example',fields:{models:{title:'Models',type:'resource',cardinality:{min:0,max:3},contracts:[MODEL],selection:'ordered',consumers:['application','provider']}}};
 const FIELDS={...RECOGNIZED_FIELDS,[ORDERED.id]:ORDERED},MAILBOX_FEATURE=EXT.messagingMailbox;
-const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(EXT.keyDelegation),declare(MAILBOX_FEATURE),declare(PROVIDER_EXT.emailBridge)]},blocked:[]});
+const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(EXT.keyDelegation),declare(MAILBOX_FEATURE)]},blocked:[]});
 const BUILTINS={classifier:{name:'3sln.me models',manifest:{v:1,resources:{contracts:[MODEL]}}}};
 const code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}: ${e.message}`);return true;};
 
@@ -344,8 +344,8 @@ test('migration: legacy records read as active/disconnected, are migrated on fir
  assert.equal(reapproved.state,'active');assert.equal(reapproved.integration.kind,'external');
 });
 
-test('the recognized fields are the provider-consumable intake and ingress fragments', ()=>{
- assert.deepEqual(Object.keys(RECOGNIZED_FIELDS).sort(),[MESSAGING_INGRESS_FRAGMENT,'https://spec.bindle.example/fragments/public-intake/v1'].sort());
+test('the only recognized field is the provider-consumable messaging-ingress fragment (the public-intake field was struck with the email bridge)', ()=>{
+ assert.deepEqual(Object.keys(RECOGNIZED_FIELDS),[MESSAGING_INGRESS_FRAGMENT]);
  const ingress=RECOGNIZED_FIELDS[MESSAGING_INGRESS_FRAGMENT].fields.mailbox;assert.equal(ingress.selection,'exclusive');assert.deepEqual(ingress.consumers,['provider']);
  assert.ok(C.CONNECTION_OWNER_OPERATIONS.every(name=>C.CONNECTION_OPERATIONS.some(O=>O.operation===name)));
 });

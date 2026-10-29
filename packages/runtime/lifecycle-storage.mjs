@@ -44,15 +44,15 @@ export async function purgeEligibleInTransaction(tx){for(const value of (await t
 
 // Stage plans (account-deletion-export.md §2.3, §6). Stage names are append-only: a persisted job names its
 // stage, and every plan is persisted with the job. Owner and admin deletion start at billing-stop; the inactivity
-// purge keeps starting at identity. The erasure stages (grants, drain, operator-apps, email-bridge, exports) are
+// purge keeps starting at identity. The erasure stages (grants, drain, operator-apps, exports) are
 // common to both callers; only billing and the owner notice depend on the reason (R1-H3).
 export const PURGE_PLANS=Object.freeze({
- deletion:Object.freeze(['billing-stop','identity','grants','drain','operator-apps','vectors','email-bridge','exports','archive','blobs','billing-anonymize','notice','metadata']),
+ deletion:Object.freeze(['billing-stop','identity','grants','drain','operator-apps','vectors','exports','archive','blobs','billing-anonymize','notice','metadata']),
  // PORT-2: the purge after a committed identity move's export window (identity-portability design §6.5). No
  // operator-app notification and no owner notice: a moved identity is not deleted, so nothing may tell apps to purge
  // it (spec §6.3, AR-9), and the move's own notices already went out. Stages run under the deletion stage names.
- moved:Object.freeze(['billing-stop','identity','grants','drain','vectors','email-bridge','exports','archive','blobs','billing-anonymize','metadata']),
- lifecycle:Object.freeze(['identity','grants','drain','operator-apps','vectors','email-bridge','exports','archive','blobs','metadata']),
+ moved:Object.freeze(['billing-stop','identity','grants','drain','vectors','exports','archive','blobs','billing-anonymize','metadata']),
+ lifecycle:Object.freeze(['identity','grants','drain','operator-apps','vectors','exports','archive','blobs','metadata']),
  // A caller that injects no stage hooks (the pre-DX-3 lifecycle runner) keeps the original stages only.
  legacy:Object.freeze(['identity','vectors','archive','blobs','metadata']),
 });
@@ -61,7 +61,8 @@ export const PURGE_REASONS=Object.freeze(['inactive','owner','admin','moved']);
 // It returns undefined/true/{done:true, ...evidence} to advance, {done:false, retryAt?|wakeAt?} to run again later,
 // {held:true, reason} to hold, or throws (the caller holds with backoff). `state` is the stage's durable scratch
 // object, saved with the job, so a hook can keep its own deadline or counters across batches.
-const HOOKS=Object.freeze({'billing-stop':'billingStop',grants:'eraseGrants',drain:'drain','operator-apps':'notifyOperatorApps','email-bridge':'eraseEmailBridge',exports:'exportsCancel','billing-anonymize':'billingAnonymize',notice:'notice'});
+const HOOKS=Object.freeze({'billing-stop':'billingStop',grants:'eraseGrants',drain:'drain','operator-apps':'notifyOperatorApps',exports:'exportsCancel','billing-anonymize':'billingAnonymize',notice:'notice'});
+const RETIRED_STAGE='email-bridge';
 const KNOWN_STAGES=new Set([...PURGE_PLANS.deletion,...PURGE_PLANS.lifecycle,...PURGE_PLANS.moved]);
 const tombstoneReason=reason=>reason==='inactive'?'inactive-unpaid':reason;
 function smallEvidence(value){try{const text=JSON.stringify(value??null);return text.length<=4096?JSON.parse(text):{truncated:true};}catch{return {unserializable:true};}}
@@ -86,6 +87,9 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
  if((job.reason??'inactive')!==reason)return {done:false,stage:job.stage,halted:true,hold:'purge-reason-mismatch'};
  // Upgrading a legacy inactivity job once hooks are injected: re-run from grants (every stage is idempotent).
  if(hooked&&job.plan.join()===PURGE_PLANS.legacy.join()){job.plan=[...PURGE_PLANS.lifecycle];if(job.stage!=='identity')job.stage='grants';await c.metadata.put(PURGE_KEY,job);}
+ // The email bridge was removed on 2026-10-28 (owner direction): a persisted job drops its retired `email-bridge` stage
+ // (the bridge's storage went with the EmailBridgeObject class, Wrangler migration v11), resuming at the next stage.
+ if(Array.isArray(job.plan)&&job.plan.includes(RETIRED_STAGE)){const at=job.plan.indexOf(RETIRED_STAGE);if(job.stage===RETIRED_STAGE)job.stage=job.plan[at+1];job.plan=job.plan.filter(stage=>stage!==RETIRED_STAGE);if(job.hooks)delete job.hooks[RETIRED_STAGE];await c.metadata.put(PURGE_KEY,job);}
  if(!job.plan.every(stage=>KNOWN_STAGES.has(stage))||!job.plan.includes(job.stage))throw Object.assign(new Error('Purge job requires review'),{code:'lifecycle_unavailable'});
  const save=async()=>c.metadata.put(PURGE_KEY,job);
  const advance=async()=>{job.stage=job.plan[job.plan.indexOf(job.stage)+1];await save();};

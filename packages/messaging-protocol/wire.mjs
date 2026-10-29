@@ -1,7 +1,7 @@
 // Transport framing (spec §7.1, §7.3, §2.2, §9): strict multipart/form-data for single and multicast delivery, and the
-// mailbox/public-intake RPC requests. Adapted from core contact-delivery-wire.mjs (copied, not imported). Parsers
+// mailbox RPC requests (public intake, §9, was removed with the email bridge on 2026-10-28). Adapted from core contact-delivery-wire.mjs (copied, not imported). Parsers
 // never consult credentials; the edge checks those first. Each parser yields one semantic operation or a ProtocolFault.
-import {LIMITS,MAILBOX_CONTRACT,INTAKE_CONTRACT,JWS_TYPES} from './constants.mjs';
+import {LIMITS,MAILBOX_CONTRACT} from './constants.mjs';
 import {fail,malformed,textEncoder,strictJSON,utf8,exact,plain,text,time,uuid,isUUID,mimeValid,fromBase64url,base64url,sha256,jcs,urlValue,originValue,compactValue,digestValue,sameValue} from './encoding.mjs';
 import {validateEnvelope,validateContent,validatePrincipal,clampLimits,payloadDigest,eventId,recordShape} from './envelope.mjs';
 import {credentialScheme,parseCredential} from './conversation.mjs';
@@ -116,7 +116,7 @@ export function encodeMulticast({batchId,contexts},body,{boundary}={}){
  return encodeParts([['batch','application/json',json],['message',content.mimeType,body]],boundary??`bindle-messaging-${base64url(globalThis.crypto.getRandomValues(new Uint8Array(18)))}`);
 }
 
-// Resource RPC (protocol §5) for the mailbox contract (§2.2) and public intake (§9), parsed from raw bytes so duplicate
+// Resource RPC (protocol §5) for the mailbox contract (§2.2), parsed from raw bytes so duplicate
 // members are refused before canonicalization. Envelope errors are malformed (HTTP 400); contract/method/argument
 // errors carry `rpc: true` and belong in the 200 error envelope.
 const rpcFault=code=>fail(code,{status:200,rpc:true});
@@ -127,39 +127,8 @@ export function parseRPC(bytes,{resource,allowLoopback=false}={}){
  if(r.contract===MAILBOX_CONTRACT){
   if(r.method==='describe'){if(Object.keys(r.args).length)rpcFault('invalid_args');}
   else rpcFault('unsupported_method');
- }else if(r.contract===INTAKE_CONTRACT){
-  if(r.method!=='deliver')rpcFault('unsupported_method');
-  try{validateIntakeArgs(r.args,{allowLoopback});}catch(error){if(error?.code==='too_large')throw error;rpcFault('invalid_args');}
  }else rpcFault('unsupported_contract');
  return {tx:r.tx,resource:r.resource,contract:r.contract,method:r.method,args:r.args};
 }
 export const rpcRequest=({tx,resource,contract,method,args})=>({version:'0',tx:uuid(tx),resource,contract,method,args});
 
-// Public intake `deliver({message, provenance})` (§9). Parts decode to at most 1 MiB in total.
-function validateIntakeArgs(args,{allowLoopback}){
- exact(args,['message','provenance']);exact(args.message,['parts']);const parts=args.message.parts;
- if(!Array.isArray(parts)||!parts.length||parts.length>LIMITS.maxIntakeParts)malformed();let total=0;
- for(const x of parts){exact(x,['mimeType','dataBase64url']);if(!mimeValid(x.mimeType)||typeof x.dataBase64url!=='string'||x.dataBase64url.length>1398102)malformed();total+=fromBase64url(x.dataBase64url).byteLength;if(total>LIMITS.maxBodyBytes)fail('too_large');}
- parseProvenance(args.provenance,{allowLoopback});return args;
-}
-// normalizedDigest is SHA-256 over JCS of the delivered `message` object (provisional reading of "canonical parts", review B1).
-export const intakeDigest=(message,crypto=globalThis.crypto)=>sha256(crypto,jcs(message));
-export function parseProvenance(compact,{allowLoopback=false}={}){
- const jws=parseCompact(compactValue(compact),JWS_TYPES.provenance),c=jws.claims;
- exact(c,['bindle','v','iss','channel','recipient','receivedAt','sender','dmarc','automation','ingressFingerprint','normalizedDigest','jti']);
- if(c.bindle!=='intake-provenance'||c.v!==1||!text(c.channel,64,1)||!time(c.receivedAt)||!['pass','fail','none','unknown'].includes(c.dmarc))malformed();
- originValue(c.iss,allowLoopback);validatePrincipal(c.recipient,{local:allowLoopback});
- exact(c.sender,['envelopeFrom','headerFrom'],['replyTo']);for(const k of Object.keys(c.sender))if(!text(c.sender[k],320))malformed();
- if(!Array.isArray(c.automation)||c.automation.length>16||c.automation.some(x=>!text(x,64,1)))malformed();
- if(!text(c.ingressFingerprint,128,1)||!text(c.jti,128,1))malformed();digestValue(c.normalizedDigest);return jws;
-}
-// Occupant checks (§9, S-6) 1–3 and 5; deduplication on jti and tx (4) is the caller's. The result is assertions only:
-// the item is channel-origin with an unverified sender and is never signed as authored by anyone.
-export async function verifyProvenance(args,{consumerKey,consumer,recipient,now,allowLoopback=false,crypto=globalThis.crypto}){
- const jws=parseProvenance(args.provenance,{allowLoopback}),c=jws.claims;
- if(!consumerKey||jws.header.kid!==consumerKey.keyId||!await verifyES256(consumerKey.publicJwk,jws.signature,jws.signingInput,crypto))fail('not_authorized');
- if(c.iss!==consumer||c.recipient.issuer!==recipient.issuer||c.recipient.subject!==recipient.subject)fail('not_authorized');
- if(await intakeDigest(args.message,crypto)!==c.normalizedDigest)malformed();
- if(!Number.isSafeInteger(now)||c.receivedAt>now+LIMITS.clockSkewMs||c.receivedAt<now-LIMITS.recordWindowMs)fail('envelope_expired');
- return {jti:c.jti,channel:c.channel,receivedAt:c.receivedAt,asserted:{sender:c.sender,dmarc:c.dmarc,automation:c.automation},verifiedSender:false};
-}

@@ -2,8 +2,8 @@
 // Mailbox engines are installed on the seeded network simulator's peers; bob and carol share one hub ingress and one
 // edge index. First contact is credential-less and gated by the recipient's list policy (messaging §6.7; contact links
 // were removed in contacts spike phase 4): `w.admit(to, {policy})` names a list on the recipient, and `w.deliver` puts
-// the sender in it before posting (pass `null` to post without any admission). A fake email-bridge port supplies
-// bridge consumer keys and calibrations.
+// the sender in it before posting (pass `null` to post without any admission). The email-bridge port and bridge consumer
+// fixtures went with the email bridge (owner direction 2026-10-28).
 // Test-only: no provider, directory, delegation service or deployment is implied.
 import {createNetwork} from './helpers/network.mjs';
 import {createTestEngine,memoryStore} from './helpers/engine.mjs';
@@ -15,7 +15,7 @@ import {RECEIVE_OPERATIONS} from '../../packages/messaging-engine/domains/receiv
 import {handleConversationIngress} from '../../packages/messaging-engine/domains/conversations.mjs';
 import {INVITE_OPERATIONS,ReceiveFirstContact,ReceiveRedeem} from '../../packages/messaging-engine/domains/invites.mjs';
 import {CONTACT_OPERATIONS} from '../../packages/messaging-engine/domains/contacts.mjs';
-import {INTAKE_OPERATIONS,IntakeDeliver} from '../../packages/messaging-engine/domains/intake.mjs';
+import {INTAKE_OPERATIONS} from '../../packages/messaging-engine/domains/intake.mjs';
 import {DELEGATION_OPERATIONS} from '../../packages/messaging-engine/domains/delegation.mjs';
 import * as B from '../../packages/messaging-protocol/index.mjs';
 import {NOW,INGRESS,generateKeys,party,world,firstContactPayload,initEnvelope,uuidOf,encoder} from './vectors/fixtures.mjs';
@@ -24,38 +24,14 @@ export const REGISTRY=operations(...RECEIVE_OPERATIONS,...CONTACT_OPERATIONS,...
 export const keys=await generateKeys();
 export const P={alice:await party('alice',keys),bob:await party('bob',keys),carol:await party('carol',keys)};
 export {NOW,INGRESS,B,uuidOf,encoder,firstContactPayload,initEnvelope};
-const ES={name:'ECDSA',hash:'SHA-256'};
-const enc=v=>B.base64url(encoder.encode(JSON.stringify(v)));
-export async function signCompact(header,claims,privateKey){const head=`${enc(header)}.${enc(claims)}`;return `${head}.${B.base64url(new Uint8Array(await crypto.subtle.sign(ES,privateKey,encoder.encode(head))))}`;}
-
-// Fake email-bridge port (the owner's provider; spec §9) for one owner: consumer keys, accepted notices, calibrations.
-export function bridgePort(){
- const calls={consumerKey:0,accepted:0},state={consumers:new Map(),accepted:[]};
- return {calls,state,
-  async consumerKey({consumer,keyId}){calls.consumerKey++;const k=state.consumers.get(consumer);return k&&k.keyId===keyId?{keyId,publicJwk:k.publicJwk}:null;},
-  async accepted({jti}){calls.accepted++;state.accepted.push(jti);return {};},
- };
-}
-// A bridge consumer with its own published key (spec §9).
-export async function bridgeConsumer(origin='https://bob.provider.example'){
- const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),jwk=await crypto.subtle.exportKey('jwk',pair.publicKey);
- const keyId=`${origin}/keys/bridge-1`;let n=0;
- return {origin,keyId,publicJwk:{kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y},
-  async args({recipient,from='spammer@spam.example',text='Buy now',dmarc='pass',automation=[],receivedAt,jti=`mail-${++n}`}){
-   const message={parts:[{mimeType:'text/plain',dataBase64url:B.base64url(encoder.encode(text))}]};
-   const provenance=await signCompact({alg:'ES256',kid:keyId,typ:'bindle-intake-provenance+jwt'},{bindle:'intake-provenance',v:1,iss:origin,channel:'email',recipient,receivedAt,sender:{envelopeFrom:from,headerFrom:`Sender <${from}>`},dmarc,automation,ingressFingerprint:'fp-1',normalizedDigest:await B.intakeDigest(message),jti},pair.privateKey);
-   return {message,provenance};
-  }};
-}
-
 export async function createWorld({seed=1,rules=[],classifier=null,userStorage=null,faults={}}={}){
- const clock=fakeClock(NOW),network=createNetwork({clock,seed,rules}),directory=world(P),edge=createEdgeIndex(memoryStore()),bridges={},delivered={count:0};
+ const clock=fakeClock(NOW),network=createNetwork({clock,seed,rules}),directory=world(P),edge=createEdgeIndex(memoryStore()),delivered={count:0};
  const engineOf=owner=>[...network.peers.values()].find(peer=>peer.owner===owner);
  const refuse=async()=>{throw new B.ProtocolFault('not_authorized');},conversationEdge={check:refuse,route:refuse};
  for(const [name,peer] of network.peers){
-  await peer.engine.dispose();bridges[name]=bridgePort();
+  await peer.engine.dispose();
   // A fresh directory facade per engine start, so in-memory caches do not survive a restart (revocations do).
-  const providers=()=>({directory:{resolveKey:q=>directory.resolveKey(q),status:q=>directory.status(q)},delegateKeys:{current:async()=>peer.signer??P[name].signer},providerBridge:bridges[name],classifier:peer.classifier??classifier,userStorage,contacts:ContactsDomain,receive:ReceiveDomain});
+  const providers=()=>({directory:{resolveKey:q=>directory.resolveKey(q),status:q=>directory.status(q)},delegateKeys:{current:async()=>peer.signer??P[name].signer},classifier:peer.classifier??classifier,userStorage,contacts:ContactsDomain,receive:ReceiveDomain});
   const start=()=>createTestEngine({seed:seed+1,owner:peer.owner,clock:peer.clock,store:peer.store,providers:providers(),registry:REGISTRY,faults:peer.faults??faults[name]??{}});
   peer.engine=start();peer.restart=async()=>{peer.online=false;await peer.engine.dispose();peer.engine=start();peer.online=true;};
   const dispatch=Operation=>(owner,input)=>{delivered.count++;const target=engineOf(owner);return target.engine.perform(new Operation({actor:{kind:'ingress',owner},input}));};
@@ -63,11 +39,10 @@ export async function createWorld({seed=1,rules=[],classifier=null,userStorage=n
   await peer.engine.run('receive.configure',{input:{principal:P[name].principal,ingress:INGRESS[name]}});
   await flushEdgeOutbox(peer.store,edge,peer.owner);
  }
- const w={network,clock,directory,edge,bridges,delivered,peers:network.peers,
+ const w={network,clock,directory,edge,delivered,peers:network.peers,
   peer:name=>network.peers.get(name),
   run:(name,op,input)=>network.peers.get(name).engine.run(op,{input}),
   system:(name,op,input)=>{const peer=network.peers.get(name),Operation=REGISTRY[op];return peer.engine.perform(new Operation({actor:{kind:'system',owner:peer.owner,reason:'test'},input}));},
-  intake:(name,input)=>{const peer=network.peers.get(name);return peer.engine.perform(new IntakeDeliver({actor:{kind:'ingress',owner:peer.owner},input}));},
   flush:name=>flushEdgeOutbox(network.peers.get(name).store,edge,network.peers.get(name).owner),
   // A list on `to` that admits first contact: the built-in Contacts (`message`) or a new list with `policy`.
   async admit(to,{policy='message'}={}){const list=policy==='message'?'contacts':(await w.run(to,'lists.create',{name:`List ${policy}`,policy})).id;return {to,list,policy};},

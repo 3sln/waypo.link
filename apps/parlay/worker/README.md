@@ -53,10 +53,6 @@ issuer is not evidence of current directory availability.
 - `authenticate({authorization,method,url})` → `{kind:'owner',owner}` after live app-credential verification.
   Cookies and body/query/forwarding-header owner claims never select a mailbox.
 - `resolveKey(query)`, `delegationStatus(query)`: identity directory/pinned continuity and revocation lookup.
-- `emailBridge({owner,method,input})`: the owner's provider email-bridge resource (`${subject}/email-bridge`, contract
-  `https://3sln.me/contracts/email-bridge/v1`, offered only while the email bridge is enabled for the owner). Methods:
-  `consumerKey({consumer,keyId})` → `{keyId,publicJwk}|null` (the verified public bridge key for `intake.deliver`)
-  and `accepted({jti})` (`intake.accept`). It replaces the retired links contract (contacts spike phase 4).
 - `certify({owner,renew,input})`: the ordinary issue/renew delegation contract, authenticated by the app's own
   connection credential. Input contains a public key, fixed purposes and IDKEYS-2's proof of possession.
 - `publicJwks()`: the confidential client's public signing keys, separate from per-user delegate keys.
@@ -106,8 +102,8 @@ Every endpoint is absent while `PARLAY_ENABLED` is off.
   `Last-Event-ID`. Clients reconnect; `reset` requires a snapshot refetch. No idle streaming timer.
 - `POST /api/delegation/renew`: dispatches certificate renewal, never returns private material.
 - `GET /bindle/client.json`: carries `integration.json` as `bindle_integration`; JWKS at `/bindle/jwks.json`.
-- `POST /bindle/resources`, `/bindle/rpc`, `/bindle/events`: verified discovery, mailbox `describe`,
-  public intake, and SET dispatch. Preference SETs retain bounded snapshots without expanding local grants.
+- `POST /bindle/resources`, `/bindle/rpc`, `/bindle/events`: verified discovery, mailbox `describe`
+  and SET dispatch. (Bridged public intake was removed 2026-10-28 with the email bridge.) Preference SETs retain bounded snapshots without expanding local grants.
 
 Queue claim/finish/submission/cancellation and their alarms commit together. A crash during remote delivery
 leaves a leased obligation and a recovery alarm; retries retain the immutable operation ID and signed bytes.
@@ -125,7 +121,7 @@ covers Node recovery with no incoming request and HTTP intent translation. `work
 exercises the owned operations through `tests/parlay/helpers/engine`, sealed-key restart, manifest/slot
 validation, local broker authority and SET ordering. Test keys/verifiers are fixtures, not configured services.
 
-BB-CUT still needs every other prerequisite, bridge/archive integration and simulator/browser gates; this
+BB-CUT still needs every other prerequisite, archive integration and simulator/browser gates; this
 workstream does not authorize cutover. Provider directory, introspection, installation/occupancy, ordinary
 credential storage and storage-resource adapters require integration and independent review. The classifier
 is requested through the shared Bindle item-classification fragment (contract `item-classification/v1`, extensions
@@ -182,7 +178,7 @@ must supply the durable, connection-authenticated `archiveKeys` service describe
 local helper is never selected by Worker or by default.
 
 Archive imports persist an admission hold before archive reads and takeover. First-contact,
-conversation, return-control and public-intake ingress refuse custody until control rows commit;
+conversation and return-control ingress refuse custody until control rows commit;
 resumes retain the hold across failures. Old envelopes absent from the restored replay set are
 refused at the checkpoint boundary. Preserved envelopes and genesis proofs are reverified at
 historical signing time before any imported row commits; invalid signatures reject the import.

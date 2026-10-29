@@ -55,7 +55,7 @@ const run=async(c,Operation,params)=>{
  const operation=new Operation(params),owner=params.actor?.owner,ctx={subject:{kind:'account',owner}},system=params.actor?.kind==='system',reverse=!system&&REVERSE.has(Operation.operation);
  // Client targeting uses the persisted connection, never the caller's clientId.
  if(!reverse){let connection=params.input?.connection;if(!connection&&params.input?.record){const record=await c.metadata.get('integrations/record/'+params.input.record);if(record?.owner===owner)connection=record.connection;}if(connection){const row=await c.metadata.transaction(tx=>readConnection(tx,owner,connection));if(row?.clientId)ctx.client={clientId:row.clientId};}}
- const flags=routeFlags(c.config,ctx),features={artefactVersions:flagEnabled(c.config,'ARTEFACT_VERSIONS_ENABLED',ctx),integrations:reverse||(system?flags.background('INTEGRATIONS_ENABLED'):flagEnabled(c.config,'INTEGRATIONS_ENABLED',ctx)),brokering:reverse||(system?flags.background('BROKERING_ENABLED'):flagEnabled(c.config,'BROKERING_ENABLED',ctx)),emailBridge:flagEnabled(c.config,'EMAIL_BRIDGE_ENABLED',ctx)};
+ const flags=routeFlags(c.config,ctx),features={artefactVersions:flagEnabled(c.config,'ARTEFACT_VERSIONS_ENABLED',ctx),integrations:reverse||(system?flags.background('INTEGRATIONS_ENABLED'):flagEnabled(c.config,'INTEGRATIONS_ENABLED',ctx)),brokering:reverse||(system?flags.background('BROKERING_ENABLED'):flagEnabled(c.config,'BROKERING_ENABLED',ctx))};
  if(!reverse&&(!features.integrations||!features.brokering&&!SEARCH.includes(Operation.operation)))fail('feature_unavailable','This feature is not available.',409);
  return operation instanceof AppQuery?read(engineOf(c,features),operation):perform(engineOf(c,features),operation);
 };

@@ -8,6 +8,8 @@
 >
 > **Does not cover:** the CBOR profile itself ([CBOR for RPC spike](cbor-rpc-spike.md), being revised; this spike only notes where CBOR changes the unit), the classifier, description and embedding contracts (in progress elsewhere; their figures are quoted as they stand on disk), pricing, storage quotas per plan ([offload retention](offload-retention.md)), and rate limits that are not about bytes or counts per message (sign-in, recovery, abuse controls in [release gates](../3sln/release-gates.md)). Cloudflare figures not found in repo docs are marked **unverified**.
 
+> **Update (2026-10-28):** the email bridge was removed 2026-10-28 (owner direction; revisit later); its rows below (bridged intake, email bridge, Email Routing) and question 6 no longer apply.
+
 Line numbers are as of HEAD `d58305f` plus the uncommitted working tree on 2026-10-28. Several cited files are being edited by other agents (classifier, recovery, CBOR, transfer); re-check those citations before acting on them.
 
 ## 0. Summary
@@ -288,7 +290,7 @@ Cost-model follow-up: add a row per surface with (worst-case bytes/day, expected
 3. **Should credential-less first contact carry less than 1 MiB?** Recommended: 64 KiB, an interop fixed bound, so strangers cannot push large payloads. Established conversations keep 1 MiB.
 4. **Attachments: by reference only, with what caps?** Recommended: a later attachment profile, by reference only, ≤ 100 MiB each, ≤ 16 per message, `size` + SHA-256 inline. Not started until G4 lands.
 5. **Presigned object size on hosted storage?** Recommended: 100 MiB per object on every plan, with quota as the aggregate; multipart and larger objects later.
-6. **Email bridge raw admission?** Recommended: read up to 10 MiB with streaming MIME bounds, deliver text/HTML ≤ 1 MiB, list attachments as stubs until attachments exist; raise the per-owner bytes per day to 64 MiB.
+6. **Email bridge raw admission?** Moot: the email bridge was removed 2026-10-28 (owner direction; revisit later). Recommended: read up to 10 MiB with streaming MIME bounds, deliver text/HTML ≤ 1 MiB, list attachments as stubs until attachments exist; raise the per-owner bytes per day to 64 MiB.
 7. **Integration event cap: 32 KiB or 64 KiB?** Recommended: 32 KiB encoded (as the code does), made safe by a 16 KiB bound on preference value sets.
 8. **Byte budgets on RPC ingress and event-bus reads?** Recommended: yes, provisional values: 64 MiB per token per minute and 1 GiB per day for RPC; 1 GiB per grant per day for non-empty reads, then metered.
 9. **Code points or bytes?** Recommended: bytes are normative everywhere; code-point limits stay as UI guidance, and SDKs report which limit bound.

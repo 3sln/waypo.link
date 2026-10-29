@@ -11,10 +11,9 @@ import {fault} from '../faults.mjs';
 import {minimize} from './intake.mjs';
 import {TAG_CATEGORIES,CLASSIFICATION_FAILED_TAG,heuristicSuspectedTags,applyAutomatedTags,recordAutomated,clearClassificationFailure,runRulesFresh,executeRuleEffects,boundedString} from './tags.mjs';
 import {ownerRules} from './rules.mjs';
-import {CLASSIFICATION_FRAGMENT,CLASSIFICATION_CONTRACT,MAX_CLASSIFIER_BYTES,CLASSIFIER_HINTS,UNSCORED_REASONS,truncateBytes,classifyText,classifierSnapshot,noteGap,readGaps} from './categories.mjs';
+import {CLASSIFICATION_FRAGMENT,CLASSIFICATION_CONTRACT,MAX_CLASSIFIER_BYTES,UNSCORED_REASONS,truncateBytes,classifyText,classifierSnapshot,noteGap,readGaps} from './categories.mjs';
 import {incomingItem,organizationOf,saveOrganization,CLASSIFY_PENDING,classifyPendingKey,validItemId} from '../store/item-index.mjs';
 import {KEYS} from '../store/mailbox.mjs';
-import {fromBase64url} from '../../messaging-protocol/index.mjs';
 export const CLASSIFIER_FRAGMENT=CLASSIFICATION_FRAGMENT,CLASSIFIER_CONTRACT=CLASSIFICATION_CONTRACT;
 export {CLASSIFICATION_FAILED_TAG};
 // Owner direction 2026-10-28: an item awaiting auto-classification shows that it is pending, and the owner is warned
@@ -38,16 +37,10 @@ function normalizePin(p){
  if(!evidenceOK(p)||!plain(p.thresholds)||!Object.keys(p.thresholds).length||Object.entries(p.thresholds).some(([k,v])=>!TAG_CATEGORIES.includes(k)||typeof v!=='number'||!Number.isFinite(v)||v<=0||v>1))fault('invalid_classification','Choose model-bound thresholds.',400);
  return {model:p.model,version:p.version,schema:p.schema,thresholds:{...p.thresholds}};
 }
-function headerHints(item){
- if(item.origin!=='channel')return heuristicSuspectedTags({});
- const hints=new Set((item.asserted?.automation??[]).map(h=>String(h).toLowerCase())),headers={};
- if(hints.has('auto-submitted'))headers['auto-submitted']='auto-generated';
- if(hints.has('list-unsubscribe')||hints.has('list-id'))headers['list-id']='present';
- if(hints.has('precedence-bulk'))headers.precedence='bulk';
- return heuristicSuspectedTags(headers);
-}
+// The heuristic evidence row. Bindle messages carry no sender-controlled automation headers; the header hints of bridged
+// email went with the email bridge (removed 2026-10-28, owner direction), so the row is always the empty heuristic.
+const headerHints=()=>heuristicSuspectedTags({});
 async function textOf(tx,item){
- if(item.origin==='channel')return (item.message?.parts??[]).filter(p=>p.mimeType?.startsWith('text/plain')).map(p=>decoder.decode(fromBase64url(p.dataBase64url))).join('\n');
  const body=item.content?.mimeType?.startsWith('text/plain')?await tx.get(KEYS.body(item.id)):null;
  return `${item.subject??''}\n\n${body?decoder.decode(body):''}`;
 }
@@ -80,7 +73,7 @@ function skipReason(item,s){
  if(item.request||['pending','rejected'].includes(item.state))return 'public-intake';
  const conversation=item.type==='conversation'||item.kind==='conversation'||item.conversationId!==undefined;
  if(conversation&&!s.conversations.includes(item.conversationId??item.id))return 'conversation-opt-in';
- if(item.origin!=='channel'&&!conversation&&item.kind!=='one-off')return 'unsupported-kind';
+ if(!conversation&&item.kind!=='one-off')return 'unsupported-kind';
  return null;
 }
 /**
@@ -123,8 +116,6 @@ const failed=reason=>({source:'classifier',status:'failed',version:'none',reason
 // A scored result with no pinned thresholds (calibration) is still a completed classification: it is recorded with no
 // labels, so the item counts as classified (never charged again, review L2) and any failure tag is cleared.
 const completed=(outcome,pin)=>({source:'classifier',status:'complete',model:outcome.evidence.model,version:outcome.evidence.version,schema:outcome.evidence.schema,labels:pin?labelsOver(outcome,pin):[]});
-const sourceOf=item=>item.origin==='channel'?'email':'message';
-const hintsOf=item=>item.origin==='channel'?(item.asserted?.automation??[]).filter(h=>CLASSIFIER_HINTS.includes(h)).slice(0,16):[];
 /**
  * Classifies one item. For a pending item (classify.begin or classify.retry) it is the single classifier call of that
  * pending entry: the entry is claimed before anything is reserved, so a repeated or concurrent classify.item never
@@ -162,7 +153,7 @@ export class ClassifyItem extends MailboxAction {
   });
   if(snapshot.result)return snapshot.result;
   let outcome=snapshot.miss?{status:'unscored',reason:snapshot.miss}:null;
-  if(snapshot.reserved)outcome=await classifyText(classifier,values,{text:snapshot.text,source:sourceOf(snapshot.item),hints:hintsOf(snapshot.item)},TAG_CATEGORIES,{now:now()});
+  if(snapshot.reserved)outcome=await classifyText(classifier,values,{text:snapshot.text,source:'message',hints:[]},TAG_CATEGORIES,{now:now()});
   return tags.transaction(async tx=>{
    let item;try{item=await incomingItem(tx,id);}catch(error){if(error?.code==='not_found')return {id,status:'skipped',reason:'removed'};throw error;}
    const s={...defaults(),...await tx.get(SETTINGS)},m=organizationOf(item),at=now();

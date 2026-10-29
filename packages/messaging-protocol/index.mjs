@@ -17,4 +17,4 @@ export {statusRequired,checkStatus,quarantined,authenticate,verifyEnvelope,prech
 export {pairToken,secretDigest,parseCredential,formatCredential,credentialScheme,checkCredentialKind,edgeKey,tokenDigest,checkPairGate,streamState,frontier,admitCounter,equivocates,placeholderPlan,queueMutation,checkMutationAuthor,freezeAudience,mutationAudience} from './conversation.mjs';
 export {replayKey,operationKey,invitationKey,checkWindow,replayDecision,invitationDecision,retainUntil,admissibleAfterRestore} from './replay.mjs';
 export {OBLIGATION_STATES,RETRY_REASONS,REJECT_CLASSES,retryAfterMs,classifyFailure,applyReceipt,aggregate,parseMulticastResults,multicastOutcome} from './outcomes.mjs';
-export {multipartBoundary,parseDelivery,encodeDelivery,parseMulticast,encodeMulticast,parseRPC,rpcRequest,intakeDigest,parseProvenance,verifyProvenance} from './wire.mjs';
+export {multipartBoundary,parseDelivery,encodeDelivery,parseMulticast,encodeMulticast,parseRPC,rpcRequest} from './wire.mjs';

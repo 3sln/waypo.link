@@ -11,10 +11,10 @@ export const pad=n=>String(n).padStart(16,'0');
 export const KEYS=Object.freeze({
  owner:'owner',config:'config',settings:'settings/intake',budget:'budget/v1',usage:'usage/v1',edgeSeq:'edge-seq',
  block:p=>`block/${principalKey(p)}`,
- allowPrincipal:p=>`allow/p/${principalKey(p)}`,allowEmail:address=>`allow/e/${part(address.toLowerCase())}`,
+ allowPrincipal:p=>`allow/p/${principalKey(p)}`,
  replay:digest=>`replay/${digest}`,
  item:id=>`item/${id}`,body:id=>`body/${id}`,rejected:(at,id)=>`rejected/${pad(at)}/${id}`,pending:(at,id)=>`pending/${pad(at)}/${id}`,
- revoked:jkt=>`revoked/${jkt}`,intakeJti:(iss,jti)=>`intake/jti/${part(iss)}/${part(jti)}`,intakeTx:tx=>`intake/tx/${tx}`,
+ revoked:jkt=>`revoked/${jkt}`,
  edgeOutbox:seq=>`edge-outbox/${pad(seq)}`,
 });
 // Bounds from architecture §8 and §12.1 (provisional policy values, not protocol limits).

@@ -11,7 +11,7 @@ Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](e
   - AMD-C# (spec amendments)
   - BB-C# / BB-B# (Parlay core prep / app)
   - BB-CUT (extraction cutover)
-  - BRIDGE (email bridge)
+  - BRIDGE (email bridge; removed 2026-10-28, owner direction; revisit later)
   - ENG-# (app-engine §12)
   - LA# (linked approval)
   - ACT-# (activity)
@@ -112,7 +112,7 @@ The linked-approval decisions are recorded in [§15](../3sln/accounts/approve-a-
 - browser checks of partial counts, Retry missing and SSE reset.
 
 **Wave 7:**
-- BRIDGE [S] in `packages/email-bridge/*`.
+- BRIDGE [S] in `packages/email-bridge/*`. Removed 2026-10-28 (owner direction; revisit later).
 - Post-cutover engine work [A]: ENG-8 search, then ENG-11 beaming (now the contact-profile slice; Beam removed 2026-10-26), then ENG-9 lifecycle. ENG-13a/b/c only after LA and EXT stop editing identity and federation files.
 
 ## Conflict resolutions

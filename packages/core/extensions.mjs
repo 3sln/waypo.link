@@ -30,7 +30,8 @@ export const EXT=Object.freeze({
 });
 /** 3sln.me-published extensions whose single provider feature (extensions §4.2) consumes a provider-only field. */
 export const PROVIDER_EXT=Object.freeze({
- emailBridge:'https://3sln.me/extensions/email-bridge/v1',
+ // The 3sln.me `email-bridge` extension was removed on 2026-10-28 (owner direction: strike the email bridge for now;
+ // revisit later). None is published at present.
  // The 3sln.me `messaging-address` extension was withdrawn by the contacts spike (CL-4, CR-X1) and removed on 2026-10-28;
  // the Bindle-published messaging-mailbox extension (EXT.messagingMailbox) replaces its feature.
 });
@@ -65,7 +66,6 @@ export const BINDLE_DESCRIPTORS=Object.freeze([
 ].map(value=>deepFreeze(value)));
 /** 3sln.me provider-feature descriptors (extensions §11.1). Their user-facing text is the feature's consent text. */
 export const PROVIDER_DESCRIPTORS=Object.freeze([
- d(PROVIDER_EXT.emailBridge,'Email to your messaging app','Delivers email sent to your public address to the app you choose.'),
 ].map(value=>deepFreeze(value)));
 
 /** Prose prerequisites (extensions §2.5), as each extension's spec states them. Non-recursive presence checks only. */

@@ -14,10 +14,10 @@ export class MailboxPing extends MailboxAction {
 }
 export const MAILBOX_OPERATIONS=operations(MailboxPing,...CONVERSATION_OPERATIONS,...CONTACT_OPERATIONS,...RECEIVE_OPERATIONS,...INTAKE_OPERATIONS,...DELEGATION_OPERATIONS,...SEND_OPERATIONS,...OUTBOX_OPERATIONS,...EVENT_OPERATIONS,
  ...VIEW_OPERATIONS,...RULE_OPERATIONS,...TAG_OPERATIONS,...CLASSIFY_OPERATIONS, // BB-B5
- ...BRIDGE_OPERATIONS, // BB-B7
  ...ARCHIVE_OPERATIONS, // BB-B6
  ...INVITE_OPERATIONS, // contacts spike phase 3
  ...RESET_OPERATIONS, // contacts spike phase 4
+ ...EMAIL_BRIDGE_RESET_OPERATIONS, // email-bridge removal (2026-10-28)
 );
 
 // BB-B5 append-only domain registration.
@@ -25,9 +25,6 @@ import {VIEW_OPERATIONS} from './domains/views.mjs';
 import {RULE_OPERATIONS} from './domains/rules.mjs';
 import {TAG_OPERATIONS} from './domains/tags.mjs';
 import {CLASSIFY_OPERATIONS} from './domains/classify.mjs';
-
-// BB-B7 append-only domain registration.
-import {BRIDGE_OPERATIONS} from './domains/bridge.mjs';
 
 // BB-B6 append-only domain registration.
 import {ARCHIVE_OPERATIONS} from './domains/archive.mjs';
@@ -37,3 +34,7 @@ import {INVITE_OPERATIONS} from './domains/invites.mjs';
 
 // Contacts spike phase 4 append-only registration (provisional, unsigned): the contact-links reset.
 import {RESET_OPERATIONS} from './domains/contact-links-reset.mjs';
+
+// Email-bridge removal (owner direction 2026-10-28; provisional, unsigned): the bridged-intake reset. The BB-B7 bridge
+// domain was removed.
+import {EMAIL_BRIDGE_RESET_OPERATIONS} from './domains/email-bridge-reset.mjs';

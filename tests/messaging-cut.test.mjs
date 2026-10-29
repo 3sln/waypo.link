@@ -5,8 +5,8 @@
 // - the reset keeps live link families, preserves a legacy-only profile, survives corrupt rows and never stops the
 //   other alarm maintenance;
 // - the removed legacy routes answer uniformly without reaching an account;
-// - the intake fragment (extensions rev 3.2 §11.1, formerly the public-message-intake slot) is one document with
-//   provider-only consumers, and the email bridge's auto-reply stays invariant while the field's value changes (seeded);
+// - the public-intake fragment and the email bridge are gone (owner direction 2026-10-28): the only recognized field is
+//   the provider-only messaging-ingress field, and Parlay claims only the mailbox contract;
 // - the Parlay app's env rename keeps the retired names as aliases.
 // Engine level over the real SQLite adapter and AccountController. Rerun a seeded failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
@@ -18,15 +18,14 @@ import {resetLegacyMessaging,MESSAGING_RESET_MARKER,MESSAGING_RESET_PREFIXES} fr
 import {appMessageKey,appMessageUsageKey} from '../packages/activity/app-messages.mjs';
 import {key} from '../packages/core/records.mjs';
 import application from '../packages/runtime/http.mjs';
-import {PUBLIC_INTAKE_FRAGMENT_DOCUMENT,RECOGNIZED_FIELDS} from '../packages/apps/connections.mjs';
-import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../packages/email-bridge/wire.mjs';
+import {RECOGNIZED_FIELDS} from '../packages/apps/connections.mjs';
+import {MESSAGING_INGRESS_FRAGMENT} from '../packages/identity/messaging-ingress.mjs';
 import {fragmentOutcome,consumes} from '../packages/core/fragments.mjs';
 import {FEATURE_DEFINITIONS} from '../packages/app/domains/provider-features.mjs';
-import {PROVIDER_EXT} from '../packages/core/extensions.mjs';
+import {EXT,PROVIDER_EXT} from '../packages/core/extensions.mjs';
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {parlayEnv,PARLAY_ENV_NAMES} from '../apps/parlay/env.mjs';
 import {RETIRED_FLAGS,FLAGS} from '../packages/flags/registry.mjs';
-import {world,rawMail,text,DOMAIN,OWNER as BRIDGE_OWNER} from './email-bridge-helpers.mjs';
 import {forEachSeed} from './helpers/chaos.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ORIGIN='https://provider.example',KEK=Buffer.alloc(32,7).toString('base64');
@@ -199,40 +198,20 @@ test('removed legacy routes answer like any unknown path and never reach an acco
  assert.equal(calls,0,'no identity lookup or account call');
 });
 
-test('intake is one fragment with provider-only consumers: the core pin equals the published artefact, the bridge consumes it, Parlay only claims the contract',async()=>{
- const artefact=JSON.parse(await readFile(new URL('../docs/artefacts/fragments/public-intake-v1.json',import.meta.url))),manifest=JSON.parse(await readFile(new URL('../apps/parlay/integration.json',import.meta.url)));
- assert.deepEqual(PUBLIC_INTAKE_FRAGMENT_DOCUMENT,artefact);assert.equal(artefact.id,PUBLIC_INTAKE_FRAGMENT);assert.equal(fragmentOutcome(artefact).status,'valid');
- const field=artefact.fields.intake;assert.deepEqual(Object.keys(artefact.fields),['intake']);assert.deepEqual(field.contracts,[PUBLIC_INTAKE_CONTRACT]);
- // Review M2: provider-only (extensions §11.1); an application can never request it.
+test('the email bridge is struck: no public-intake fragment or artefact, no provider feature for it, Parlay claims only the mailbox contract',async()=>{
+ const PUBLIC_INTAKE_FRAGMENT='https://spec.bindle.example/fragments/public-intake/v1',PUBLIC_INTAKE_CONTRACT='https://spec.bindle.example/contracts/public-intake/v1',MAILBOX='https://spec.bindle.example/messaging/v1/contracts/mailbox';
+ await assert.rejects(readFile(new URL('../docs/artefacts/fragments/public-intake-v1.json',import.meta.url)),e=>e.code==='ENOENT','the artefact was withdrawn');
+ assert.deepEqual(Object.keys(RECOGNIZED_FIELDS),[MESSAGING_INGRESS_FRAGMENT]);assert.equal(RECOGNIZED_FIELDS[PUBLIC_INTAKE_FRAGMENT],undefined);
+ // Review M2 (carried over to the remaining field): provider-only (extensions §11.1); an application can never request it.
+ const field=RECOGNIZED_FIELDS[MESSAGING_INGRESS_FRAGMENT].fields.mailbox;assert.equal(fragmentOutcome(RECOGNIZED_FIELDS[MESSAGING_INGRESS_FRAGMENT]).status,'valid');
  assert.deepEqual(field.consumers,['provider']);assert.equal(field.selection,'exclusive');assert.equal(field.announce,true);assert.equal(consumes(field,'application'),false);
- assert.deepEqual(FEATURE_DEFINITIONS[PROVIDER_EXT.emailBridge],{fragment:PUBLIC_INTAKE_FRAGMENT,field:'intake',methods:{[PUBLIC_INTAKE_CONTRACT]:['deliver']}});
- assert.equal(RECOGNIZED_FIELDS[PUBLIC_INTAKE_FRAGMENT],PUBLIC_INTAKE_FRAGMENT_DOCUMENT);
- // Parlay declares nothing about intake: it only claims the contract in `resources.contracts`, recorded at connection.
- assert.equal(manifest.extensions,undefined);assert.ok(manifest.resources.contracts.includes(PUBLIC_INTAKE_CONTRACT));
+ assert.deepEqual(Object.keys(FEATURE_DEFINITIONS),[EXT.messagingMailbox]);assert.deepEqual(Object.keys(PROVIDER_EXT),[]);
+ assert.equal(FEATURE_DEFINITIONS['https://3sln.me/extensions/email-bridge/v1'],undefined);
+ assert.ok(RETIRED_FLAGS.EMAIL_BRIDGE_ENABLED);assert.equal(FLAGS.EMAIL_BRIDGE_ENABLED,undefined);
+ const manifest=JSON.parse(await readFile(new URL('../apps/parlay/integration.json',import.meta.url)));
+ assert.equal(manifest.extensions,undefined);assert.deepEqual(manifest.resources.contracts,[MAILBOX]);assert.ok(!manifest.resources.contracts.includes(PUBLIC_INTAKE_CONTRACT));
  const r=validateIntegrationManifest({...manifest,extensions:[{slot:'https://spec.bindle.example/slots/public-message-intake/v1',role:'occupant',ref:'mailbox'}]},{clientId:'https://messages.example/bindle/client.json',confidential:true,redirectUris:['https://messages.example/bindle/callback'],jwksUri:'https://messages.example/bindle/jwks.json'});
  assert.equal(r.status,'valid');assert.equal(r.manifest.extensions,undefined,'an `extensions` member in an integration manifest is ignored');
-});
-
-test('email bridge (seeded): occupancy filled, emptied, refusing or failing under it never changes the auto-reply; mail is delivered or held, never lost',async()=>{
- const modes=['store','none','refuse','busy','lost'];
- await forEachSeed(6,async random=>{
-  const w=await world({mode:random.pick(modes)});await w.enable();const accepted=[];
-  for(let i=0;i<8;i++){
-   w.state.mode=random.pick(modes);
-   const from=`sender${i}@sender.example`,result=await w.receive(rawMail({from,subject:`Note ${i}`}),{from});
-   if(result.action==='accept')accepted.push(from);
-   if(random.chance(0.5)){w.state.mode=random.pick(modes);await w.bridge.drain(BRIDGE_OWNER);}
-  }
-  assert.ok(accepted.length>0,'the schedule accepted mail');
-  // One reply per accepted sender, byte-identical whatever the slot did meanwhile (extensions §9.8: no occupancy oracle).
-  assert.equal(w.replies.length,accepted.length);assert.ok(new Set(w.replies.map(r=>text(r.raw).replace(/^(To|Message-ID|Date|In-Reply-To|References):.*$/gmi,''))).size<=1,'one fixed reply text');
-  // Once the slot has a storing occupant, held mail drains; nothing is dropped silently.
-  w.state.mode='store';for(let i=0;i<20;i++){w.clock.advance(15*60000+1);await w.bridge.drain(BRIDGE_OWNER);}
-  const status=await w.bridge.status(BRIDGE_OWNER);
-  assert.equal(status.queued,0,'nothing stays held once a storing occupant exists');assert.equal(status.items.length,accepted.length,'every accepted mail is accounted for');
-  for(const item of status.items)assert.ok(['delivered','refused','unknown'].includes(item.state),JSON.stringify(item));
-  void DOMAIN;
- });
 });
 
 test('Parlay env rename: PARLAY_* wins; an unset PARLAY_* reads the retired BINDLEBOX_* value; the core alias stays retired',()=>{

@@ -1,4 +1,3 @@
-import {createBridgeProvider,BRIDGE_KEYS} from '../../packages/messaging-engine/domains/bridge.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -11,19 +10,19 @@ import {INTEGRATION_OPERATIONS,resourceId} from '../../apps/parlay/worker/integr
 import {sealedDelegateKeys} from '../../apps/parlay/worker/delegate-keys.mjs';
 import {clientMetadata,metadataPort} from '../../apps/parlay/worker/metadata.mjs';
 import {createHTTP} from '../../apps/parlay/worker/http.mjs';
-import {SqliteMailboxStore} from '../../apps/parlay/node/storage.mjs';
-import {bridgeConsumer} from './receive-fixtures.test.mjs';
 import {fragmentOutcome} from '../../packages/core/fragments.mjs';
 import {digest,canonical} from '../../packages/core/records.mjs';
 import {validateIntegrationManifest} from '../../packages/federation/integrations.mjs';
 const vectors=JSON.parse(await readFile(new URL('./vectors/vectors.json',import.meta.url))),alice=await party('alice',vectors.keys),owner=alice.principal.subject,config={principal:alice.principal,ingress:alice.ingress,plan:'free'},resource=resourceId(config),encoder=new TextEncoder();
-const grant={revision:1,active:true,recipients:[],connection:'connection-1',generation:3},verified={owner,issuer:alice.principal.issuer,connection:grant.connection,generation:3,purpose:'invoke',resource,grant:'grant-1',methods:['describe','deliver'],consumer:'https://bridge.example',live:true};
-function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant],[BRIDGE_KEYS.settings,{enabled:true,consumers:[{origin:'https://bridge.example',channel:'email'}]}]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:null,...providers}});t.after(()=>h.dispose());return h;}
+const grant={revision:1,active:true,recipients:[],connection:'connection-1',generation:3},verified={owner,issuer:alice.principal.issuer,connection:grant.connection,generation:3,purpose:'invoke',resource,grant:'grant-1',methods:['describe'],live:true};
+function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{receive:ReceiveDomain,...providers}});t.after(()=>h.dispose());return h;}
+const RETIRED_INTAKE='https://spec.bindle.example/contracts/public-intake/v1';
 const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connection:grant.connection,jti:crypto.randomUUID(),seq:1,type,payload,...over});
 
 test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the item-classification fragment pinned by digest',async()=>{
  const client=clientMetadata();assert.equal(client.token_endpoint_auth_method,'private_key_jwt');
- // Extensions rev 3.2 (CR-X3-27): no occupant or consumer declarations; Parlay claims the mailbox and intake contracts and
+ // Extensions rev 3.2 (CR-X3-27): no occupant or consumer declarations; Parlay claims the mailbox contract (the
+ // public-intake contract went with the email bridge, 2026-10-28) and
  // requests the shared Bindle item-classification fragment (CR-X3-25, IC-4) as an optional setup grant, pinned by its
  // digest: the text and fallback classifier fields with capabilities and classify, and their detail fields; it sends its
  // own categories with each call.
@@ -33,7 +32,8 @@ test('BB-B8 client metadata carries a confidential integration manifest: resourc
  assert.deepEqual(setup.fields,['text','fallback','textDetail','fallbackDetail']);for(const field of setup.fields)assert.ok(Object.hasOwn(classifier.fields,field),field);
  assert.deepEqual(setup.methods,{text:{'https://spec.bindle.example/contracts/item-classification/v1':['capabilities','classify']},fallback:{'https://spec.bindle.example/contracts/item-classification/v1':['capabilities','classify']}});assert.equal(JSON.stringify(client).includes('decision-model'),false);assert.equal(JSON.stringify(client).includes('item-classifier/v1'),false);
  const parsed=validateIntegrationManifest(client.bindle_integration,{clientId:client.client_id,confidential:true});assert.equal(parsed.status,'valid');assert.equal(parsed.manifest.extensions,undefined);
- assert.deepEqual(parsed.manifest.resources.contracts,['https://spec.bindle.example/messaging/v1/contracts/mailbox','https://spec.bindle.example/contracts/public-intake/v1']);
+ assert.deepEqual(parsed.manifest.resources.contracts,['https://spec.bindle.example/messaging/v1/contracts/mailbox']);assert.equal(JSON.stringify(client).includes('public-intake'),false);
+ const shipped=JSON.parse(await readFile(new URL('../../apps/parlay/integration.json',import.meta.url)));assert.deepEqual(shipped.resources.contracts,[B.MAILBOX_CONTRACT]);
  assert.equal((await metadataPort()('/bindle/client.json')).bindle_integration.v,1);
  await assert.rejects(metadataPort()('/bindle/jwks.json'),e=>e.code==='recipient_unavailable');
  const publicSet=await metadataPort({services:{publicJwks:async()=>({keys:[{...alice.identity.publicJwk,kid:'client-1',untrusted:'omitted'}]})}})('/bindle/jwks.json');assert.equal(publicSet.keys[0].untrusted,undefined);assert.equal(publicSet.keys[0].alg,'ES256');
@@ -59,11 +59,15 @@ test('BB-B8 delegation renewal seals one key, verifies provider certificates and
 test('BB-B8 broker Queries bind issuer, connection, generation, resource and methods; writes require live checks',async t=>{
  const h=engine(t),description=await h.run('shell.describe',{input:{verified,resource}});assert.equal(description.ingress,alice.ingress);assert.equal(description.expiresAt,undefined);
  const discovery=await h.run('shell.discover',{input:{verified:{...verified,purpose:'discover'},query:{v:1,contracts:[B.MAILBOX_CONTRACT],limit:0}}});assert.deepEqual(discovery,{v:1,items:[],exists:true});
+ // Discovery lists only the mailbox contract; asking for the retired public-intake contract is invalid.
+ const listed=await h.run('shell.discover',{input:{verified:{...verified,purpose:'discover'},query:{v:1,contracts:[B.MAILBOX_CONTRACT]}}});assert.deepEqual(listed.items.map(i=>i.contracts),[[B.MAILBOX_CONTRACT]]);
+ await assert.rejects(h.run('shell.discover',{input:{verified:{...verified,purpose:'discover'},query:{v:1,contracts:[RETIRED_INTAKE]}}}),e=>e.code==='invalid_input');
  for(const patch of [{issuer:'https://other.example'},{connection:'foreign'},{generation:4},{resource:'https://other.example/r'},{methods:[]}])await assert.rejects(h.run('shell.describe',{input:{verified:{...verified,...patch},resource}}),e=>e.code==='not_authorized');
  await assert.rejects(h.run('shell.discover',{input:{verified:{...verified,purpose:'discover'},query:{v:1,contracts:[B.MAILBOX_CONTRACT],facets:{unknown:{}}}}}),e=>e.code==='unsupported_facet');
  // Contacts spike phase 4: the mailbox contract's linkRevoked method and its shell operation are gone.
  assert.throws(()=>h.run('shell.link-revoked',{input:{verified,resource,args:{jti:'link-1'}}}),/Unknown operation/);
- await assert.rejects(h.run('shell.public-intake',{input:{verified:{...verified,live:false},resource}}),e=>e.code==='not_authorized');
+ // The bridged public-intake shell operation went with the email bridge (2026-10-28).
+ assert.throws(()=>h.run('shell.public-intake',{input:{verified,resource}}),/Unknown operation/);
 });
 
 test('BB-B8 authenticated SETs are idempotent, keep generation floors monotonic and never revive old consent',async t=>{
@@ -77,22 +81,13 @@ test('BB-B8 authenticated SETs are idempotent, keep generation floors monotonic 
  await assert.rejects(h.run('shell.integration-event',{input:{event:event('unknown',{}, {connection:'foreign'})}}),e=>e.code==='not_authorized');
 });
 
-test('BB-B8 public intake uses the Node SQLite provider and checks broker authority again inside custody commit',async t=>{
- const store=new SqliteMailboxStore(':memory:');await store.put('owner',owner);await store.put('config',config);await store.put('shell:authorization',grant);
- const consumer=await bridgeConsumer(alice.principal.issuer),h=createTestEngine({owner,store,registry:INTEGRATION_OPERATIONS,providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:{consumerKey:async()=>({keyId:consumer.keyId,publicJwk:consumer.publicJwk})}}});t.after(async()=>{await h.dispose();await store.close();});
- const input={verified,resource,tx:crypto.randomUUID(),contract:B.INTAKE_CONTRACT,consumer:consumer.origin,args:await consumer.args({recipient:alice.principal,receivedAt:h.clock.now()-1000})},actor={kind:'ingress',owner};
- assert.deepEqual(await h.run('shell.public-intake',{actor,input}),{disposition:'stored-receipt'});assert.deepEqual(await h.run('shell.public-intake',{actor,input}),{disposition:'stored-receipt'});assert.equal((await store.list({prefix:'item/'})).size,1);
- // The provenance-key fetch happens outside the transaction. A disconnect that wins during that fetch must
- // prevent the already-authenticated invocation from committing a second item.
- let release,started;const fetched=new Promise(resolve=>started=resolve),hold=new Promise(resolve=>release=resolve);
- const racing=createTestEngine({owner,store,registry:INTEGRATION_OPERATIONS,providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:{consumerKey:async()=>{started();await hold;return {keyId:consumer.keyId,publicJwk:consumer.publicJwk};}}}});t.after(()=>racing.dispose());
- const pending=racing.run('shell.public-intake',{actor,input:{...input,tx:crypto.randomUUID(),args:await consumer.args({recipient:alice.principal,receivedAt:h.clock.now()-1000})}});await fetched;await store.put('shell:authorization',{...grant,active:false});release();await assert.rejects(pending,e=>e.code==='not_authorized');assert.equal((await store.list({prefix:'item/'})).size,1);
-});
-
 test('BB-B8 integration HTTP never accepts a body-supplied verifier, and translates authenticated RPC/SET to dispatch',async()=>{
  const calls=[],http=createHTTP({PARLAY_ENABLED:true,mailbox:async()=>({run:async(...args)=>{calls.push(args);return {accepted:true};}}),services:{verifyIntegration:async()=>verified,verifyEvent:async()=>event('unknown',{})}}),headers={'Content-Type':'application/json',Authorization:'Bearer broker-test'};
  const request=B.rpcRequest({resource,contract:B.MAILBOX_CONTRACT,method:'describe',args:{},tx:crypto.randomUUID()}),response=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(request)}));assert.equal(response.status,200);assert.equal(calls[0][1],'shell.describe');assert.deepEqual(calls[0][2].input.verified,verified);
  assert.equal((await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'signed-test-token'}))).status,202);assert.equal(calls.at(-1)[1],'shell.integration-event');
+ // The retired public-intake contract is refused in the RPC error envelope before verification or any mailbox dispatch.
+ const before=calls.length,retired=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(B.rpcRequest({resource,contract:RETIRED_INTAKE,method:'deliver',args:{message:{parts:[]},provenance:'a.b.c'},tx:crypto.randomUUID()}))}));
+ assert.equal(retired.status,200);assert.deepEqual(await retired.json(),{version:'0',error:{code:'unsupported_contract'}});assert.equal(calls.length,before);
  const closed=createHTTP({PARLAY_ENABLED:true});assert.equal((await closed(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(request)}))).status,503);
 });
 

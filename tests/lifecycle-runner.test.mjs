@@ -33,7 +33,7 @@ async function fixture(t,{mode='live',purge='true',cold='true',coldMin,push=true
  const config={APP_ORIGIN:'https://lifecycle.example',POLAR_SERVER:'sandbox',LIFECYCLE_ENABLED:mode==='off'?'false':'true',...mode==='live'?{LIFECYCLE_DRY_RUN:'false'}:{},LIFECYCLE_PURGE_ENABLED:purge,LIFECYCLE_COLD_STORAGE:cold,LIFECYCLE_COLD_STORAGE_SUPPORTED:true,...coldMin===undefined?{}:{LIFECYCLE_COLD_MIN_BYTES:coldMin},LIFECYCLE_FINANCE_REVIEW:polar?'polar':'local-only',...polar?{BILLING_ENABLED:'true',POLAR_CATALOG_MODE:'metadata',POLAR_ACCESS_TOKEN:'offline',POLAR_WEBHOOK_SECRET:'offline',POLAR_ORGANIZATION_ID:'org'}:{},
   LIFECYCLE_CLOCK:()=>now,LIFECYCLE_LOG:event=>logs.push(event),LIFECYCLE_IDENTITY:lifecycleIdentityPort(repository,{clock:()=>now}),
   // DX-3 common erasure stages: this host has no federation, MCP, bridge or operator-app stores; exports use DX-1.
-  ACCOUNT_DELETION_PORTS:{erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null}},
+  ACCOUNT_DELETION_PORTS:{erasure:{federation:null,mcp:null,operatorApps:null}},
   LIFECYCLE_ADMIN_HOLD:async id=>{if(admin instanceof Error)throw admin;return {...admin,...(await lifecycleAdminHoldPort({store:null,repository})(id)).held?{held:true}:{}};},
   LIFECYCLE_MAIL:mail?{async sendAccountNotice(input){mails.push(input);if(mailFailure)throw Object.assign(new Error('Mail delivery is temporarily unavailable.'),{code:mailFailure});return {messageId:'mail-'+mails.length};}}:null,
   LIFECYCLE_PUSH:push?{async send(subscription,payload){pushes.push(payload);return {accepted:true};}}:null};

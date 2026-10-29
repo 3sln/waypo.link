@@ -9,7 +9,6 @@ import {deletionDueIndex} from '../../packages/runtime/account-deletion.mjs';
 import {FEDERATION_LAYOUT} from '../../packages/runtime/federation.mjs';
 import {mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 import {MCP_LAYOUT} from '../../packages/mcp/service.mjs';
-import {eraseOwner} from '../../packages/email-bridge/owner.mjs';
 import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
 import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
 import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
@@ -60,7 +59,6 @@ export function workerDeletionConfig(env){
   erasure:{
    federation:env.FEDERATION?{eraseSubject:owner=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).eraseSubject(owner)}:null,
    mcp:mcp?{eraseSubject:owner=>mcp.eraseSubject(owner)}:null,
-   emailBridge:env.EMAIL_BRIDGE?{erase:owner=>eraseOwner(env,owner)}:null,
    operatorApps:null,
   },
   ...scheduler?{due:{put:(owner,at)=>scheduler().duePut(owner,at),delete:(owner,at)=>scheduler().dueDelete(owner,at)}}:{},

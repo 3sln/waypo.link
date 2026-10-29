@@ -2,7 +2,7 @@
 
 > **Group:** 3sln.me reference service
 >
-> **Status:** implemented portable lexical and opt-in semantic search; no production sign-off. Its corpus wording still names messages; the corpus is now activity items and email-bridge rows, and the text will be updated with the search rewrite.
+> **Status:** implemented portable lexical and opt-in semantic search; no production sign-off. Its corpus wording still names messages; the corpus is now activity items (email-bridge rows went with the email bridge, removed 2026-10-28), and the text will be updated with the search rewrite.
 >
 > **Covers:** search over a 3sln.me owner's items, and its identity, authority and budgets.
 >

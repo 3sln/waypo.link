@@ -55,10 +55,6 @@
         "class_name": "EventBusWaiter"
       },
       {
-        "name": "EMAIL_BRIDGE",
-        "class_name": "EmailBridgeObject"
-      },
-      {
         "name": "FLAG_STATS",
         "class_name": "FlagStatsObject"
       }
@@ -126,6 +122,12 @@
       "new_sqlite_classes": [
         "FlagStatsObject"
       ]
+    },
+    {
+      "tag": "v11",
+      "deleted_classes": [
+        "EmailBridgeObject"
+      ]
     }
   ],
   "r2_buckets": [
@@ -144,7 +146,6 @@
     "BROKERING_ENABLED": "false",
     "DEVICE_AUTHORIZATION_ENABLED": "false",
     "ACTIVITY_V2_ENABLED": "false",
-    "EMAIL_BRIDGE_ENABLED": "false",
     "EVENT_BUSES_ENABLED": "false",
     "INCREMENTAL_AUTH_ENABLED": "false",
     "LIFECYCLE_ENABLED": "false",

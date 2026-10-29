@@ -10,8 +10,8 @@
 // execution between stages and keeps data; a committed request stays fenced.
 //
 // Every external effect is an injected port (`DeletionPorts`). A port that is `undefined` is misconfigured and
-// the operation refuses or holds; a port that is `null` is declared absent on this host (for example the email
-// bridge on Node) and its stage is a recorded no-op. Destructive work prefers holding to guessing.
+// the operation refuses or holds; a port that is `null` is declared absent on this host (for example operator apps
+// on Node) and its stage is a recorded no-op. Destructive work prefers holding to guessing.
 //
 // DeletionPorts {
 //   identity   {get(owner), tombstone(owner,{assignmentId,reason})}   lifecycleIdentityPort (identity/lifecycle-tombstone.mjs)
@@ -20,7 +20,7 @@
 //   adminAuthority owner -> {admin}                                    built-in admin role (R1-L9)
 //   billing    {cancelAtPeriodEnd, uncancel, revokeAll, anonymize, paid?} | null   DX-4 BillingClosure
 //   notices    {deliver(input) -> {accepted}}                          DX-5 templates over mail and push
-//   erasure    {federation:{eraseSubject}|null, mcp:{eraseSubject}|null, emailBridge:{erase}|null,
+//   erasure    {federation:{eraseSubject}|null, mcp:{eraseSubject}|null,
 //               operatorApps:{ownerDeleted(owner,{reason,basis})}|null}   §2.3 E3, E5b; R1-M12 (no default wiring)
 //   exports    {cancelAll(owner,{budget})} | null                      DX-1 ExportGeneration (E6)
 //   due        {put(owner,executeAfter), delete(owner,executeAfter)}   the `deletion-due` index (§2.2)
@@ -187,8 +187,6 @@ export function erasureStages(c,{ports,clock=Date.now,log=()=>{}}={}){
    if(result?.done===false){state.attempts=(state.attempts??0)+1;return {done:false,retryAt:clock()+Math.min(DAY,HOUR*2**Math.min(state.attempts-1,5))};}
    return {done:true,operatorApps:'notified'};
   },
-  // E5b: the owner's EmailBridgeObject (settings, holding queue, dedup, reply ledger); absent on Node.
-  async eraseEmailBridge(owner,{state}){return await call('emailBridge','erase',owner,state)?{done:true,emailBridge:state.emailBridge==='absent'?'absent':'erased'}:erasureMissing('emailBridge');},
   // E6: before the blob stages, so deferred garbage pinned by an export becomes collectable.
   // DX-1's ExportGeneration.cancelAll owns the job and write-intent schema; there is deliberately no parts-only
   // fallback here (an unconfigured port holds), and `null` (no export store on this host) is a recorded no-op.

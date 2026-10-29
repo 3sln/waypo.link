@@ -17,7 +17,9 @@ test('BB6-S7: first-contact admission and shell conversation/control ingress are
  result=await w.deliver('alice','bob',link,{createdAt:w.clock.now()-1000});assert.equal(result.json.error,'not_authorized');
  result=await w.deliver('alice','bob',link,{createdAt:w.clock.now()});assert.equal(result.status,200);
  const box=createMailbox({store,PARLAY_ENABLED:true});t.after(()=>box.dispose());await store.put('archive/hold',true);
- for(const name of ['conversations.receive','conversations.respond','shell.public-intake'])await assert.rejects(box.run(w.peer('bob').owner,name,{input:{}}),{code:'recipient_storage_unavailable'});
+ for(const name of ['conversations.receive','conversations.respond'])await assert.rejects(box.run(w.peer('bob').owner,name,{input:{}}),{code:'recipient_storage_unavailable'});
+ // The bridged public-intake shell operation went with the email bridge (2026-10-28).
+ await assert.rejects(box.run(w.peer('bob').owner,'shell.public-intake',{input:{}}),{code:'not_found'});
 });
 
 test('BB6-S7: traffic during archive reads is held before any control rows are applied, then resumes',async t=>{
@@ -95,13 +97,6 @@ test('B9 timeline transfer caps revision bodies independently of the message pag
  const a=await createArchiveMesh({names:['alice','bob']});t.after(()=>a.dispose());const cid=await a.conversation('alice',['bob']),sent=await a.run('alice','conversations.send',{conversationId:cid,text:'initial'});
  for(let n=0;n<25;n++)await a.run('alice','conversations.edit',{conversationId:cid,target:sent.eventId,text:'revision '+n});
  const page=await a.run('alice','conversations.get',{conversationId:cid,limit:1}),event=page.timeline[0];assert.equal(event.history.length,20);assert.equal(event.historyTruncated,true);assert.equal(event.text,'revision 24');
-});
-
-test('BB6-S7: public intake rechecks the import hold after asynchronous provenance verification',async t=>{
- const {bridgeConsumer,P,uuidOf}=await import('./receive-fixtures.test.mjs'),w=await createWorld();t.after(()=>w.dispose());const consumer=await bridgeConsumer(),args=await consumer.args({recipient:P.bob.principal,receivedAt:w.clock.now(),text:'channel request'}),store=w.peer('bob').store;
- w.bridges.bob.state.consumers.set(consumer.origin,consumer);let paused,release;const entered=new Promise(resolve=>paused=resolve),wait=new Promise(resolve=>release=resolve),original=w.bridges.bob.consumerKey;
- w.bridges.bob.consumerKey=async q=>{paused();await wait;return original(q);};const pending=w.intake('bob',{contract:B.INTAKE_CONTRACT,consumer:consumer.origin,tx:uuidOf(900),args});await entered;await store.put('archive/hold',true);release();await assert.rejects(pending,{code:'recipient_storage_unavailable'});assert.equal((await w.items('bob')).length,0);
- await store.delete('archive/hold');await w.intake('bob',{contract:B.INTAKE_CONTRACT,consumer:consumer.origin,tx:uuidOf(901),args});const item=(await w.items('bob'))[0];item.state='rejected';await store.put('item/'+item.id,item);assert.equal((await w.run('bob','receive.body',{id:item.id})).text,'channel request');
 });
 
 test('B6 shell composes archive ports and schedules a fixed checkpoint deadline plus durable failure retry',async t=>{

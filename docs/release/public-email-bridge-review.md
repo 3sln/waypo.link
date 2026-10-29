@@ -1,5 +1,7 @@
 # Public-handle email bridge — independent design review
 
+> **Status: superseded 2026-10-28.** The email bridge was removed (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). Kept as review history and as a dated source for figures cited elsewhere.
+
 Date: 2026-10-13. Status: independent cross-review complete; design and human signoff remain provisional. Scope: optional paid-account inbound email, classification, sender continuation, abuse/cost controls and recovery. This document does not authorize runtime changes, DNS, deployment, outgoing mail or public contract publication. Human signoffs remain blank.
 
 ## Existing implementation and primary-source facts

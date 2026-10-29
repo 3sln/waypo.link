@@ -278,6 +278,8 @@ export class AccountController {
       try{await this.resetLegacyMessaging(owner);}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
       // Contacts phase 4 reset (`contact-links-retired-v1`, packages/runtime/contact-links-reset.mjs): same shape.
       try{await this.resetContactLinks(owner);}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
+      // Email-bridge removal reset (`email-bridge-retired-v1`, packages/runtime/email-bridge-reset.mjs): same shape.
+      try{await this.resetEmailBridge(owner);}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
       if(!(await this.items.collections(owner)).length)await this.items.createCollection(owner,'Inbox');
       await this.scheduleAlarm(Date.now()+7*86400000);await this.billingRefresh(owner);
     }
@@ -334,6 +336,8 @@ export class AccountController {
       {const resetOwner=await this.metadata.get('owner');if(resetOwner){try{await this.resetLegacyMessaging(resetOwner,{alarm:true});}catch{try{await this.scheduleAlarm(Date.now()+3600000);}catch{/* the weekly alarm retries */}}}}
       // Contacts phase 4 reset (`contact-links-retired-v1`): one bounded slice per alarm until its marker exists, isolated likewise.
       {const resetOwner=await this.metadata.get('owner');if(resetOwner){try{await this.resetContactLinks(resetOwner,{alarm:true});}catch{try{await this.scheduleAlarm(Date.now()+3600000);}catch{/* the weekly alarm retries */}}}}
+      // Email-bridge removal reset (`email-bridge-retired-v1`): one bounded slice per alarm until its marker exists, isolated likewise.
+      {const resetOwner=await this.metadata.get('owner');if(resetOwner){try{await this.resetEmailBridge(resetOwner,{alarm:true});}catch{try{await this.scheduleAlarm(Date.now()+3600000);}catch{/* the weekly alarm retries */}}}}
       await this.quota.cleanup();await this.collectBlobGarbage();const mcpJournalWake=await sweepMcpJournal(this.metadata);if(mcpJournalWake!==null)await this.scheduleAlarm(mcpJournalWake);const owner=await this.metadata.get('owner');if(!owner)return;
       if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       // A scheduled deletion freezes the shelved state and semantic backfill (R1-H2); vector purges may continue.

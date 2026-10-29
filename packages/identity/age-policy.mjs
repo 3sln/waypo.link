@@ -37,7 +37,6 @@ export function createsContentOrGrant(path,method,input={}){
  // `/api/profile` (display name and avatar, shown to apps through the identity profile resource) is content. Since
  // contacts phase 4 removed the disclosure toggle there is no protective withdrawal body any more, so every save is fenced.
  if(path==='/api/profile')return true;
- if(path==='/api/email-bridge')return input.enabled===true||input.autoReply===true;
  if(/^\/api\/events\/buses\/[^/]+\/features$/.test(path))return input.read===true||input.publish===true;
  return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|resources|integrations\/google\/(?:start|complete)|integrations\/records|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/postbacks\/prepare|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm)$/.test(path);
 }

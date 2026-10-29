@@ -52,14 +52,6 @@ import {transferIntakeConfig} from '../../packages/runtime/transfer-intake.mjs';
 import {transferDocument} from '../../packages/runtime/routes/transfer-pages.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {entryStoreName} from './federation.mjs';
-// BRIDGE (Wave 7): the Email Routing `email` handler and its object; refused generically unless EMAIL_BRIDGE_ENABLED
-// and the EMAIL_BRIDGE binding are both present (packages/email-bridge/worker.mjs).
-import {handleEmail} from '../../packages/email-bridge/worker.mjs';
-export {EmailBridgeObject} from '../../packages/email-bridge/worker-object.mjs';
-// `cloudflare:email` is loaded only when a reply is possible, so bundles and tests without it still build.
-const emailModule='cloudflare:'+'email';
-async function emailMessageClass(env){if(!siteGlobal(env,'EMAIL_BRIDGE_ENABLED',true))return undefined;try{return (await import(emailModule)).EmailMessage;}catch{return undefined;}}
-
 // Workers Assets canonicalizes .html URLs; retain the authenticated snapshot's
 // public URL while following only this exact same-origin internal canonicalization.
 function assetResource(binding){return {async fetch(request){
@@ -159,5 +151,5 @@ export class FederationObject extends FederationBase {
   if(pending&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);
  }
 }
-export function createWorker({resolveIdentityBadges}={}){if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');return {fetch:async(request,env,ctx)=>{const flags=await workerFlags(env).pin({request,execution:ctx});return application.fetch(request,resources(env,resolveIdentityBadges,flags),ctx);},scheduled:async(event,env,ctx)=>application.scheduled(event,resources(env,resolveIdentityBadges,await workerFlags(env).pin({execution:ctx,alarm:true})),ctx),email:async(message,env,ctx)=>{const flags=await workerFlags(env).pin({execution:ctx}),config={...env,flags};await handleEmail(message,config,ctx,{EmailMessage:await emailMessageClass(config)});}};}
+export function createWorker({resolveIdentityBadges}={}){if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');return {fetch:async(request,env,ctx)=>{const flags=await workerFlags(env).pin({request,execution:ctx});return application.fetch(request,resources(env,resolveIdentityBadges,flags),ctx);},scheduled:async(event,env,ctx)=>application.scheduled(event,resources(env,resolveIdentityBadges,await workerFlags(env).pin({execution:ctx,alarm:true})),ctx)};}
 export default createWorker();

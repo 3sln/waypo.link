@@ -340,7 +340,7 @@ test('export window and purge: steps wait until exportUntil, then run the moved 
 
 test('moved purge through the shared executor: plan, reason, connections vocabulary and the moved tombstone',async t=>{
  assert.ok(PURGE_REASONS.includes('moved'));assert.ok(TOMBSTONE_REASONS.has('moved'));
- assert.deepEqual(PURGE_PLANS.moved,['billing-stop','identity','grants','drain','vectors','email-bridge','exports','archive','blobs','billing-anonymize','metadata']);
+ assert.deepEqual(PURGE_PLANS.moved,['billing-stop','identity','grants','drain','vectors','exports','archive','blobs','billing-anonymize','metadata']);
  assert.ok(!PURGE_PLANS.moved.includes('operator-apps')&&!PURGE_PLANS.moved.includes('notice'));
  const fx=await transferFixture(t);await committedFlow(fx);const record=await fx.get();
  const identity=lifecycleIdentityPort(fx.repository,{clock:fx.clock.now});
@@ -349,7 +349,7 @@ test('moved purge through the shared executor: plan, reason, connections vocabul
  const executor={metadata:fx.metadata,blobs,archives,config:{},async connectionsSeverAccount(owner,{reason}){severed.push(reason);}};
  const stage=async()=>({done:true});
  fx.clock.set(record.exportUntil);
- let batch;for(let i=0;i<20;i++){batch=await purgeBatch(executor,OWNER,{identity,fence:async()=>true,reason:'moved',basis:'moved',requestedAt:record.committedAt,clock:fx.clock.now,stages:{billingStop:stage,eraseGrants:stage,drain:stage,eraseEmailBridge:stage,exportsCancel:stage,billingAnonymize:stage}});if(batch.done)break;}
+ let batch;for(let i=0;i<20;i++){batch=await purgeBatch(executor,OWNER,{identity,fence:async()=>true,reason:'moved',basis:'moved',requestedAt:record.committedAt,clock:fx.clock.now,stages:{billingStop:stage,eraseGrants:stage,drain:stage,exportsCancel:stage,billingAnonymize:stage}});if(batch.done)break;}
  assert.equal(batch.done,true);assert.deepEqual(severed,['system']);
  const tombstone=await fx.metadata.get(TOMBSTONE_KEY);assert.equal(tombstone.reason,'moved');assert.equal(tombstone.basis,'moved');
  // The identity keeps status `moved` and its record while the redirect runs; credentials, email and keys are gone.

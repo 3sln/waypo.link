@@ -42,7 +42,7 @@ export class DeletionProbe extends DurableObject{
   const directory={put:(k,v)=>identity.put(k,v),delete:k=>identity.delete(k),list:o=>identity.list(o)};
   const clock={now:()=>this.now()};
   const ports={identity:lifecycleIdentityPort(repository,{clock:clock.now}),security:async()=>({epoch:1,changedAt:null}),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,
-   notices:{deliver:async()=>({accepted:true})},erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null},exports:null,due:deletionDueIndex(directory)};
+   notices:{deliver:async()=>({accepted:true})},erasure:{federation:null,mcp:null,operatorApps:null},exports:null,due:deletionDueIndex(directory)};
   const executor={metadata:this.ctx.storage,blobs:this.env.BLOBS,archives:this.env.ARCHIVES,config:{}};
   return new DeletionService({executor,ports,flags:{for:()=>({enabled:()=>true,background:()=>true,global:()=>true})},clock,random:{uuid:()=>crypto.randomUUID(),bytes:n=>crypto.getRandomValues(new Uint8Array(n))},budget:64,busyMs:20,
    wake:async time=>armAlarm(this.ctx.storage,Date.now()+Math.max(1,time-this.now()),Date.now())});
@@ -95,7 +95,7 @@ test('Node parity: the same deletion over SqliteMetadata, FileBucket and the Nod
  let offset=0;const clock={now:()=>Date.now()+offset},repository=new IdentityRepository({metadata:idDb,config:{}});
  assert.equal(await repository.create(identityRecord(Date.now())),true);
  const ports={identity:lifecycleIdentityPort(repository,{clock:clock.now}),security:async()=>({epoch:1,changedAt:null}),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,
-  notices:{deliver:async()=>({accepted:true})},erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null},exports:null,due:deletionDueIndex(idDb)};
+  notices:{deliver:async()=>({accepted:true})},erasure:{federation:null,mcp:null,operatorApps:null},exports:null,due:deletionDueIndex(idDb)};
  let alarms=0,finished;const done=new Promise(resolve=>{finished=resolve;});
  const service=new DeletionService({executor:{metadata,blobs,archives,config:{}},ports,flags:{for:()=>({enabled:()=>true,background:()=>true,global:()=>true})},clock,random:{uuid:()=>crypto.randomUUID(),bytes:n=>crypto.getRandomValues(new Uint8Array(n))},budget:64,busyMs:5,
   wake:time=>armAlarm(metadata,Date.now()+Math.max(1,time-clock.now()),Date.now())});
@@ -128,9 +128,7 @@ test('Worker adapter: deletion ports are wired; request, scheduler due index, ca
  const swept=await sweep.run({trigger:'cron'});assert.equal(swept.mode,'off');
  assert.equal((await account.invoke({method:'deletionStatus',args:[owner]})).state,'scheduled');
  assert.equal((await account.invoke({method:'deletionCancel',args:[owner]})).state,'cancelled');
- // E5b and E3 erasers over the real objects: an unbound store holds nothing; a bound bridge instance is emptied.
- const bridge=await h.mf.getDurableObjectNamespace('EMAIL_BRIDGE'),stub=bridge.get(bridge.idFromName(`owner/${owner}`));
- assert.equal((await stub.erase(owner)).erased,true);
- const federation=await h.mf.getDurableObjectNamespace('FEDERATION'),shard=federation.get(federation.idFromName(`bindle-federation-v1/${owner}`));
+ // E3 eraser over the real object: an unbound store holds nothing.
+  const federation=await h.mf.getDurableObjectNamespace('FEDERATION'),shard=federation.get(federation.idFromName(`bindle-federation-v1/${owner}`));
  const erased=await shard.eraseSubject(owner);assert.equal(erased.absent,true);assert.equal(erased.deleted,0);
 });

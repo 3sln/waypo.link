@@ -13,7 +13,6 @@ import {stages as incremental} from './incremental.mjs';
 import {stages as notifications} from './notifications.mjs';
 import {stages as delegation} from './delegation.mjs';
 import {stages as appSessions} from './app-sessions.mjs';
-import {stages as emailBridge} from './email-bridge.mjs';
 const origin='https://provider.example',ctx=owner=>({subject:{kind:'account',owner}});
 const request=(path,method='GET',value,headers={})=>new Request(origin+path,{method,headers:{Origin:origin,...value===undefined?{}:{'Content-Type':'application/json'},...headers},...value===undefined?{}:{body:JSON.stringify(value)}});
 const route=(env,path,method='GET',value,extra={})=>({env,path,request:request(path,method,value),url:new URL(origin+path),local:false,id:OWNER,owner:{account:{id:OWNER}},...extra});
@@ -86,17 +85,6 @@ test('cold store outage fails safe even for unmanaged legacy children; explicit 
  for(const name of ['INCREMENTAL_AUTH_ENABLED','DEVICE_AUTHORIZATION_ENABLED']){assert.equal(flagEnabled(env,name),false);assert.equal(flagGlobal(env,name),false);}
  assert.equal(flagEnabled({INCREMENTAL_AUTH_ENABLED:'true'},'INCREMENTAL_AUTH_ENABLED'),true,'unmanaged independent default matches the old route');
  assert.equal(flagEnabled({INCREMENTAL_AUTH_ENABLED:'true',FEDERATION_ENABLED:'false'},'INCREMENTAL_AUTH_ENABLED'),false);
-});
-
-test('email bridge targets the verified recipient owner and keeps settings, acceptance status and opt-out accessible',async t=>{
- const f=await fixture(t);await f.edit('EMAIL_BRIDGE_ENABLED',{on:true,fallthrough:false,rules:[{when:{accounts:[OWNER]},serve:{value:true}}]});
- const env={...await f.ports(),EMAIL_BRIDGE_OWNER:{settings:async()=>({enabled:false}),configure:async(_,input)=>input,accepted:async()=>({status:'accepted'})}},object={emailBridgeEntitled:async()=>true};
- assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{id:OWNER,object}))).status,200);
- assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{id:OTHER,object}))).status,409);
- for(const [path,method,input]of [['/api/email-bridge','GET'],['/api/email-bridge','PUT',{enabled:false}],['/api/email-bridge/accepted','POST',{jti:'existing-receipt'}]])assert.equal((await emailBridge.owner(route(env,path,method,input,{id:OTHER,object}))).status,200);
- // The retired LINKS_ENABLED and BINDLEBOX_ENABLED env names (contacts phase 4) never touch the bridge.
- let runtime=new FlagsRuntime({store:f.flagStore,env:{LINKS_ENABLED:'false',BINDLEBOX_ENABLED:'false'},clock:f.clock.now});env.flags=await runtime.pin();assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{id:OWNER,object}))).status,200);
- runtime=new FlagsRuntime({store:f.flagStore,env:{EMAIL_BRIDGE_ENABLED:'false'},clock:f.clock.now});env.flags=await runtime.pin();assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{object}))).status,409);assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:false},{object}))).status,200);
 });
 
 test('owner reads, status and reversal remain available through deny, console off, env kills and outages after adoption',async t=>{

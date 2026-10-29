@@ -16,6 +16,8 @@ A seventh update, on the uncommitted working tree at HEAD 74b94ee (2026-10-28), 
 
 An eighth update, on the uncommitted working tree at HEAD d58305f (2026-10-28), records the owner approvals of 2026-10-28 ([DEVLOG "Owner approvals and directions (in session)"](../../DEVLOG.md#2026-10-28--owner-approvals-and-directions-in-session)). They are listed as approved, with that date and link, at the start of the seventh-update section: the contacts rethink §11 Q1–Q3 answers, the widened `audience` definition in extensions §2.4 (so `transfer_in_endpoint` needs no exception), the signaling `data` budget of 256 KiB per hour on every plan with organization and service-entity budgets to be tiered by an organization plan, and the platform and integrations spike questions 1–8 (question 5 answered as the owner's Cloudflare account). The same entry's new owner directions (the Cloudflare integration as a console app, the paid built-in classifier with tier-scaled rate limits, which supersedes "no default classifier", and the Parlay classification UX) are directions, not sign-offs of any design. SG-ENG and its highest-impact entry are updated: at the new budget Paid holds the 50% floor without relay, and only Paid with its whole relay allowance stays under it, behind the relay byte-cap gate (RTCf-rev). The "RPC payloads" line of that entry is a coordinator recommendation, not an owner approval, and is not listed as approved.
 
+A ninth note (2026-10-28): the email bridge was removed under DEVLOG "Owner direction: strike the email bridge for now" (revisit later). Its rows below are marked removed rather than deleted.
+
 How to read this file:
 
 - [DEVLOG.md](../../DEVLOG.md) is the source of record. This file only summarises it, and where the two differ, DEVLOG wins. Sign-offs go on the DEVLOG entry's `Reviewer / Date / Outcome` line, not here.
@@ -1334,6 +1336,7 @@ Source for every item below: "2026-10-24 — Break-glass and ownership outbox sc
 - Owner: ___
 
 **AP-6. App notifications and the email bridge**
+- Status: the email-bridge pools are removed 2026-10-28 (owner direction; revisit later); the receipt caps still stand.
 - Decided: receipts are capped, and the email bridge has separate admission pools.
 - Value: 320 receipts per connection and 1,024 per account, with a reserve of 32 bounded at 4,096. The bridge allows 50 per hour per exact domain (SPF-aligned) and 20,000 per hour in each of the authenticated and unauthenticated pools.
 - Why: findings F5 and F6.
@@ -1455,6 +1458,7 @@ Source for every item below: "2026-10-24 — Break-glass and ownership outbox sc
 - Owner: ___
 
 **AP-18. The email bridge needs no messaging-app flag**
+- Status: Removed 2026-10-28 (owner direction; revisit later). `EMAIL_BRIDGE_ENABLED` is retired; nothing to sign.
 - Decided: `EMAIL_BRIDGE_ENABLED` requires no other flag, and `bridgeConfig`, the bridge routes and `recognizedSlots` no longer consult a messaging-app flag. Delivery depends on the public-message-intake slot having an occupant; mail is held with `no-occupant` otherwise, as before. `PUBLIC_INTAKE_CONTRACT` moved to `packages/links/types.mjs`, and `federation/brokered.mjs` imports it from there.
 - Value: as stated.
 - Why: the bridge is core plumbing and must not depend on Parley's flag.
@@ -3100,7 +3104,7 @@ Added by the seventh update. Each item links its DEVLOG entry; sign-offs go on t
 - Owner: ___
 
 **EXT3-1 to EXT3-36 (except EXT3-21, EXT3-25 and EXT3-26). The revision 3 to 3.3 decision set**
-- Decided (provisional): `{spec, options}` declarations with the spec URL as identity. No slots, `ref`, `crit`, `supersedes`, `requires` or declaration `digest`. The field attributes `selection`, `consumers` and `announce` (Q1). Provider-feature client identity is (issuer, spec URL), at most one feature per extension. Endpoint options are `audience` or `public`, and only audience endpoints must be distinct (EXT3-31, EXT3-32). Fragments follow artefacts. The candidate and announcement floor. The email bridge is a provider-published extension (Q2). Embedded components become a Bindle-owned extension (EXT3-29, EXT3-34). The UUIDv5 `tx` encoding (EXT3-33). The interim RTC identity (EXT3-35) is retired since 2026-10-28. CR-X3-04 and CR-X3-23 are void, and CR-X3-11 is void since contacts phase 1.
+- Decided (provisional): `{spec, options}` declarations with the spec URL as identity. No slots, `ref`, `crit`, `supersedes`, `requires` or declaration `digest`. The field attributes `selection`, `consumers` and `announce` (Q1). Provider-feature client identity is (issuer, spec URL), at most one feature per extension. Endpoint options are `audience` or `public`, and only audience endpoints must be distinct (EXT3-31, EXT3-32). Fragments follow artefacts. The candidate and announcement floor. The email bridge is a provider-published extension (Q2; moot since the bridge was removed 2026-10-28). Embedded components become a Bindle-owned extension (EXT3-29, EXT3-34). The UUIDv5 `tx` encoding (EXT3-33). The interim RTC identity (EXT3-35) is retired since 2026-10-28. CR-X3-04 and CR-X3-23 are void, and CR-X3-11 is void since contacts phase 1.
 - Source: [DEVLOG "Extensions revision 3 draft"](../../DEVLOG.md#2026-10-27--extensions-revision-3-draft-spec-only-supersedes-rev-2-pending-sign-off); [revision 3.1](../../DEVLOG.md#2026-10-27--extensions-revision-31-rev-3-review-fixes-and-cuts-spec-only); [revision 3.2](../../DEVLOG.md#2026-10-27--extensions-revision-32-rev-31-verification-review-fixes-spec-only); [revision 3.3](../../DEVLOG.md#2026-10-27--extensions-revision-33-spec-reconciled-with-the-revision-32-implementation-spec-only).
 - Owner: ___
 
@@ -3210,11 +3214,11 @@ These need a real-provider check. Nothing below has been run against the live se
   - recovery-reissue and authority-event notices;
   - app-removal reminder emails (AU-S6);
   - email sign-in;
-  - the external Email Routing for the bridge, including `reply()` and live DMARC.
+  - the external Email Routing for the bridge, including `reply()` and live DMARC (removed 2026-10-28 (owner direction; revisit later)).
 
   "Accepted" in the code means a provider (or fake) accepted the message, never that it was delivered. Sources: "Portability: redirect end/retarget…"; "ORG-12b/12e…"; "Identity and federation wargame fixes".
 - **Push delivery.** Web-push notices and 410 handling for dead subscriptions are unverified, and Track A depends on accepted out-of-band notices. The deletion of session-bound subscriptions (ID-11) was tested only against local adapters. Source: "ORG-12b/12e…"; "Operator and lifecycle wargame fixes".
-- **Email bridge `Authentication-Results` trust.** On Cloudflare no authserv-id is configured, so all mail is treated as unauthenticated. Source: "App-platform wargame fixes".
+- **Email bridge `Authentication-Results` trust.** Removed 2026-10-28 (owner direction; revisit later). On Cloudflare no authserv-id is configured, so all mail is treated as unauthenticated. Source: "App-platform wargame fixes".
 - **Directory and federation interoperability.** Unverified: production directory egress, independent-provider conformance, client-metadata resolution by other providers, and real external portability providers. Sources: "Organizations phase A: ORG-0…"; "Portability: redirect end/retarget…".
 - **TURN relay budget.** `BEAM_RELAY_BUDGET.release` was an optional port with no implementation in the repo (removed with Beam on 2026-10-26; the RTC relay occupant still needs an enforceable relay budget). Source: "Messaging, search and deletion wargame fixes". Update (2026-10-27): the RTC-f occupant now requires an operator-supplied `RTC_RELAY_SPEND` port, and none ships; see the relay spend authority gate below.
 - **RTC signaling, end to end.** The slices RTC-a to RTC-g, the owner-UI service follow-ups and the RTC-i conformance fixes are implemented and tested locally behind default-off flags; the design's own end-to-end checks are not run. Unverified: a clean-room second provider interoperating over real HTTPS, real-device WebRTC on restrictive NATs and under mobile background and foreground suspension, Web Push delivery per platform (a stored subscription is not delivery), abuse load tests at the RTC-11 limits, a privacy review of retention and logs, terms stating RTC is not a telephony or emergency service, and an independent security review of the whole (the independent reviews so far covered the slices separately and are not a sign-off). Source: "RTC signaling extension design" (design §8.3); the RTC-a to RTC-e entries ("Not run" lines).

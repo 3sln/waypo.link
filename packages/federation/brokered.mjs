@@ -21,15 +21,12 @@ import {siteGlobal} from '../flags/read.mjs';
 // Actors (built by trusted adapters only): {kind:'owner', owner} candidates, discover, records, register, reconfirm,
 // unassign, detach, revalidate, scope-describe; {kind:'system', owner} records, revalidate, describe (C1b messaging
 // descriptors), mintable, severance, severance-done.
-// The public-intake fragment and contract come from core links, not from the email bridge (messaging extraction prep).
-import {PUBLIC_INTAKE_FRAGMENT as INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT as INTAKE_CONTRACT} from '../email-bridge/wire.mjs';
-export {INTAKE_FRAGMENT,INTAKE_CONTRACT};
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {UUID} from '../core/primitives.mjs';
 import {connectionState} from '../apps/connections.mjs';
-import {EXT,PROVIDER_EXT,parseSpecURL} from '../core/extensions.mjs';
+import {EXT,parseSpecURL} from '../core/extensions.mjs';
 import {appendSeverance,severanceMeta,SEVER,SEVER_META} from './brokered-severance.mjs';
 import {RESOURCE_SCOPING} from '../storage/scoping.mjs';
 import {contractReferences} from './integrations.mjs';
@@ -92,8 +89,8 @@ const sameAssignment=(a,{binding,consumer})=>JSON.stringify(a.binding)===JSON.st
 /** The `connections`-style provider class for createAppEngine. `store`: the account's transactional metadata (the
  * same store as the connection records). `discovery`: a DiscoveryClient (mint + egress injected). `brokering`:
  * BROKERING_ENABLED. `issuer`: the provider origin. */
-export function brokeredResourcesProvider({store,discovery,issuer,integrations=false,brokering=false,emailBridge=false,artefactVersions=false,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()}={}){
- return class extends BrokeredResourcesProvider{static deps=[];constructor(){super();Object.assign(this,{store,discovery,issuer,integrations:integrations===true,brokering:brokering===true,emailBridge:emailBridge===true,artefactVersions:artefactVersions===true,clock,uuid});}};
+export function brokeredResourcesProvider({store,discovery,issuer,integrations=false,brokering=false,artefactVersions=false,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()}={}){
+ return class extends BrokeredResourcesProvider{static deps=[];constructor(){super();Object.assign(this,{store,discovery,issuer,integrations:integrations===true,brokering:brokering===true,artefactVersions:artefactVersions===true,clock,uuid});}};
 }
 export class BrokeredResourcesProvider extends Provider{
  async obtain({actor}={}){
@@ -249,21 +246,6 @@ function scope(p,actor){
    if(!usable(r,c)||!r.contracts.includes(MAILBOX_CONTRACT))unavailable();
    return brokeredCall(c,r,{purpose:'invoke',contract:MAILBOX_CONTRACT,method:'describe',grant:`${seat.grant}.${seat.cnx}`,feature:v.feature,pool:'describe'});
   },
-  async intakeDeliver(input){
-   systemOnly();records();if(!p.emailBridge)notFound();const v=only(input,['seat','body']),seat=v.seat;
-   if(!plain(seat)||typeof seat.record!=='string'||!(v.body instanceof Uint8Array))unavailable();
-   if(v.body.byteLength>1500000)invalid();let rpc;try{rpc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(v.body));}catch{invalid();}
-   if(!plain(rpc)||Object.keys(rpc).some(k=>!['version','tx','resource','contract','method','args'].includes(k))||rpc.version!=='0'||!UUID.test(rpc.tx??'')||rpc.resource!==seat.resource||rpc.contract!==INTAKE_CONTRACT||rpc.method!=='deliver'||!plain(rpc.args))invalid();
-   const {record:r,connection:c}=await tx(async t=>{const r=await load(t,seat.record);return {record:r,connection:await readConnection(t,owner,r.connection)};});
-   // Extensions rev 3.2 §4.2: the email bridge's own grant (from its live projection) names this call.
-   if(typeof seat.grant!=='string'||!UUID.test(seat.grant)||!c||!usable(r,c)||r.resource!==seat.resource||r.connection!==seat.connection||c.clientId!==seat.clientId||c.generation!==seat.generation||!r.contracts.includes(INTAKE_CONTRACT)||c.manifest.resources?.dpop==='required')unavailable();
-   const url=p.discovery.endpoint(c,'rpc_endpoint');if(resourceId(r.resource,url.href)!==r.resource)unavailable();
-   let answer;try{answer=await p.discovery.call({connection:c,url,pool:'owner',maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose:'invoke',connection:c.id,generation:c.generation,resource:r.resource,grant:`${seat.grant}.${seat.cnx}`,methods:{[INTAKE_CONTRACT]:['deliver']},scope:null,lifetime:60,...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,[INTAKE_CONTRACT])}:{},feature:PROVIDER_EXT.emailBridge},requestBytes:1500000,body:rpc});}
-   catch(error){if(['discovery_rate_limited','brokering_unavailable','discovery_unavailable','egress_busy'].includes(error?.code))throw error;fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});}
-   let json;try{if(!/^application\/json(?:\s*;.*)?$/i.test(answer.contentType??''))throw Error();json=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(answer.bytes));}catch{fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});}
-   if(answer.status===200&&(!plain(json)||Object.keys(json).some(k=>!['version','tx','result','error'].includes(k))||json.version!=='0'||json.tx!==rpc.tx||Object.hasOwn(json,'error')&&!plain(json.error)||!Object.hasOwn(json,'error')&&!plain(json.result)))fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});
-   return {status:answer.status,json};
-  },
   /** §5.6 step 1: the scoping contract's `describe`, for the owner choosing scope controls on a brokered record. */
   async scopeDescribe(input){ownerOnly();records();const v=only(input,['record']);const {record:r,connection:c}=await tx(async t=>{const r=await load(t,v.record);return {record:r,connection:await readConnection(t,owner,r.connection)};});
    if(!usable(r,c)||!r.contracts.includes(RESOURCE_SCOPING))unavailable();return brokeredCall(c,r,{purpose:'describe',contract:RESOURCE_SCOPING,method:'describe',grant:`scope.${r.id}`});
@@ -297,10 +279,9 @@ export class RevalidateBrokeredRecords extends AppAction{static operation='integ
 /** System (C1b). `input`: {feature, seat}. */
 export class DescribeOccupant extends AppQuery{static operation='integrations.describe';static deps=['brokeredResources'];static gate='none';fetch({brokeredResources}){return brokeredResources.describe(this.input);}}
 export class DescribeScoping extends AppQuery{static operation='integrations.scope-describe';static deps=['brokeredResources'];static gate='none';fetch({brokeredResources}){return brokeredResources.scopeDescribe(this.input);}}
-export class DeliverIntake extends AppAction{static operation='integrations.intake-deliver';static deps=['brokeredResources'];run({brokeredResources}){return brokeredResources.intakeDeliver(this.input);}}
 export class MintableRecord extends AppQuery{static operation='integrations.mintable';static deps=['brokeredResources'];fetch({brokeredResources}){return brokeredResources.mintable(this.input);}}
 export class BrokeredSeverance extends AppQuery{static operation='integrations.severance';static deps=['brokeredResources'];fetch({brokeredResources}){return brokeredResources.severance(this.input);}}
 export class AckBrokeredSeverance extends AppAction{static operation='integrations.severance-done';static deps=['brokeredResources'];run({brokeredResources}){return brokeredResources.severanceDone(this.input);}}
 
-export const BROKERED_OPERATIONS=Object.freeze([IntegrationCandidates,DiscoverResources,BrokeredRecords,RegisterBrokeredRecord,ReconfirmBrokeredRecord,UnassignBrokeredRecord,DetachBrokeredRecord,RevalidateBrokeredRecords,DescribeOccupant,DescribeScoping,DeliverIntake,MintableRecord,BrokeredSeverance,AckBrokeredSeverance]);
+export const BROKERED_OPERATIONS=Object.freeze([IntegrationCandidates,DiscoverResources,BrokeredRecords,RegisterBrokeredRecord,ReconfirmBrokeredRecord,UnassignBrokeredRecord,DetachBrokeredRecord,RevalidateBrokeredRecords,DescribeOccupant,DescribeScoping,MintableRecord,BrokeredSeverance,AckBrokeredSeverance]);
 export const BROKERED_OWNER_OPERATIONS=Object.freeze(['integrations.candidates','integrations.discover','integrations.records','integrations.register','integrations.reconfirm','integrations.unassign','integrations.detach','integrations.revalidate','integrations.scope-describe']);

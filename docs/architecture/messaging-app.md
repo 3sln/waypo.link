@@ -2,6 +2,8 @@
 
 > **Update (2026-10-27).** The app is now **Parlay** (owner's working name, provisional) and its interop spec is **Bindle Messaging** ([spec](../spec/extensions/messaging.md)). Legacy core messaging was removed and its data reset (BB-CUT; DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). Paths: `apps/parlay`, `packages/messaging-protocol`, `packages/messaging-engine`, `tests/parlay`; switches `PARLAY_*` with the retired `BINDLEBOX_*` names read as aliases.
 
+> **Update (2026-10-28).** The email bridge was removed (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). Bridged email, the public-intake fragment and contract, the bridge auto-reply and email-address allowlist entries described below (§5, §12, §12.1, §13) are not implemented; native public requests and item classification remain.
+
 
 Status: **provisional design**, 2026-10-20. Sources:
 
@@ -20,7 +22,7 @@ Sign-off (all unsigned, so every decision is provisional):
 | Signing model: identity-bound delegate keys (§4) | ___ | ___ | ___ |
 | Core/app boundary for links (§6) | ___ | ___ | ___ |
 | Send queue, status model and retry profile (§9) | ___ | ___ | ___ |
-| Email bridge handoff and auto-reply variants (§13) | ___ | ___ | ___ |
+| Email bridge handoff and auto-reply variants (§13); removed 2026-10-28 (owner direction; revisit later) | ___ | ___ | ___ |
 | Data reset instead of migration ([extraction](messaging-extraction.md) §4) | ___ | ___ | ___ |
 | Spike decisions D1–D4 as answered in §18 | ___ | ___ | ___ |
 
@@ -52,7 +54,7 @@ Parlay owns **peer-to-peer messaging**:
 - the user's message store;
 - Views, tags and rules over that store;
 - consuming a classifier for messages;
-- handling bridged email.
+- handling bridged email (removed 2026-10-28).
 
 Core (the Bindle spec and 3sln.me) keeps:
 
@@ -61,7 +63,7 @@ Core (the Bindle spec and 3sln.me) keeps:
 - slots and extensions;
 - **activity**: app-originated notifications, alerts and app messages, including their forms and postbacks;
 - storage resources, preferences and grants;
-- the SMTP entry point of the public email bridge and its auto-reply (§13).
+- the SMTP entry point of the public email bridge and its auto-reply (§13; removed 2026-10-28).
 
 The boundary rule is stated in [activity](../3sln/services/activity.md) "Limits and scope": Parlay MAY submit its own app-attributed activity ("New message from alice") under ordinary connection consent. Core MUST NOT accept peer envelopes through an activity backdoor or mirror peer bodies.
 
@@ -154,7 +156,7 @@ This section follows [extensions](../spec/extensions.md), [integrations](../spec
 | Slot | Selection | Consumers | Occupant | Parlay's role |
 | --- | --- | --- | --- | --- |
 | `…/slots/messaging-ingress/v1` (Bindle Messaging spec §2.1) | `exclusive` | `provider` only | The user's **mailbox resource**, a brokered resource implementing `…/parlay/v1/contracts/mailbox` (`describe`, effect `read`; `linkRevoked`) | Occupant (`ref: mailbox`) |
-| `…/slots/public-message-intake/v1` (spec §9, published by the messaging spec as in extensibility design §7.1) | `exclusive` | `provider`, `application` | The same mailbox resource, also implementing `…/contracts/public-intake/v1` (`deliver`) | Occupant. The 3sln.me `email-bridge` feature is a provider consumer. |
+| `…/slots/public-message-intake/v1` (spec §9, published by the messaging spec as in extensibility design §7.1) | `exclusive` | `provider`, `application` | The same mailbox resource, also implementing `…/contracts/public-intake/v1` (`deliver`) | Occupant. The 3sln.me `email-bridge` feature is a provider consumer. Removed 2026-10-28 (owner direction; revisit later). |
 | `…/fragments/item-classification/v1` (shared Bindle fragment, [item classification §8](../spec/extensions/item-classification.md#8-fragment-and-applications); replaces the withdrawn classifier slot, 2026-10-28) | `exclusive` per kind field, plus a fallback field | `application` | The 3sln.me paid built-in (text only), or classifier resources of integrations the owner adds | **Consumer**, optional (§12): the `text` and `fallback` fields and their detail fields |
 
 **Why the mailbox is a slot occupant.** The exclusive slot guarantees exactly one inbound handler per user. The owner chooses which integration fills it, and a newly connected app never displaces the current occupant. Only provider features consume it, so no other app can obtain a mailbox credential (review P-17).
@@ -456,7 +458,7 @@ User direction, 2026-10-20.
 
 **Scope.** Filtering applies only to **public/anonymous conversation requests**, and only when the owner has enabled them. These requests are:
 
-- bridged email arriving through `public-message-intake`;
+- bridged email arriving through `public-message-intake` (removed 2026-10-28 (owner direction; revisit later));
 - first contact through a conditional or public contact link: a `one-off` or `conversation-init` from a principal who is not yet an accepted peer.
 
 Messages from accepted peers and established conversations are never auto-rejected.
@@ -509,6 +511,8 @@ Requests over limits are refused before classification, with the ordinary `rate_
 - No error code, header, timing class, receipt member or reply varies with tier, score, rule or allowlist state (spec §6.7).
 
 ## 13. Email bridge handoff (shared slice X12)
+
+> **Removed 2026-10-28 (owner direction; revisit later).** Kept as design history; none of this section is implemented.
 
 The provider keeps SMTP intake, MIME bounds, provenance signing, the reply gates and the auto-reply ([public email bridge](public-email-bridge.md), none of it built yet). The 3sln.me `email-bridge` feature is a provider **consumer** of `public-message-intake/v1`, and the Parlay mailbox is the occupant (extensibility design §7.1, spec §9).
 
@@ -610,9 +614,9 @@ P1 items (real-adapter queue recovery, browser verification of counts and resets
 
 1. **Name:** Parlay?
 2. **Delegation lifetime:** certificates of at most 24 h, with status checks required for lasting-effect records and receipts but not for plain messages? The alternative is shorter certificates and more renewals.
-3. **Marketing auto-reply:** one invariant reply to every gated sender of accepted public email, regardless of occupancy (§13). This is required by extensions §9.8; the owner can opt out. Acceptable?
+3. **Marketing auto-reply** (removed 2026-10-28 (owner direction; revisit later)): one invariant reply to every gated sender of accepted public email, regardless of occupancy (§13). This is required by extensions §9.8; the owner can opt out. Acceptable?
 4. **Conversation gate:** keep the shared secret (option A, the earlier preference), or drop it for identity plus bilateral admission (option C)?
 5. **Bundled instance:** offer Parlay as an opt-in default occupant at signup (recommended), or require explicit installation?
-6. **Public native ingress:** should the handle accept Bindle-native messages from strangers in v1, or only bridged email (recommended: email only)?
+6. **Public native ingress** (the email option was removed 2026-10-28 (owner direction; revisit later)): should the handle accept Bindle-native messages from strangers in v1, or only bridged email (recommended: email only)?
 7. **Auto-rejection thresholds** (§12.1): are the provisional `T_high` 0.97 and `T_low` 0.70, with calibration mode on model change, acceptable?
 8. **Reset:** accept discarding all existing local messages, contacts and conversations at cutover ([extraction](messaging-extraction.md) §4)?

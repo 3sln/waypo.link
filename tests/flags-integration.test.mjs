@@ -5,7 +5,7 @@ import {createFlags} from '../packages/flags/evaluate.mjs';import {validateRecor
 import {FlagsRuntime} from '../packages/runtime/flags.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';import {deviceAuthorizationEnabled,deviceGrantMountable} from '../packages/runtime/device-grant.mjs';
 import {eventBusesEnabled} from '../packages/events/limits.mjs';import {brokeringFlag,integrationsFlag} from '../packages/federation/brokered.mjs';import {brokeringEnabled} from '../packages/federation/signing.mjs';
-import {recognizedFields,PUBLIC_INTAKE_FRAGMENT_DOCUMENT} from '../packages/apps/connections.mjs';import {bridgeConfig} from '../packages/email-bridge/engine.mjs';import {billingEnabled} from '../packages/billing/catalog.mjs';
+import {recognizedFields,MESSAGING_INGRESS_FRAGMENT_DOCUMENT} from '../packages/apps/connections.mjs';import {billingEnabled} from '../packages/billing/catalog.mjs';
 import {AccountStorageWriteBudget} from '../packages/runtime/storage-write-budget.mjs';
 import {ConsentModel} from '../packages/consent/effects.mjs';
 import {fakeClock,forEachSeed,createScheduler} from './helpers/chaos.mjs';
@@ -18,12 +18,11 @@ const engine=config=>createAppEngine({providers:{config,clock:fakeClock(),random
 
 test('remaining domain read sites preserve legacy parsing, including booleans, exact strings and default-on enforcement',async()=>{
  for(const value of values){
-  const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,EMAIL_BRIDGE_ENABLED:value,KEY_DELEGATION_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,APP_ORIGIN:origin};
+  const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,KEY_DELEGATION_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,APP_ORIGIN:origin};
   for(const config of [env,{...env,flags:createFlags({snapshot:snapshot({},0),env})}]){
    for(const [fn,expected]of [[eventBusesEnabled,bool],[brokeringFlag,bool],[integrationsFlag,bool],[brokeringEnabled,strict],[billingEnabled,strict],[deviceAuthorizationEnabled,bool]])assert.equal(fn(config),expected(value),fn.name+' '+String(value));
-   assert.equal(bridgeConfig(config).enabled,bool(value),'bridge '+String(value));// Slots are gone (extensions rev 3.2): the intake field is a recognized provider-consumable field whatever the flag;
-   // the bridge flag gates the email-bridge feature, not field recognition.
-   assert.ok(Object.hasOwn(recognizedFields(config),PUBLIC_INTAKE_FRAGMENT_DOCUMENT.id),'intake field '+String(value));
+   // Slots are gone (extensions rev 3.2): the ingress field is a recognized provider-consumable field whatever the flags.
+   assert.ok(Object.hasOwn(recognizedFields(config),MESSAGING_INGRESS_FRAGMENT_DOCUMENT.id),'ingress field '+String(value));
   }
   assert.equal(new AccountStorageWriteBudget({metadata:{},config:{STORAGE_WRITE_ENABLED:value}}).enabled,value!==false&&value!=='false');
  }
@@ -39,7 +38,7 @@ test('engine domains accept legacy boolean true and reject targeting without a v
 });
 
 test('external placements reject retention records explicitly; owner reverse/read paths survive kills after adoption',async()=>{
- for(const name of ['DEVICE_AUTHORIZATION_ENABLED','INCREMENTAL_AUTH_ENABLED','EMAIL_BRIDGE_ENABLED']){assert.equal(FLAGS[name].retainExisting,false);assert.match(FLAGS[name].retentionReason,/store|identity/);assert.throws(()=>validateRecord(name,record({retainExisting:true})),{code:'invalid_snapshot'});}
+ for(const name of ['DEVICE_AUTHORIZATION_ENABLED','INCREMENTAL_AUTH_ENABLED']){assert.equal(FLAGS[name].retainExisting,false);assert.match(FLAGS[name].retentionReason,/store|identity/);assert.throws(()=>validateRecord(name,record({retainExisting:true})),{code:'invalid_snapshot'});}
  for(const name of ['EVENT_BUSES_ENABLED','ACTIVITY_V2_ENABLED','KEY_DELEGATION_ENABLED']){
   const env={[name]:'false'},config={flags:port({[name]:record({on:false})},env)},e=engine(config);
   try{const result=await read(e,new ReadFeature({actor:{kind:'owner',owner},id:name}));assert.equal(result.value,false);assert.equal(result.readable,true);}finally{await e.dispose();}

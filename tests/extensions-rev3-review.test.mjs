@@ -8,10 +8,10 @@ import assert from 'node:assert/strict';
 import {webcrypto,createHash,randomUUID} from 'node:crypto';
 import {createAppEngine,perform,read,AppQuery} from '../packages/app/engine.mjs';
 import {memoryAudit} from '../packages/app/providers.mjs';
-import {AppConnections,PUBLIC_INTAKE_FRAGMENT_DOCUMENT,MESSAGING_INGRESS_FRAGMENT_DOCUMENT} from '../packages/apps/connections.mjs';
+import {AppConnections,MESSAGING_INGRESS_FRAGMENT_DOCUMENT} from '../packages/apps/connections.mjs';
 import * as C from '../packages/app/domains/connections.mjs';
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
-import {PROVIDER_EXT,EXT,declare,featureTx,readExtensions,BINDLE_REGISTRY} from '../packages/core/extensions.mjs';
+import {EXT,declare,featureTx,readExtensions,BINDLE_REGISTRY} from '../packages/core/extensions.mjs';
 import {fragmentOutcome} from '../packages/core/fragments.mjs';
 import {validateSchema,pinSchema} from '../packages/federation/schema.mjs';
 import {validateBusManifest,EVENT_BUS_CONTRACT} from '../packages/federation/event-buses.mjs';
@@ -28,22 +28,24 @@ import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {fakeClock} from './helpers/chaos.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ISSUER='https://3sln.example',DAY=86400000,HOUR=3600000;
-const INTAKE=PUBLIC_INTAKE_FRAGMENT_DOCUMENT.id,INGRESS=MESSAGING_INGRESS_FRAGMENT_DOCUMENT.id;
-const INTAKE_CONTRACT='https://spec.bindle.example/contracts/public-intake/v1',MAILBOX='https://spec.bindle.example/messaging/v1/contracts/mailbox';
-const BRIDGE=PROVIDER_EXT.emailBridge,MAILBOX_FEATURE=EXT.messagingMailbox;
+const INGRESS=MESSAGING_INGRESS_FRAGMENT_DOCUMENT.id;
+const MAILBOX='https://spec.bindle.example/messaging/v1/contracts/mailbox';
+// The email bridge was struck (2026-10-28): the messaging-mailbox feature is the one provider feature left.
+const MAILBOX_FEATURE=EXT.messagingMailbox;
+const withPrerequisite=spec=>spec===MAILBOX_FEATURE?[declare(EXT.keyDelegation),declare(spec)]:[declare(spec)];
 const code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}: ${e.message}`);return true;};
 
-function snapshot(host,{contracts=[INTAKE_CONTRACT,MAILBOX]}={}){
+function snapshot(host,{contracts=[MAILBOX]}={}){
  const clientId=`https://${host}/bindle/client.json`,redirectUris=[`https://${host}/bindle/callback`],jwksUri=`https://${host}/bindle/jwks.json`;
  const raw={v:1,resources:{rpc_endpoint:`https://${host}/bindle/rpc`,discovery_endpoint:`https://${host}/bindle/resources`,contracts}};
  const r=validateIntegrationManifest(raw,{clientId,confidential:true,redirectUris,jwksUri});assert.equal(r.status,'valid',r.reason);
  return {client:{id:clientId,name:host,origin:`https://${host}`},snapshot:{clientId,redirectUris,authMethod:'private_key_jwt',jwksUri,thumbprints:['A'.repeat(43)],manifest:r.manifest}};
 }
-async function fixture({declared=[BRIDGE,MAILBOX_FEATURE],fields}={}){
+async function fixture({declared=[MAILBOX_FEATURE],fields}={}){
  const clock=fakeClock(Date.UTC(2026,9,27,12)),metadata=new SqliteMetadata(':memory:');await metadata.put('owner',OWNER);
  const decl={list:[...declared],blocked:[]};let n=0;
  const connections=new AppConnections({metadata,origin:ISSUER,clock:clock.now,...fields?{fields}:{},uuid:()=>`00000000-0000-4000-8000-${String(++n).padStart(12,'0')}`,
-  declarations:async()=>({manifest:{issuer:ISSUER,extensions:decl.list.flatMap(spec=>spec===MAILBOX_FEATURE?[declare(EXT.keyDelegation),declare(spec)]:[declare(spec)])},blocked:decl.blocked})});
+  declarations:async()=>({manifest:{issuer:ISSUER,extensions:decl.list.flatMap(withPrerequisite)},blocked:decl.blocked})});
  const engine=createAppEngine({providers:{clock,random:{uuid:()=>crypto.randomUUID(),bytes:k=>crypto.getRandomValues(new Uint8Array(k))},audit:memoryAudit({clock}),config:{},connections:C.connectionsProvider({connections,enabled:true,account:async()=>({status:'active'})})}});
  const owner=()=>({kind:'owner',owner:OWNER,authTime:clock.now()}),system={kind:'system',owner:OWNER};
  const op=(Operation,actor,input)=>{const o=new Operation({actor,...input===undefined?{}:{input}});return o instanceof AppQuery?read(engine,o):perform(engine,o);};
@@ -56,44 +58,44 @@ async function fixture({declared=[BRIDGE,MAILBOX_FEATURE],fields}={}){
 
 test('M1: a loss noticed late is dated from the last evaluation that saw the declaration; 30 days then revoke, never resume',async t=>{
  const f=await fixture();t.after(f.dispose);const a=await f.connect('alpha.example');const t0=f.clock.now();
- const on=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id}});
+ const on=await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:a.id}});
  const first=await f.op(C.FeatureSync,f.system);assert.equal(first.next,t0+FEATURE_SWEEP_MS,'the sweep re-arms while a grant is watched');
- f.clock.advance(HOUR);f.decl.list=[MAILBOX_FEATURE]; // lost one hour in, nobody looking
+ f.clock.advance(HOUR);f.decl.list=[]; // lost one hour in, nobody looking
  f.clock.advance(FEATURE_SWEEP_MS-HOUR);await f.op(C.FeatureSync,f.system); // the next sweep notices
- const view=await f.feature(BRIDGE);assert.equal(view.state,'suspended');assert.equal(view.suspendedAt,t0,'dated from the last evaluation that still saw it, never from the noticing');
+ const view=await f.feature(MAILBOX_FEATURE);assert.equal(view.state,'suspended');assert.equal(view.suspendedAt,t0,'dated from the last evaluation that still saw it, never from the noticing');
  // Restored 30 days and 3 hours after the loss could last have been seen: revoked, not resumed.
- f.clock.set(t0+SUSPENSION_REVOCATION_MS+3*HOUR);f.decl.list=[BRIDGE,MAILBOX_FEATURE];
- const p=await f.projection(BRIDGE);assert.equal(p.live,false);assert.equal(p.state,'revoked');
- assert.equal((await f.feature(BRIDGE)).reason,'suspension-expired');
+ f.clock.set(t0+SUSPENSION_REVOCATION_MS+3*HOUR);f.decl.list=[MAILBOX_FEATURE];
+ const p=await f.projection(MAILBOX_FEATURE);assert.equal(p.live,false);assert.equal(p.state,'revoked');
+ assert.equal((await f.feature(MAILBOX_FEATURE)).reason,'suspension-expired');
  assert.ok((await f.op(C.NoticeList,f.owner())).notices.some(n=>n.kind==='feature-revoked'),'the owner is told');
- assert.notEqual((await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE})).grant,on.grant,'only a fresh enable brings it back, with a new grant');
+ assert.notEqual((await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE})).grant,on.grant,'only a fresh enable brings it back, with a new grant');
 });
 
 test('M1: a loss nobody observed for 30 days revokes on the first evaluation; clock jumps never revoke or resume early',async t=>{
  const f=await fixture();t.after(f.dispose);const a=await f.connect('alpha.example');
- await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id}});const seen=f.clock.now();
- f.decl.list=[MAILBOX_FEATURE];f.clock.advance(31*DAY);
- const out=await f.op(C.FeatureSync,f.system);assert.deepEqual(out.changes,[{feature:BRIDGE,state:'revoked'}],'no suspension window remains');assert.equal(out.next,null,'nothing left to watch');
+ await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:a.id}});const seen=f.clock.now();
+ f.decl.list=[];f.clock.advance(31*DAY);
+ const out=await f.op(C.FeatureSync,f.system);assert.deepEqual(out.changes,[{feature:MAILBOX_FEATURE,state:'revoked'}],'no suspension window remains');assert.equal(out.next,null,'nothing left to watch');
  assert.ok((await f.outbox()).some(e=>e.type==='feature-revoked'));
  // Backward jump: a suspension dated in the "future" neither revokes nor resumes before its time.
- f.decl.list=[BRIDGE,MAILBOX_FEATURE];await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});const lostAt=f.clock.now();f.decl.list=[MAILBOX_FEATURE];
- await f.op(C.FeatureSync,f.system);assert.equal((await f.feature(BRIDGE)).suspendedAt,lostAt);
- f.clock.set(lostAt-10*DAY);await f.op(C.FeatureSync,f.system);assert.equal((await f.feature(BRIDGE)).state,'suspended');assert.equal((await f.feature(BRIDGE)).suspendedAt,lostAt,'the timestamp is kept');
+ f.decl.list=[MAILBOX_FEATURE];await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE});const lostAt=f.clock.now();f.decl.list=[];
+ await f.op(C.FeatureSync,f.system);assert.equal((await f.feature(MAILBOX_FEATURE)).suspendedAt,lostAt);
+ f.clock.set(lostAt-10*DAY);await f.op(C.FeatureSync,f.system);assert.equal((await f.feature(MAILBOX_FEATURE)).state,'suspended');assert.equal((await f.feature(MAILBOX_FEATURE)).suspendedAt,lostAt,'the timestamp is kept');
  // Forward jump past the bound: revoked even though the declaration is back.
- f.clock.set(lostAt+SUSPENSION_REVOCATION_MS);f.decl.list=[BRIDGE,MAILBOX_FEATURE];assert.equal((await f.projection(BRIDGE)).state,'revoked');
+ f.clock.set(lostAt+SUSPENSION_REVOCATION_MS);f.decl.list=[MAILBOX_FEATURE];assert.equal((await f.projection(MAILBOX_FEATURE)).state,'revoked');
  void seen;
 });
 
 test('M1: the account alarm sweeps feature grants with nobody reading, and enabling a feature arms it',async t=>{
- const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const decl={list:[BRIDGE,MAILBOX_FEATURE]};
- const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',LINKS_ENABLED:'true',EXTENSIONS_ENABLED:'true',PROVIDER_FEATURE_DECLARATIONS:()=>({manifest:{issuer:ISSUER,extensions:decl.list.map(s=>declare(s))},blocked:[]}),IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null};
+ const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const decl={list:[MAILBOX_FEATURE]};
+ const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',LINKS_ENABLED:'true',EXTENSIONS_ENABLED:'true',PROVIDER_FEATURE_DECLARATIONS:()=>({manifest:{issuer:ISSUER,extensions:decl.list.flatMap(withPrerequisite)},blocked:[]}),IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
  const c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:snapshot('alpha.example')});
- const before=Date.now();await a.connectionsOwner(OWNER,{operation:'connections.enable-feature',input:{feature:BRIDGE,assign:{connection:c.id}}},{authTime:Date.now()});
+ const before=Date.now();await a.connectionsOwner(OWNER,{operation:'connections.enable-feature',input:{feature:MAILBOX_FEATURE,assign:{connection:c.id}}},{authTime:Date.now()});
  const alarm=await db.getAlarm();assert.ok(alarm!==null&&alarm<=Date.now()+FEATURE_SWEEP_MS&&alarm>=before,'enabling arms the sweep within its interval');
- decl.list=[MAILBOX_FEATURE];
- const stored=async()=>[...(await db.list({prefix:'connections/feature/'})).values()].find(r=>r.spec===BRIDGE);
+ decl.list=[];
+ const stored=async()=>[...(await db.list({prefix:'connections/feature/'})).values()].find(r=>r.spec===MAILBOX_FEATURE);
  assert.equal((await stored()).state,'active','nothing has evaluated yet');
  await a.alarmMaintenance();
  assert.equal((await stored()).state,'suspended','the alarm applied the loss');
@@ -104,20 +106,20 @@ test('M1: the account alarm sweeps feature grants with nobody reading, and enabl
 // ---- M2: one declaration computation for the manifest row and the account side ----
 
 test('M2: the account-side declarations equal the published authority manifest rows, mount requirements included',()=>{
- const base={APP_ORIGIN:ISSUER,EXTENSIONS_ENABLED:'true',INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',EMAIL_BRIDGE_ENABLED:'true',KEY_DELEGATION_ENABLED:'true'};
+ const base={APP_ORIGIN:ISSUER,EXTENSIONS_ENABLED:'true',INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',KEY_DELEGATION_ENABLED:'true'};
  // Contacts spike CR-C0: the messaging-mailbox row never needs LINKS_ENABLED (on or off makes no difference).
- const variants=[{},{BROKERED_INTROSPECTION_MOUNTED:true},{BROKERED_INTROSPECTION_MOUNTED:true,MESSAGING_DESCRIBE:()=>null},{MESSAGING_DESCRIBE:()=>null},{BROKERED_INTROSPECTION_MOUNTED:true,EMAIL_BRIDGE_ENABLED:'false'},{BROKERED_INTROSPECTION_MOUNTED:true,EXTENSIONS_ENABLED:'false',MESSAGING_DESCRIBE:()=>null},{BROKERED_INTROSPECTION_MOUNTED:true,MESSAGING_DESCRIBE:()=>null,KEY_DELEGATION_ENABLED:'false'},{BROKERED_INTROSPECTION_MOUNTED:true,MESSAGING_DESCRIBE:()=>null,LINKS_ENABLED:'true'},{MESSAGING_DESCRIBE:()=>null,BROKERING_ENABLED:'false'},{MESSAGING_DESCRIBE:()=>null,DELEGATION_CERTIFICATE_SECONDS:'12'}];
+ // EMAIL_BRIDGE_ENABLED is retired (2026-10-28): setting it declares nothing on either side.
+ const variants=[{},{BROKERED_INTROSPECTION_MOUNTED:true},{BROKERED_INTROSPECTION_MOUNTED:true,MESSAGING_DESCRIBE:()=>null},{MESSAGING_DESCRIBE:()=>null},{BROKERED_INTROSPECTION_MOUNTED:true,EMAIL_MAILBOX_FEATURE_ENABLED:'true'},{BROKERED_INTROSPECTION_MOUNTED:true,EXTENSIONS_ENABLED:'false',MESSAGING_DESCRIBE:()=>null},{BROKERED_INTROSPECTION_MOUNTED:true,MESSAGING_DESCRIBE:()=>null,KEY_DELEGATION_ENABLED:'false'},{BROKERED_INTROSPECTION_MOUNTED:true,MESSAGING_DESCRIBE:()=>null,LINKS_ENABLED:'true'},{MESSAGING_DESCRIBE:()=>null,BROKERING_ENABLED:'false'},{MESSAGING_DESCRIBE:()=>null,DELEGATION_CERTIFICATE_SECONDS:'12'}];
  const specs=manifest=>[...readExtensions(manifest,{registry:PROVIDER_REGISTRY,issuer:ISSUER}).extensions.keys()].filter(spec=>Object.hasOwn(FEATURE_DEFINITIONS,spec)).sort();
- let sawMountGap=false;const mailbox=[];
+ const mailbox=[];
  for(const variant of variants){
   const config={...base,...variant};
   const published=specs({issuer:ISSUER,...federationDeclarations(config,{target:'authority',mounts:{messagingMailbox:messagingMailboxMounted(config),...brokeringMounts(config)}})});
   const account=specs(providerFeatureDeclarations(surfaceConfig(config),providerFeatureMounts(config)));
   assert.deepEqual(account,published,JSON.stringify(Object.keys(variant)));
-  if(!variant.BROKERED_INTROSPECTION_MOUNTED&&!published.includes(BRIDGE))sawMountGap=true;
+  assert.ok(published.every(spec=>spec===MAILBOX_FEATURE),'the messaging-mailbox feature is the only provider feature declared');
   mailbox.push(published.includes(MAILBOX_FEATURE));
  }
- assert.ok(sawMountGap,'with every flag on but brokered introspection unmounted, neither side declares the email bridge');
  assert.deepEqual(mailbox,[false,false,true,true,false,false,false,true,false,false],'the mailbox feature needs KEY_DELEGATION, INTEGRATIONS, BROKERING, EXTENSIONS, a describe port and a usable lifetime');
 });
 
@@ -188,21 +190,26 @@ test('M6: a bus manifest is a requestable fragment only while event buses are im
 
 test('L1: a feature whose declaration is gone is not an enabled consumer for announcements',async t=>{
  const f=await fixture();t.after(f.dispose);const first=await f.connect('first.example');
- await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:first.id}});
+ await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:first.id}});
  f.decl.list=[]; // nobody has looked since
  await f.connect('second.example');
  assert.deepEqual(await f.announcements(),[],'no announcement for a suspended consumer');
- assert.equal((await f.feature(BRIDGE)).state,'suspended');
+ assert.equal((await f.feature(MAILBOX_FEATURE)).state,'suspended');
 });
 
 test('L2: turning one field\'s announcements back on resets "at most once" for that field only, and only if it was off',async t=>{
- const f=await fixture();t.after(f.dispose);const first=await f.connect('first.example');
- await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:first.id}});await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:first.id}});
- const s=await f.connect('supplier.example');assert.deepEqual((await f.announcements()).map(n=>n.fragment).sort(),[INGRESS,INTAKE].sort());
+ // A second, test-local provider-only field with no enabled consumer (no second provider feature exists since the email
+ // bridge was struck): toggling it must not reset the ingress field.
+ const OTHER={...MESSAGING_INGRESS_FRAGMENT_DOCUMENT,id:'https://spec.bindle.example/fragments/other-test/v1',title:'Other test'};
+ const f=await fixture({fields:{[INGRESS]:MESSAGING_INGRESS_FRAGMENT_DOCUMENT,[OTHER.id]:OTHER}});t.after(f.dispose);const first=await f.connect('first.example');
+ await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:first.id}});
+ const s=await f.connect('supplier.example');assert.deepEqual((await f.announcements()).map(n=>n.fragment),[INGRESS]);
  const again=async()=>{await f.op(C.DisconnectConnection,f.owner(),{connection:(await f.op(C.ConnectionList,f.owner())).connections.find(c=>c.id===s.id).id});await f.connect('supplier.example');return (await f.announcements()).length;};
- await f.op(C.SetAnnouncements,f.owner(),{fragment:INTAKE,enabled:true});assert.equal(await again(),2,'turning on a field that was never off resets nothing');
+ await f.op(C.SetAnnouncements,f.owner(),{fragment:INGRESS,enabled:true});assert.equal(await again(),1,'turning on a field that was never off resets nothing');
+ await f.op(C.SetAnnouncements,f.owner(),{fragment:OTHER.id,enabled:false});await f.op(C.SetAnnouncements,f.owner(),{fragment:OTHER.id,enabled:true});
+ assert.equal(await again(),1,'another field\'s reset leaves the ingress field alone');
  await f.op(C.SetAnnouncements,f.owner(),{fragment:INGRESS,enabled:false});await f.op(C.SetAnnouncements,f.owner(),{fragment:INGRESS,enabled:true});
- assert.equal(await again(),3,'only the ingress field announces the same supplier again');
+ assert.equal(await again(),2,'only the ingress field announces the same supplier again');
 });
 
 test('L3: bindle.grant changes on a value change of approved entries: purposes, ingress and order',async t=>{
@@ -213,30 +220,30 @@ test('L3: bindle.grant changes on a value change of approved entries: purposes, 
  await f.op(C.ConfigureSeat,f.owner(),{fragment:INGRESS,seat,purposes:['https://spec.bindle.example/purposes/author']});assert.equal((await f.feature(MAILBOX_FEATURE)).grant,afterPurposes,'an unchanged value keeps the grant');
  await f.op(C.SetSeatIngress,f.system,{fragment:INGRESS,seat,generation:a.generation,ingress:'https://alpha.example/ingress'});
  assert.notEqual((await f.feature(MAILBOX_FEATURE)).grant,afterPurposes,'ingress changed');
- // Order: an ordered variant of the intake field (the provider's pinned document), two approved entries.
- const ordered={...PUBLIC_INTAKE_FRAGMENT_DOCUMENT,fields:{intake:{...PUBLIC_INTAKE_FRAGMENT_DOCUMENT.fields.intake,selection:'ordered',cardinality:{min:0,max:2}}}};
- const g=await fixture({fields:{[INTAKE]:ordered}});t.after(g.dispose);const x=await g.connect('x.example'),y=await g.connect('y.example');
- await g.op(C.AssignField,g.owner(),{fragment:INTAKE,connection:x.id});await g.op(C.AssignField,g.owner(),{fragment:INTAKE,connection:y.id});
- const enabled=await g.op(C.EnableFeature,g.owner(),{feature:BRIDGE});assert.equal(enabled.approved.length,2);
- await g.op(C.ReorderField,g.owner(),{fragment:INTAKE,seats:[...enabled.approved].reverse()});
- assert.notEqual((await g.feature(BRIDGE)).grant,enabled.grant,'the owner\'s priority among approved resources changed');
+ // Order: an ordered variant of the ingress field (the provider's pinned document), two approved entries.
+ const ordered={...MESSAGING_INGRESS_FRAGMENT_DOCUMENT,fields:{mailbox:{...MESSAGING_INGRESS_FRAGMENT_DOCUMENT.fields.mailbox,selection:'ordered',cardinality:{min:0,max:2}}}};
+ const g=await fixture({fields:{[INGRESS]:ordered}});t.after(g.dispose);const x=await g.connect('x.example'),y=await g.connect('y.example');
+ await g.op(C.AssignField,g.owner(),{fragment:INGRESS,connection:x.id});await g.op(C.AssignField,g.owner(),{fragment:INGRESS,connection:y.id});
+ const enabled=await g.op(C.EnableFeature,g.owner(),{feature:MAILBOX_FEATURE});assert.equal(enabled.approved.length,2);
+ await g.op(C.ReorderField,g.owner(),{fragment:INGRESS,seats:[...enabled.approved].reverse()});
+ assert.notEqual((await g.feature(MAILBOX_FEATURE)).grant,enabled.grant,'the owner\'s priority among approved resources changed');
 });
 
 test('L4: a revoked feature is never regranted by a later value change; only a fresh enable brings a grant',async t=>{
  const f=await fixture();t.after(f.dispose);const a=await f.connect('alpha.example');
- const on=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id}});await f.op(C.DisableFeature,f.owner(),{feature:BRIDGE});
- const seq=(await f.outbox()).length;await f.op(C.UnassignField,f.owner(),{fragment:INTAKE,seat:on.approved[0]});
- const view=await f.feature(BRIDGE);assert.equal(view.state,'revoked');assert.equal(view.grant,on.grant);
+ const on=await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:a.id}});await f.op(C.DisableFeature,f.owner(),{feature:MAILBOX_FEATURE});
+ const seq=(await f.outbox()).length;await f.op(C.UnassignField,f.owner(),{fragment:INGRESS,seat:on.approved[0]});
+ const view=await f.feature(MAILBOX_FEATURE);assert.equal(view.state,'revoked');assert.equal(view.grant,on.grant);
  assert.ok(!(await f.outbox()).slice(seq).some(e=>e.type==='feature-regranted'));
 });
 
 test('L5: a grant is bound to the fragment pin it was approved under: a changed pinned document suspends it, the original resumes it',async t=>{
- const fields={[INTAKE]:PUBLIC_INTAKE_FRAGMENT_DOCUMENT,[INGRESS]:MESSAGING_INGRESS_FRAGMENT_DOCUMENT};
+ const fields={[INGRESS]:MESSAGING_INGRESS_FRAGMENT_DOCUMENT};
  const f=await fixture({fields});t.after(f.dispose);const a=await f.connect('alpha.example');
- const on=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id}});
- fields[INTAKE]={...PUBLIC_INTAKE_FRAGMENT_DOCUMENT,description:'Another document at the same URL.'};
- const p=await f.projection(BRIDGE);assert.equal(p.live,false);assert.equal(p.state,'suspended');assert.equal((await f.feature(BRIDGE)).reason,'pin');
- fields[INTAKE]=PUBLIC_INTAKE_FRAGMENT_DOCUMENT;const back=await f.projection(BRIDGE);assert.equal(back.live,true);assert.equal(back.grant,on.grant);
+ const on=await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE,assign:{connection:a.id}});
+ fields[INGRESS]={...MESSAGING_INGRESS_FRAGMENT_DOCUMENT,description:'Another document at the same URL.'};
+ const p=await f.projection(MAILBOX_FEATURE);assert.equal(p.live,false);assert.equal(p.state,'suspended');assert.equal((await f.feature(MAILBOX_FEATURE)).reason,'pin');
+ fields[INGRESS]=MESSAGING_INGRESS_FRAGMENT_DOCUMENT;const back=await f.projection(MAILBOX_FEATURE);assert.equal(back.live,true);assert.equal(back.grant,on.grant);
 });
 
 test('L7: an unknown field member outranks an invalid top-level member (unsupported, never invalid)',()=>{
@@ -267,7 +274,8 @@ test('L9: a 5xx never advances ordered failover, whatever error code it carries'
 });
 
 test('tx: the UUIDv5 name encoding matches the §4.2 example vector, and `|` is refused in the first three inputs',async()=>{
- assert.equal(await featureTx('https://provider.example/extensions/email-bridge/v1','https://spec.bindle.example/contracts/public-intake/v1','https://provider.example/entities/e_123','fp-1'),'0483d642-1733-5755-aca1-fff45c002ab3');
- await assert.rejects(featureTx(BRIDGE,INTAKE_CONTRACT+'|x','e','fp'),TypeError);await assert.rejects(featureTx(BRIDGE,INTAKE_CONTRACT,'e|1','fp'),TypeError);
- assert.match(await featureTx(BRIDGE,INTAKE_CONTRACT,'e','fp|still-fine'),/^[0-9a-f-]{36}$/,'the fingerprint is last, so it may contain `|`');
+ const SPEC='https://provider.example/extensions/auto-classify/v1',CONTRACT='https://spec.bindle.example/contracts/item-classification/v1';
+ assert.equal(await featureTx(SPEC,CONTRACT,'https://provider.example/entities/e_123','fp-1'),'10c1a1f5-0642-5f7e-ab6e-f91bd49eab37');
+ await assert.rejects(featureTx(SPEC+'|x',CONTRACT,'e','fp'),TypeError);await assert.rejects(featureTx(SPEC,CONTRACT+'|x','e','fp'),TypeError);await assert.rejects(featureTx(SPEC,CONTRACT,'e|1','fp'),TypeError);
+ assert.match(await featureTx(SPEC,CONTRACT,'e','fp|still-fine'),/^[0-9a-f-]{36}$/,'the fingerprint is last, so it may contain `|`');
 });

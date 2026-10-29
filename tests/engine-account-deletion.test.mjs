@@ -42,11 +42,10 @@ export async function deletionFixture(t,{seed=1,channels=true,billingFail=null,n
   async revokeAll(owner){billingCalls.push('revokeAll');events.push('billing.revokeAll');if(billingFailure?.revokeAll)throw Object.assign(new Error('polar down'),{code:'billing_provider_unavailable'});return {v:1,kind:'revoke',revoked:['sub_1']};},
   async anonymize(owner){billingCalls.push('anonymize');events.push('billing.anonymize');if(billingFailure?.anonymize)throw Object.assign(new Error('polar down'),{code:'billing_provider_unavailable'});return {v:1,kind:'anonymize'};},
  };
- const erased={federation:0,mcp:0,emailBridge:0};
+ const erased={federation:0,mcp:0};
  const erasurePorts=erasure??{
   federation:{async eraseSubject(owner){erased.federation++;events.push('federation.erase');return {deleted:3};}},
   mcp:{async eraseSubject(owner){erased.mcp++;events.push('mcp.erase');return {deleted:2};}},
-  emailBridge:{async erase(owner){erased.emailBridge++;events.push('emailBridge.erase');return {deleted:true};}},
   operatorApps:null,
  };
  const ports={
@@ -171,9 +170,9 @@ test('execution order: billing stop, identity, grants, drain, email bridge, expo
  const x=await deletionFixture(t);await x.request();await x.toDeadline();
  const results=await x.run();assert.equal(results.at(-1).action,'deleted',JSON.stringify(results.slice(-3)));
  const order=x.events.filter(e=>!e.startsWith('blobs.')&&!e.startsWith('archives.')&&e!=='notice.scheduled');
- assert.deepEqual(order,['notice.reminder-3d','notice.reminder-1d','notice.executing','billing.revokeAll','sever:deleted','identity.tombstone','federation.erase','mcp.erase','emailBridge.erase','exports.cancelAll','billing.anonymize','notice.completed'].filter(e=>order.includes(e)));
+ assert.deepEqual(order,['notice.reminder-3d','notice.reminder-1d','notice.executing','billing.revokeAll','sever:deleted','identity.tombstone','federation.erase','mcp.erase','exports.cancelAll','billing.anonymize','notice.completed'].filter(e=>order.includes(e)));
  const at=name=>x.events.findIndex(e=>e.startsWith(name));
- assert(at('billing.revokeAll')<at('identity.tombstone')&&at('identity.tombstone')<at('federation.erase')&&at('emailBridge.erase')<at('archives.delete:exports/')&&at('archives.delete:exports/')<at(`blobs.delete:objects/${OWNER}`)&&at(`blobs.delete:objects/${OWNER}`)<at('billing.anonymize')&&at('billing.anonymize')<at('notice.completed'));
+ assert(at('billing.revokeAll')<at('identity.tombstone')&&at('identity.tombstone')<at('federation.erase')&&at('mcp.erase')<at('archives.delete:exports/')&&at('archives.delete:exports/')<at(`blobs.delete:objects/${OWNER}`)&&at(`blobs.delete:objects/${OWNER}`)<at('billing.anonymize')&&at('billing.anonymize')<at('notice.completed'));
  assert.deepEqual(await x.rows(),['lifecycle/tombstone-v1','owner']);
  const tombstone=await x.metadata.get(TOMBSTONE_KEY);assert.equal(tombstone.reason,'owner');assert.equal(tombstone.basis,'owner');assert.equal(tombstone.deletedBlobs,5);assert.equal(tombstone.foreignReferences,1);
  for(let i=0;i<5;i++)assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v${i}`),false);
@@ -184,7 +183,7 @@ test('execution order: billing stop, identity, grants, drain, email bridge, expo
  assert.equal(await x.repository.findByEmail(EMAIL),null,'the email address is released');
  assert.equal((await x.ports.due.due({now:Infinity})).length,0);
  assert.equal(x.notices.find(n=>n.kind==='completed').channels.push.length,0,'completion notice is email only');
- assert.deepEqual(x.erased,{federation:1,mcp:1,emailBridge:1});
+ assert.deepEqual(x.erased,{federation:1,mcp:1});
  assert.equal((await x.step()).action,'deleted');
  assert(x.logs.every(e=>!JSON.stringify(e).includes(EMAIL)&&!JSON.stringify(e).includes('push.example')));
 });
@@ -216,7 +215,7 @@ test('E5 holds when vector rows exist but the index is unavailable; unconfigured
  const x=await deletionFixture(t);await x.metadata.put(key('search-vector-revision',OWNER,'m1'),{id:'m1'});await x.request();await x.toDeadline();
  const held=(await x.run({limit:40,until:'hold'})).at(-1);assert.equal(held.reason,'vector-index-unavailable');assert.equal((await x.metadata.get(PURGE_KEY)).stage,'vectors');
  assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v0`),true,'nothing past E5 ran');
- const y=await deletionFixture(t,{erasure:{mcp:null,emailBridge:null,operatorApps:null}});await y.request();await y.toDeadline();
+ const y=await deletionFixture(t,{erasure:{mcp:null,operatorApps:null}});await y.request();await y.toDeadline();
  assert.equal((await y.run({limit:40,until:'hold'})).at(-1).reason,'erasure-port-unconfigured:federation');
  y.ports.erasure.federation=null;assert.equal((await y.run()).at(-1).action,'deleted');
  const job=await y.metadata.get(PURGE_KEY);assert.equal(job,undefined);
@@ -232,9 +231,9 @@ test('E6 without an export port holds; a null port (no export store on this host
 
 test('R1-M12 operator apps: the pluggable port is awaited until it acknowledges; unwired (undefined) holds',async t=>{
  let acks=0;const calls=[];
- const x=await deletionFixture(t,{erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:{async ownerDeleted(owner,input){calls.push(input);return ++acks<3?{done:false}:{done:true};}}}});
+ const x=await deletionFixture(t,{erasure:{federation:null,mcp:null,operatorApps:{async ownerDeleted(owner,input){calls.push(input);return ++acks<3?{done:false}:{done:true};}}}});
  await x.request();await x.toDeadline();assert.equal((await x.run()).at(-1).action,'deleted');assert.equal(calls.length,3);assert.deepEqual(calls[0],{reason:'owner',basis:'owner'});
- const y=await deletionFixture(t,{erasure:{federation:null,mcp:null,emailBridge:null}});await y.request();await y.toDeadline();
+ const y=await deletionFixture(t,{erasure:{federation:null,mcp:null}});await y.request();await y.toDeadline();
  assert.equal((await y.run({limit:40,until:'hold'})).at(-1).reason,'erasure-port-unconfigured:operatorApps');
 });
 
@@ -309,7 +308,7 @@ test('inactivity purge on the same executor: common erasure stages remove export
  const stages=erasureStages(x.executor,{ports:x.ports,clock:x.clock.now});
  for(let i=0;i<20;i++){const out=await purgeBatch(x.executor,OWNER,{identity:x.ports.identity,fence,budget:64,stages,clock:x.clock.now});if(out.done)break;assert.equal(out.halted,undefined,JSON.stringify(out));if(out.wakeAt)x.clock.set(out.wakeAt);}
  assert.deepEqual(await x.rows(),['lifecycle/tombstone-v1','owner']);assert.equal((await x.metadata.get(TOMBSTONE_KEY)).reason,'inactive-unpaid');
- assert.equal([...x.archives.map.keys()].some(k=>k.startsWith('exports/')),false);assert.deepEqual(x.erased,{federation:1,mcp:1,emailBridge:1});
+ assert.equal([...x.archives.map.keys()].some(k=>k.startsWith('exports/')),false);assert.deepEqual(x.erased,{federation:1,mcp:1});
  assert.equal(deletionReason(await x.repository.get(OWNER)),'inactive');assert.equal(x.events.includes('billing.revokeAll'),false);
  assert(fenceCalls>=PURGE_PLANS.lifecycle.length,'a fresh fence before every stage');
  // The pre-DX-3 call shape (no hooks) keeps the legacy plan and the new E5 hold.
@@ -318,7 +317,7 @@ test('inactivity purge on the same executor: common erasure stages remove export
  // A later call with hooks upgrades it and re-runs from grants.
  await y.metadata.delete(key('search-vector-revision',OWNER,'m1'));
  for(let i=0;i<20;i++){const out=await purgeBatch(y.executor,OWNER,{identity:y.ports.identity,fence:async()=>true,stages:erasureStages(y.executor,{ports:y.ports,clock:y.clock.now}),clock:y.clock.now});if(out.done)break;if(out.wakeAt)y.clock.set(out.wakeAt);}
- assert.deepEqual(y.erased,{federation:1,mcp:1,emailBridge:1});assert.equal([...y.archives.map.keys()].some(k=>k.startsWith('exports/')),false);
+ assert.deepEqual(y.erased,{federation:1,mcp:1});assert.equal([...y.archives.map.keys()].some(k=>k.startsWith('exports/')),false);
  await assert.rejects(purgeBatch(y.executor,OWNER,{identity:y.ports.identity,fence:async()=>true,reason:'owner'}),TypeError);
 });
 
@@ -424,7 +423,7 @@ test('end to end with the real DX-5 notices port: request, accepted notice, grac
  assert.deepEqual(pushes.map(p=>p.kind),['scheduled','scheduled','reminder-3d','reminder-1d','executing'],'the completion notice is email only');
  assert.equal(mails.at(-1).cancellable,false);assert.equal(mails.at(-1).token,undefined);
  assert.deepEqual(await x.rows(),['lifecycle/tombstone-v1','owner']);assert.equal((await x.repository.get(OWNER)).status,'deleted');
- assert.deepEqual(x.erased,{federation:1,mcp:1,emailBridge:1});assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v0`),false);
+ assert.deepEqual(x.erased,{federation:1,mcp:1});assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v0`),false);
 });
 
 test('DX-7 race regression: admin-email scheduling commits only against the confirmed email and security epoch',async t=>{

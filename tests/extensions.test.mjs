@@ -18,6 +18,10 @@ const ISS='https://p.example',code=c=>e=>{assert.equal(e.code,c,`expected ${c}, 
 const floor={version:'0',issuer:ISS,authorization_request_endpoint:ISS+'/api/oauth/requests',token_endpoint:ISS+'/oauth/token',rpc_endpoint:ISS+'/bindle/rpc',revocation_endpoint:ISS+'/oauth/revoke'};
 const read$=(extensions,extra={})=>readExtensions({...floor,...extra,extensions});
 const keys=r=>[...r.extensions.keys()];
+// A test-local provider-published descriptor: no 3sln.me provider feature is published now that the email bridge was
+// struck (2026-10-28), so the provider-registry merge is exercised with an injected registry.
+const LOCAL_FEATURE={id:'https://p.example/extensions/local-feature/v1',title:'Local feature',description:'Test-only provider feature.',options:{}};
+const LOCAL_REGISTRY=descriptorRegistry([...BINDLE_DESCRIPTORS,...PROVIDER_DESCRIPTORS,LOCAL_FEATURE]);
 const entry={spec:EXT.authorizationEntry,options:{endpoint:ISS+'/api/oauth/entries',intents:['login']}};
 
 test('spec URLs: versioned last segment, HTTPS, bounded, no query, fragment or userinfo',()=>{
@@ -108,10 +112,12 @@ test('emission: the real rows produce entries every processor accepts, behind fl
 });
 
 test('engine harness: declaration, field-attribute and selection Queries are gated by EXTENSIONS_ENABLED',async t=>{
- const make=async flag=>{const clock=fakeClock(0),e=createAppEngine({providers:{clock,random:{uuid:()=>crypto.randomUUID()},audit:memoryAudit({clock}),config:{EXTENSIONS_ENABLED:flag},extensions:createExtensionsProvider()}});t.after(()=>e.dispose());return e;};
+ const make=async(flag,registry)=>{const clock=fakeClock(0),e=createAppEngine({providers:{clock,random:{uuid:()=>crypto.randomUUID()},audit:memoryAudit({clock}),config:{EXTENSIONS_ENABLED:flag},extensions:createExtensionsProvider(registry?{registry}:{})}});t.after(()=>e.dispose());return e;};
  const off=await make(false);await assert.rejects(read(off,new ExtensionDeclarations({input:{manifest:{...floor,extensions:[entry]}}})),code('extensions_disabled'));
- const on=await make(true),d=await read(on,new ExtensionDeclarations({input:{manifest:{...floor,extensions:[entry,{spec:PROVIDER_EXT.emailBridge}]}}}));
- assert.deepEqual(Object.keys(d.extensions).sort(),[EXT.authorizationEntry,PROVIDER_EXT.emailBridge].sort());
+ const on=await make(true),d=await read(on,new ExtensionDeclarations({input:{manifest:{...floor,extensions:[entry,{spec:LOCAL_FEATURE.id}]}}}));
+ assert.deepEqual(Object.keys(d.extensions),[EXT.authorizationEntry],'a provider-published spec the registry lacks is ignored');
+ const local=await make(true,LOCAL_REGISTRY),l=await read(local,new ExtensionDeclarations({input:{manifest:{...floor,extensions:[entry,{spec:LOCAL_FEATURE.id}]}}}));
+ assert.deepEqual(Object.keys(l.extensions).sort(),[EXT.authorizationEntry,LOCAL_FEATURE.id].sort(),'an injected registry processes its provider descriptors');
  assert.equal((await read(on,new FieldAttributes({input:{field:{title:'R',type:'resource',contracts:['https://c.example/c/v1'],selection:'exclusive'}}}))).status,'valid','exclusive defaults to cardinality max 1');
  assert.equal((await read(on,new FieldSelection({input:{field:{title:'R',type:'resource',cardinality:{min:0,max:2},contracts:['https://c.example/c/v1'],selection:'ordered'},resources:[]}}))).selection,'ordered');
 });
@@ -150,5 +156,8 @@ test('selection: consumers and live enablement; a field without a policy has no 
  const none=createFieldOperation(FIELD(null,2),[ok('a'),ok('b')]);const first=nextFieldDispatch(none,{tx:TX(1)});
  assert.equal(nextFieldDispatch(recordFieldOutcome(first.state,{tx:TX(1),httpStatus:404}),{tx:TX(2)}).dispatch,null);
  assert.throws(()=>createFieldOperation({title:'S',type:'string',maxLength:3},[]),code('invalid_field'));
- assert.ok(BINDLE_REGISTRY.has(EXT.authorizationEntry)&&PROVIDER_REGISTRY.has(PROVIDER_EXT.emailBridge)&&!BINDLE_REGISTRY.has(PROVIDER_EXT.emailBridge));
+ assert.ok(BINDLE_REGISTRY.has(EXT.authorizationEntry)&&PROVIDER_REGISTRY.has(EXT.authorizationEntry)&&LOCAL_REGISTRY.has(LOCAL_FEATURE.id)&&!BINDLE_REGISTRY.has(LOCAL_FEATURE.id));
+ // The email bridge was struck (2026-10-28): no 3sln.me provider extension is published or registered.
+ assert.deepEqual([Object.keys(PROVIDER_EXT),PROVIDER_DESCRIPTORS.length,PROVIDER_REGISTRY.size],[[],0,BINDLE_REGISTRY.size]);
+ assert.ok(!PROVIDER_REGISTRY.has('https://3sln.me/extensions/email-bridge/v1'));
 });

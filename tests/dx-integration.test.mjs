@@ -58,7 +58,7 @@ test('flag on: request over the real controller, due index in the identity direc
 test('erasure ports: MCP rows on existing shards and the federation shard are erased; absent stores are never created',async t=>{
  const f=await fixture(t,{ACCOUNT_DELETION_ENABLED:'true',LOCAL_DEVELOPMENT:'true'}),{body}=await f.signup(),owner=body.account.id;
  const ports=f.app.resources.accounts.get(owner).config.ACCOUNT_DELETION_PORTS;
- assert.equal(typeof ports.identity.tombstone,'function');assert.equal(ports.erasure.emailBridge,null);assert.equal(ports.erasure.operatorApps,null);
+ assert.equal(typeof ports.identity.tombstone,'function');assert.equal(Object.hasOwn(ports.erasure,'emailBridge'),false,'the email bridge was removed');assert.equal(ports.erasure.operatorApps,null);
  assert.deepEqual(await ports.erasure.federation.eraseSubject(owner),{deleted:0,absent:true});
  assert.equal(existsSync(join(f.directory,'federation')),true);
  assert.deepEqual(await ports.erasure.mcp.eraseSubject(owner),{deleted:0});

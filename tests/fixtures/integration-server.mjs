@@ -9,7 +9,7 @@ import {AppAction,AppQuery,createAppEngine,perform,read} from '../../packages/ap
 import {memoryAudit} from '../../packages/app/providers.mjs';
 
 export const INTEGRATION='https://integration.example',ISSUER='https://provider.example',SUBJECT=ISSUER+'/entities/owner',CONNECTION='fixture-connection';
-export const CONTRACT='https://spec.bindle.example/contracts/public-intake/v1';
+export const CONTRACT='https://spec.bindle.example/contracts/example-records/v1';
 export const EVENTS=Object.freeze(Object.fromEntries(['preferences-updated','credential-revoked','connection-revoked','connection-resumed','resource-detached'].map(name=>[name,'https://spec.bindle.example/events/'+name+'/v1'])));
 export const ENDPOINTS=Object.freeze({events:INTEGRATION+'/bindle/events',discovery:INTEGRATION+'/bindle/resources',rpc:INTEGRATION+'/bindle/rpc'});
 const clone=value=>structuredClone(value),key=(iss,id)=>JSON.stringify([iss,id]);

@@ -14,6 +14,7 @@
 // makes an SDP invalid; `o=` username and session id are `-` or digits; `u=`, `e=` and `p=` lines are refused.
 import {base64url,textEncoder} from '../core/records.mjs';
 import {artefactURL,DIGEST_PATTERN} from '../core/artefacts.mjs';
+import {nonPublicAddress as ipAddressNonPublic} from '../core/ip-address.mjs';
 import {jcs,strictJSON,plain as plainValue} from '../core/strict-json.mjs';
 import {isJkt,originValid} from '../identity/delegation.mjs';
 import {memberURL} from '../identity/member-certificates.mjs';
@@ -54,22 +55,12 @@ export const ipv6=v=>{if(typeof v!=='string'||!v.includes(':')||!/^[0-9A-Fa-f:.]
  * `.local` label could encode an address or a host name (review L2). */
 export const mdnsName=v=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.local$/i.test(v);
 export const unspecified=v=>v==='0.0.0.0'||v==='::';
-const v4Private=([a,b])=>a===0||a===10||a===127||a>=224||a===100&&b>=64&&b<=127||a===169&&b===254||a===172&&b>=16&&b<=31||a===192&&b===168;
-/** True for an IP literal that is not a public unicast address: unspecified, loopback, private (RFC 1918), shared
- * (RFC 6598), link-local, multicast or reserved IPv4; and unspecified, loopback, link-local, site-local, ULA or
- * multicast IPv6, including IPv4-mapped, IPv4-compatible and NAT64 forms of a non-public IPv4 address (review L2).
- * Documentation ranges are not refused: they reveal nothing. Non-literals return false. */
-export function nonPublicAddress(v){
- if(ipv4(v))return v4Private(v.split('.').map(Number));
- if(!ipv6(v))return false;
- let raw;try{raw=new URL(`http://[${v}]/`).hostname.slice(1,-1);}catch{return true;}
- const [left,right]=raw.split('::'),a=left?left.split(':'):[],b=right?right.split(':'):[],g=(right===undefined?a:[...a,...Array(8-a.length-b.length).fill('0'),...b]).map(x=>parseInt(x,16));
- if(g.length!==8||g.some(x=>!Number.isInteger(x)))return true;
- const embedded=()=>v4Private([g[6]>>8,g[6]&255]);
- if(g.slice(0,5).every(x=>x===0)&&(g[5]===0||g[5]===0xffff))return g[5]===0&&g[6]===0?true:embedded(); // ::, ::1, ::a.b.c.d, ::ffff:a.b.c.d
- if(g[0]===0x64&&g[1]===0xff9b&&g.slice(2,6).every(x=>x===0))return embedded();
- return (g[0]&0xffc0)===0xfe80||(g[0]&0xffc0)===0xfec0||(g[0]&0xfe00)===0xfc00||(g[0]&0xff00)===0xff00;
-}
+/** True unless `v` is a public unicast IP literal (shared byte-level classifier, ../core/ip-address.mjs): unspecified,
+ * loopback, private (RFC 1918), shared (RFC 6598), link-local, multicast, reserved and documentation ranges (192.0.2/24,
+ * 198.51.100/24, 203.0.113/24, 2001:db8::/32) are non-public, in every spelling, including IPv4-mapped, IPv4-compatible,
+ * NAT64 (64:ff9b::/96) and 6to4 (2002::/16) forms of a non-public IPv4 address. Anything that is not a parseable IP
+ * literal (an mDNS name, a host name) is non-public too: a srflx or relay address must be a public literal (§16.4). */
+export const nonPublicAddress=ipAddressNonPublic;
 
 // ---- SDP (§16.4) ------------------------------------------------------------------------------------------------
 const STRONG=['sha-256','sha-384','sha-512'],HEX_BYTES={'sha-256':32,'sha-384':48,'sha-512':64};

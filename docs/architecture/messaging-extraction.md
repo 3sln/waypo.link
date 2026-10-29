@@ -303,7 +303,7 @@ Storage-usage counters are recomputed. The step writes its marker last, so a cra
 - **Address and links:** handles, the directory, link issuance, verification, landing pages, previews, intents, audience responses, conditional-link policy (`packages/links/`) and the ingress-descriptor route.
 - **Identity:** keys plus the new `key-delegation.v1` issuance, renewal and status.
 - **Slots:** `extensions.v1`, with `messaging-address` and `email-bridge` declared as provider consumers.
-- **Email bridge entry point:** the SMTP adapter, MIME bounds, provenance signing, reply gates, the single invariant auto-reply, the holding queue and the `deliver` handoff to the public-message-intake occupant. None of it is built yet; it is a separate slice after the Parlay receive path exists.
+- **Email bridge entry point:** the SMTP adapter, MIME bounds, provenance signing, reply gates, the single invariant auto-reply, the holding queue and the `deliver` handoff to the public-message-intake occupant. None of it is built yet; it is a separate slice after the Parlay receive path exists. (Update: the email bridge was removed 2026-10-28 (owner direction; revisit later).)
 - **Activity**, which also renders Parlay notifications.
 - **Bundled default instance:** Parlay deployed as a separate Worker on its own origin (for example `box.3sln.example`), listed as an available integration. At signup it is offered as an opt-in default occupant of messaging-ingress and public-message-intake, never auto-assigned (extensions §5.1). It runs the same code and boundary as any third-party instance.
 

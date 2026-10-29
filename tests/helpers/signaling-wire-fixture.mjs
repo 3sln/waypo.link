@@ -15,7 +15,7 @@ export const FP='AB:'.repeat(31)+'AB';
 export const sdp=({media=['application'],extra=[],origin='o=- 46117314 2 IN IP4 127.0.0.1',fingerprint=`a=fingerprint:sha-256 ${FP}`,trickle='a=ice-options:trickle'}={})=>[
  'v=0',origin,'s=-','t=0 0','a=group:BUNDLE '+media.map((_,i)=>i).join(' '),'a=msid-semantic: WMS',
  ...media.flatMap((m,i)=>[`m=${m} 9 ${m==='application'?'UDP/DTLS/SCTP webrtc-datachannel':'UDP/TLS/RTP/SAVPF 111'}`,'c=IN IP4 0.0.0.0',...m==='application'?[]:['a=rtcp:9 IN IP4 0.0.0.0'],'a=ice-ufrag:abcd','a=ice-pwd:aaaaaaaaaaaaaaaaaaaaaaaa',...trickle?[trickle]:[],...fingerprint?[fingerprint]:[],'a=setup:actpass',`a=mid:${i}`,...m==='application'?['a=sctp-port:5000']:['a=rtpmap:111 opus/48000/2']]),...extra].join('\r\n')+'\r\n';
-export const candidate=(type='relay',{address=type==='host'?'1f3c6b2a-0000-4000-8000-000000000001.local':'203.0.113.7',tail=type==='relay'?' raddr 0.0.0.0 rport 0':type==='srflx'?' raddr 0.0.0.0 rport 0':''}={})=>`candidate:842163049 1 udp 1677729535 ${address} 50000 typ ${type}${tail} generation 0 ufrag abcd network-cost 999`;
+export const candidate=(type='relay',{address=type==='host'?'1f3c6b2a-0000-4000-8000-000000000001.local':'93.184.216.34',tail=type==='relay'?' raddr 0.0.0.0 rport 0':type==='srflx'?' raddr 0.0.0.0 rport 0':''}={})=>`candidate:842163049 1 udp 1677729535 ${address} 50000 typ ${type}${tail} generation 0 ufrag abcd network-cost 999`;
 export const item=(c=candidate())=>({candidate:c,sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
 export const now=1_800_000_000;
 

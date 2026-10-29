@@ -104,7 +104,7 @@ async function integration(t,{flagOn=true}={}){
  const attestation=await keyPair(),metadata=new SqliteMetadata(':memory:'),dueDb=new SqliteMetadata(':memory:');t.after(()=>{metadata.close();dueDb.close();});
  // Recovery file v3 holds no keychain: the dormant transfer-out engine's key-possession check is the test seam `keyProof`.
  let signer;const transferPorts={keyProof:async(owner,proof)=>owner===id&&proof?.signing?.kid===signer?.kid,identity:transferIdentityPort(h.repository,{clock:h.clock.now}),notices:{async deliver(notice){notices.push(notice);return {accepted:true};}},attestor:attestorFromJwk({kid:'att-1',jwk:attestation.privateJwk}),issuer:ORIGIN,due:transferDueIndex(dueDb),hold:async()=>({held:false})};
- const deletionPorts={identity:lifecycleIdentityPort(h.repository,{clock:h.clock.now}),hold:async()=>({held:false}),billing:null,erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null},exports:null};
+ const deletionPorts={identity:lifecycleIdentityPort(h.repository,{clock:h.clock.now}),hold:async()=>({held:false}),billing:null,erasure:{federation:null,mcp:null,operatorApps:null},exports:null};
  const controller=new AccountController({metadata,gate:new SerialGate(),blobs:bucket(),archives:bucket(),sql:metadata.sql,config:{APP_ORIGIN:ORIGIN,flags,LIFECYCLE_CLOCK:h.clock.now,LIFECYCLE_LOG:()=>{},KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),ACCOUNT_DELETION_PORTS:deletionPorts,TRANSFER_OUT_PORTS:transferPorts,IDENTITY_ACCOUNT:o=>h.repository.get(o)}});
  await controller.warm(id);signer=await controller.signingKey(id);const keychain={signing:{kid:signer.kid}};
  const authority={clients:[{id:'app',origin:'https://app.example'}],ready:()=>true,beginAuthorization:async()=>({requestId:'unused'})};

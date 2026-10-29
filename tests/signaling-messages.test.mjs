@@ -175,7 +175,7 @@ test('candidate rules (§16.4): typ, raddr, mDNS host cross-entity, extensions, 
  bad(candidate('relay',{tail:' raddr 0.0.0.0'}),'raddr needs rport');bad(candidate('relay').replace(' typ relay',' typ prflx'),'prflx');bad(candidate('relay').replace('candidate:842163049','candidate:'),'foundation');
  bad(candidate('relay').replace('udp','sctp'),'transport');bad(candidate('relay').replace(' 50000 ',' 70000 '),'port');bad(candidate('relay').replace('1677729535','99999999999'),'priority');bad(candidate('relay').replace(' 1 udp',' 0 udp'),'component');
  bad(candidate('relay')+' x-addr 192.168.1.4','unknown extension (could carry an address)');bad(candidate('relay')+' generation 1','duplicate extension');bad(candidate('relay')+' generation','dangling extension');
- bad('a='+candidate('relay'),'a= prefix');bad(candidate('relay').replace(' ','  '),'empty field');bad(candidate('relay')+' ufrag '+'a'.repeat(LIMITS.candidateBytes),'size');bad('','empty');bad(candidate('relay').replace('203.0.113.7','203.0.113.777'),'address');
+ bad('a='+candidate('relay'),'a= prefix');bad(candidate('relay').replace(' ','  '),'empty field');bad(candidate('relay')+' ufrag '+'a'.repeat(LIMITS.candidateBytes),'size');bad('','empty');bad(candidate('relay').replace('93.184.216.34','93.184.216.777'),'address');
  // Items
  validateCandidateItem(item());validateCandidateItem({...item(),sdpMid:null});
  for(const value of [{...item(),extra:1},{...item(),sdpMid:null,sdpMLineIndex:null},{...item(),sdpMLineIndex:64},{...item(),usernameFragment:'a'},{...item(),sdpMid:'x y'}])assert.throws(()=>validateCandidateItem(value),code('signaling_candidate_invalid'));
@@ -281,7 +281,7 @@ test('seeded fuzz: mutated messages never verify, valid round-trips always do',a
 });
 
 test('seeded generator: candidates that parse cross-entity never expose a raw host or a real relay raddr',async()=>{
- const addresses=['203.0.113.7','10.0.0.8','192.168.1.4','2001:db8::5','abc.local','1f3c6b2a-0000-4000-8000-000000000001.local','0.0.0.0','::'];
+ const addresses=['93.184.216.34','203.0.113.7','::ffff:7f00:1','64:ff9b::a00:1','2002:c0a8:101::','10.0.0.8','192.168.1.4','2001:db8::5','abc.local','1f3c6b2a-0000-4000-8000-000000000001.local','0.0.0.0','::'];
  await forEachSeed(200,async random=>{
   const type=random.pick(['host','srflx','relay','prflx']),address=random.pick(addresses),tail=random.chance(0.5)?'':` raddr ${random.pick(addresses)} rport ${random.pick([0,9,5000])}`;
   const value=`candidate:1 1 udp 100 ${address} 9 typ ${type}${tail}`;let c=null;try{c=parseCandidate(value,{crossEntity:true});}catch(e){assert.equal(e.code,'signaling_candidate_invalid');}
@@ -332,11 +332,11 @@ test('review L1: case-insensitive candidate lines, constrained o= fields, u=/e=/
 
 test('review L2: public srflx/relay addresses cross-entity, srflx raddr under public, UUID mDNS names',()=>{
  const bad=(value,label,crossEntity=true)=>assert.throws(()=>parseCandidate(value,{crossEntity}),code('signaling_candidate_invalid'),label);
- for(const address of ['192.168.1.5','10.0.0.8','172.16.4.4','127.0.0.1','169.254.1.1','100.64.0.1','0.0.0.0','224.0.0.1','::1','::','fe80::1','fd00::1','fc00::5','ff02::1','::ffff:192.168.1.5','::ffff:10.0.0.1','64:ff9b::a00:1']){
+ for(const address of ['192.168.1.5','10.0.0.8','172.16.4.4','127.0.0.1','169.254.1.1','100.64.0.1','0.0.0.0','224.0.0.1','::1','::','fe80::1','fd00::1','fc00::5','ff02::1','::ffff:192.168.1.5','::ffff:10.0.0.1','64:ff9b::a00:1','203.0.113.7','198.51.100.9','192.0.2.1','2001:db8::5','::ffff:7f00:1','0:0:0:0:0:ffff:7f00:1','::127.0.0.1','2002:c0a8:101::','2002:7f00:1::','64:ff9b::7f00:1']){
   bad(candidate('srflx',{address}),`srflx ${address}`);bad(candidate('relay',{address}),`relay ${address}`);
   assert.equal(parseCandidate(candidate('relay',{address}),{crossEntity:false}).address,address,'own-entity unaffected');}
- for(const address of ['203.0.113.7','198.51.100.9','8.8.8.8','2001:db8::5','2606:4700::1','::ffff:8.8.8.8'])assert.equal(parseCandidate(candidate('srflx',{address})).address,address,address);
- assert.ok(nonPublicAddress('::ffff:192.168.1.5')&&!nonPublicAddress('203.0.113.7')&&!nonPublicAddress('abc.local'));
+ for(const address of ['93.184.216.34','8.8.8.8','2606:4700::1','::ffff:8.8.8.8'])assert.equal(parseCandidate(candidate('srflx',{address})).address,address,address);
+ assert.ok(nonPublicAddress('::ffff:192.168.1.5')&&nonPublicAddress('203.0.113.7')&&nonPublicAddress('abc.local')&&!nonPublicAddress('8.8.8.8'));
  for(const address of ['192-168-1-5.local','abc.local','host.corp.local','1f3c6b2a-0000-4000-8000-00000000000.local','1f3c6b2a-0000-4000-8000-000000000001.local.local'])bad(candidate('host',{address}),address);
  assert.ok(mdnsName('1F3C6B2A-0000-4000-8000-000000000001.local'));bad(candidate('srflx',{tail:' raddr 192-168-1-5.local rport 0'}),'srflx raddr mDNS must be a UUID');
  const own=parseCandidate(candidate('srflx',{tail:' raddr 192.168.1.5 rport 5000'}),{crossEntity:false});

@@ -21,7 +21,8 @@ const MODEL={model:'triage',version:'1',schema:TAXONOMY},enc=new TextEncoder(),d
 const TEXT='https://classifiers.example/r/text',CAPS={kinds:[{kind:'text',mediaTypes:['text/plain'],inputs:['inline'],maxBytes:65536}],maxLabels:16};
 const port=({gate=async()=>{},fail=null}={})=>({calls:0,async fields(){return {text:TEXT,textDetail:'minimal'};},async capabilities(){return CAPS;},async classify(_,args){this.calls++;const verdict=await gate(args);if(fail??verdict)throw Object.assign(new Error('x'),{code:fail??verdict});const text=dec.decode(decodeBase64url(args.item.data));return {scores:Object.fromEntries(args.labels.map(l=>[l.id,text.includes(l.id)?.99:.01])),model:{id:MODEL.model,version:MODEL.version}};}});
 const fresh=(t,classifier,clock)=>{const e=createTestEngine({...clock?{clock}:{},providers:organizationProviders({PARLAY_ENABLED:true,classifier})});t.after(()=>e.dispose());return e;};
-const put=(e,id,text='hello')=>e.store.put('item/'+id,{id,origin:'channel',kind:'channel',subject:'',receivedAt:10,state:'inbox',tags:[],notification:'push',asserted:{automation:[]},message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(enc.encode(text))}]}});
+// A native one-off message with a text/plain body (bridged channel items went with the email bridge, 2026-10-28).
+const put=async(e,id,text='hello')=>{await e.store.put('body/'+id,enc.encode(text));await e.store.put('item/'+id,{id,origin:'native',kind:'one-off',subject:'',content:{mimeType:'text/plain'},receivedAt:10,state:'inbox',tags:[],notification:'push'});};
 // The failure tag is visible to rules: this one files failed items (an effect, so it waits for the final run).
 const FAILED_RULE={id:'failed-folder',enabled:true,match:{tagsAll:[FAILED]},actions:{collection:'Failed'}};
 const setup=async(e,{allowance}={})=>{await e.run('classify.settings',{input:{consent:true,...allowance!==undefined?{allowance}:{},pin:{...MODEL,thresholds:{social:.9}}}});const rules=await e.run('rules.list');await e.run('rules.replace',{input:{rules:[FAILED_RULE,...rules.map(r=>({...r,enabled:false}))]}});};
@@ -124,7 +125,7 @@ test('worker alarm schedule: an unclaimed pending item wakes the alarm now; a cl
 test('app shell alarm: classifies due pending items through the mailbox port once, then fails overdue ones at the deadline',async t=>{
  let now=Date.UTC(2026,9,28,12);const clock={now:()=>now},c=port(),store=memoryStore([['owner',OWNER]]),box=createMailbox({store,PARLAY_ENABLED:true,clock,ports:{classifier:c}});t.after(()=>box.dispose());
  await box.open(OWNER);await box.run(OWNER,'classify.settings',{input:{consent:true,pin:{...MODEL,thresholds:{social:.9}}}});
- for(const id of ['a','b'])await store.put('item/'+id,{id,origin:'channel',kind:'channel',subject:'',receivedAt:10,state:'inbox',tags:[],notification:'push',asserted:{automation:[]},message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(enc.encode('social '+id))}]}});
+ for(const id of ['a','b']){await store.put('body/'+id,enc.encode('social '+id));await store.put('item/'+id,{id,origin:'native',kind:'one-off',subject:'',content:{mimeType:'text/plain'},receivedAt:10,state:'inbox',tags:[],notification:'push'});}
  await box.run(OWNER,'classify.begin',{id:'a'});await box.alarm();
  assert.equal(c.calls,1);assert.equal((await store.get('item/a')).classificationPending,undefined);assert.equal((await store.get('item/a')).notification,'push');
  await box.alarm();assert.equal(c.calls,1,'never classified twice');
@@ -144,7 +145,7 @@ test('seeded chaos: begin, classify, answer, settings changes, removal, deadline
  // A second classifier call for one pending entry (R1 broken) never gets an answer here, so it shows up as this timeout.
  await forEachSeed(16,async random=>{
   const clock=fakeClock(Date.UTC(2026,9,28,12)),calls=[];
-  const c=port({gate:args=>new Promise(resolve=>calls.push({text:dec.decode(decodeBase64url(args.item.data)),resolve}))}),e=fresh(t,c,clock);
+  const c=port({gate:args=>new Promise(resolve=>calls.push({text:dec.decode(decodeBase64url(args.item.data)).trim(),resolve}))}),e=fresh(t,c,clock);
   const ids=['i0','i1','i2','i3','i4','i5'],texts=Object.fromEntries(ids.map((id,i)=>[id,i%2?'social '+id:'plain '+id]));
   for(const id of ids)await put(e,id,texts[id]);await setup(e,{allowance:12});
   // Reference state.

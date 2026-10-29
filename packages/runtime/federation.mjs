@@ -2,9 +2,8 @@ import {authorityGrantEpoch} from './grant-epoch.mjs';
 import {organizationAccountAuthority} from '../orgs/federation.mjs';
 import {buildRemovalClaims,verifyRemovalAssertion} from '../federation/removal.mjs';
 import {configuredContractVersion,pinConfiguredContract,reviewedSchemaFetcher} from './artefact-pins.mjs';
-import {ownerFlags,capability,siteGlobal,siteEnabled,featureConfig,surfaceConfig} from './account/flags.mjs';
+import {ownerFlags,capability,siteGlobal,siteEnabled,surfaceConfig} from './account/flags.mjs';
 import {subjectTermsAllowed} from '../identity/age-policy.mjs';
-import {bridgeConfig} from '../email-bridge/engine.mjs';
 import {appSessionDerivation} from './app-session-lineage.mjs';
 import {holdBusRPC,busWaitsPort} from '../events/waiter.mjs';
 import {EVENT_BUS_CONTRACT} from '../federation/event-buses.mjs';
@@ -24,7 +23,6 @@ import {deviceManifest} from '../federation/device-authorization.mjs';
 import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations,DEV_JOURNAL_SECRET} from '../federation/runtime.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
-import {EMAIL_BRIDGE_CONTRACT,EMAIL_BRIDGE_METHODS} from '../email-bridge/wire.mjs';
 import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.mjs';
 import {ITEM_CLASSIFICATION_FRAGMENT_DOCUMENT} from '../apps/connections.mjs';
 import {ITEM_CLASSIFICATION_CONTRACT} from '../sdk/src/item-classification.mjs';
@@ -35,7 +33,7 @@ import {pinnedKeys} from '../federation/integrations.mjs';
 import {brokeredResourcesDeclaration} from '../federation/introspection.mjs';
 import {foreignIssuers} from './account/foreign-directory.mjs';
 import {SIGNALING_FRAGMENT_DOCUMENT,SIGNALING_CONTRACT,SIGNALING_METHODS,SIGNALING_FRAGMENT,ICE_RELAY_CONTRACT,ICE_RELAY_FRAGMENT_DOCUMENT,SIGNALING_ENDPOINT_PATH,signalingDeclaration} from '../signaling/extension.mjs';
-import {EXT,PROVIDER_EXT,declare} from '../core/extensions.mjs';
+import {EXT,declare} from '../core/extensions.mjs';
 import {PROVIDER_FEATURE_ROWS} from '../app/domains/provider-features.mjs';
 import {ICE_RELAY_METHODS,relayConfigured} from '../signaling/relay.mjs';
 import {LEG_CERTIFICATE_SECONDS} from '../signaling/certificates.mjs';
@@ -79,9 +77,6 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // preferences/v2 minting, severance draining and the brokering JWKS route (`mounts.brokeredResources`);
  // introspection_endpoint only with `mounts.brokeredIntrospection`.
  {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:c=>brokeredResourcesDeclaration(c.issuer,{introspection:c.mounts.brokeredIntrospection===true})},
- // Extensions rev 3.2 (§11.1, Q2 provisional): the email bridge is the provider feature of a 3sln.me extension; the
- // same row object the account-side declarations port evaluates (review M2).
- PROVIDER_FEATURE_ROWS[PROVIDER_EXT.emailBridge],
  // CR-X3-25 (owner direction 2026-10-28): the paid built-in classifier implements item-classification/v1 and is listed in
  // `contracts` (extensions §5.2) while it is offered. Integrations the owner adds may supply other classifiers.
  {flag:['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&classifierOffered(c.config),declare:()=>({contracts:[ITEM_CLASSIFICATION_CONTRACT]})},
@@ -193,8 +188,6 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    const signalingOn=siteEnabled(config,'SIGNALING_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'SESSION_KINDS_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'EXTENSIONS_ENABLED',{subject:{kind:'account',owner}},true);
    if(signalingOn&&ownerFlags(config,owner).enabled('SIGNALING_TURN_ENABLED')&&relayConfigured(config))descriptors.push({id:`${subject}/relay`,label:'Connection relay',provider:'bindle',contracts:{[ICE_RELAY_CONTRACT]:[...ICE_RELAY_METHODS]},generation:owner,limits:{maxRequestBytes:4096,maxResultBytes:16384,txRetentionSeconds:86400}});
    if(signalingOn)descriptors.push({id:`${subject}/signaling`,label:'Signaling',provider:'bindle',contracts:{[SIGNALING_CONTRACT]:[...SIGNALING_METHODS]},generation:owner,limits:{maxRequestBytes:262144,maxResultBytes:1048576,txRetentionSeconds:86400}});
-   // The email bridge's occupant callbacks (contacts phase 4 moved them off the withdrawn links contract and resource).
-   if(bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled)descriptors.push({id:`${subject}/email-bridge`,label:'Email bridge',provider:'bindle',contracts:{[EMAIL_BRIDGE_CONTRACT]:[...EMAIL_BRIDGE_METHODS]},generation:owner});
    // ORG-10f: an organization's imported resources (relation import mirrors kept by its writer), so its admins can
    // assign them to fragments and approve them for applications; never dispatched here (provider 'relation').
    if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));

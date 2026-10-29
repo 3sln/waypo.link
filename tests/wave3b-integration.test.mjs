@@ -55,7 +55,7 @@ test('IA token DPoP verifies proofs before the code check, records them only for
 test('contacts phase 4: no links resource is offered (the retired LINKS_ENABLED opens nothing), and the messaging-mailbox feature stays withheld without KEY_DELEGATION_ENABLED and a describe port',async t=>{
  const f=await fixture(t,{LINKS_ENABLED:'true',INTEGRATIONS_ENABLED:'true',EXTENSIONS_ENABLED:'true'});await f.configure(fragment,{theme:'dark',extra:'hello'});const preferences=await f.value(await f.req('/api/preferences',{owner:true})),resources=preferences.preferences[0].resources;
  assert.equal(resources.some(r=>r.id.endsWith('/links')||Object.keys(r.contracts??{}).includes('https://spec.bindle.example/contracts/links/v1')),false);
- assert.equal(resources.some(r=>r.id.endsWith('/email-bridge')),false,'the email-bridge resource needs the bridge enabled');
+ assert.equal(resources.some(r=>r.id.endsWith('/email-bridge')),false,'the email-bridge resource was removed (2026-10-28)');
  const manifest=await f.value(await f.req('/.well-known/bindle/manifest.json'));assert.equal(manifest.extensions?.some(e=>e.spec==='https://spec.bindle.example/extensions/messaging-mailbox/v1')??false,false);
  assert.equal(manifest.extensions?.some(e=>e.spec==='https://spec.bindle.example/extensions/intents/v1')??false,false,'the withdrawn contact-intents extension is never declared');
 });

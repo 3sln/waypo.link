@@ -106,7 +106,7 @@ test('certificate, credential, receipt and RPC parsers reject garbage with Proto
   const c=await attempt(()=>B.parseDelegation(cert));if(c.value)assert.equal(c.value.claims.bindle,'key-delegation');
   await attempt(()=>B.parseCredential(new TextDecoder().decode(mutateBytes(encoder.encode(`BindleConversation ${V.objects[0].signed.payload.operationId}.${V.pairToken.token}`),random))));
   const r=await attempt(()=>B.validateReceipt(mutateValue(random.pick(receipts),random)));if(r.value)assert.equal(r.value.payload.state,'delivered');
-  const q=await attempt(()=>B.parseRPC(mutateBytes(rpc,random)));if(q.value)assert.ok([B.MAILBOX_CONTRACT,B.INTAKE_CONTRACT].includes(q.value.contract));
+  const q=await attempt(()=>B.parseRPC(mutateBytes(rpc,random)));if(q.value)assert.equal(q.value.contract,B.MAILBOX_CONTRACT);
   await attempt(()=>B.parseCredential(new TextDecoder().decode(mutateBytes(encoder.encode(`BindleInvite ${V.invitation.token}`),random))));
   await attempt(()=>B.parseMulticastResults(mutateValue({results:[{index:0,state:'delivered',receipt:receipts[0]},{index:1,state:'unknown'}]},random),2));
  });

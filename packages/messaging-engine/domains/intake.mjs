@@ -1,49 +1,38 @@
-import {requireRestored} from '../store/restore.mjs';
 import {bodyObjects} from '../store/bodies.mjs';
 import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
-// Intake: bridged public intake `deliver` (spec §9), and public-request
-// filtering with the spam tiers of architecture §12.1. Filtering runs after custody in `intake.drain`, so no
+// Intake: public-request filtering with the spam tiers of architecture §12.1. Bridged public intake (`deliver`, spec §9),
+// address allowlists, header heuristics and the provider bridge port were removed with the email bridge (owner direction
+// 2026-10-28; the `parlay-email-bridge-retired-v1` reset deletes their rows). Filtering runs after custody in `intake.drain`, so no
 // receipt, error, header or timing class at admission depends on classification, score, rule or allowlist (§6.7).
 //  - very likely spam: p >= T_high under a threshold pinned to the occupant's {model, version, schema}: auto-reject
 //    into the bounded, recoverable Rejected view (500 items or 7 days, whichever is smaller);
 //  - could be spam: T_low <= p < T_high: `sys:suspected.spam`, deprioritized, no push;
-//  - an unpinned model version (calibration mode) or no consent: never auto-reject; deterministic header heuristics can
-//    yield at most "could be spam";
+//  - an unpinned model version (calibration mode) or no consent: never auto-reject;
 //  - unscored (item-classification §8.4: the owner consented but no classifier could score it — none fits, all
 //    refused, a failure, or no allowance left): never auto-reject, never pushed. The request is held quietly and marked
 //    `scoring: {state: 'unscored', reason}` so the owner sees it was not checked (the conservative default:
 //    an unchecked request must not look like a checked clean one, nor be punished as spam);
-//  - allowlisted principals or addresses are never auto-rejected; the skipped reject is recorded in tagHistory.
-// The classifier sees only minimized, redacted text and automation hints: no identifiers, recipients or URLs.
-import {INTAKE_CONTRACT,verifyProvenance,intakeDigest,sha256,jcs,fromBase64url} from '../../messaging-protocol/index.mjs';
+//  - allowlisted principals are never auto-rejected; the skipped reject is recorded in tagHistory.
+// The classifier sees only minimized, redacted text: no identifiers, recipients or URLs.
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
-import {KEYS,BOUNDS,actorOwner,readConfig,chargeUsage} from '../store/mailbox.mjs';
-import {chargeBudget,intakeBudgetIdentity} from './receive-budget.mjs';
+import {KEYS,BOUNDS,actorOwner,chargeUsage} from '../store/mailbox.mjs';
 import {classifyText,classifierSnapshot,noteGap} from './categories.mjs';
 
 export const T_HIGH=0.97,T_LOW=0.70,SPAM='sys:suspected.spam',FINAL_SPAM='sys:spam',DEFAULT_ALLOWANCE=200,MAX_CLASSIFIER_CHARS=8000;
 const invalid=message=>fault('invalid_input',message,400);
-const EMAIL=/^[^\s@<>()]{1,64}@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i;
 const decoder=new TextDecoder('utf-8',{fatal:false});
 export const defaultSettings=()=>({classifierConsent:false,allowance:DEFAULT_ALLOWANCE,usage:{day:0,calls:0},pins:[]});
 const modelKey=e=>JSON.stringify([e.model,e.version,e.schema]);
-const validPin=p=>evidenceOK(p)&&typeof p.high==='number'&&typeof p.low==='number'&&p.low>0&&p.low<p.high&&p.high<=1;
 const evidenceOK=e=>e&&typeof e==='object'&&['model','version','schema'].every(k=>typeof e[k]==='string'&&e[k].length>0&&e[k].length<=128);
 // Deterministic redaction before any text leaves the mailbox (architecture §12): link capabilities, URLs, bearer-like
 // tokens and one-time codes are replaced; the result is bounded (about 2,000 tokens).
 export function minimize(text){
  return String(text).replace(/bindle_(meta|data)=[^\s&#]+/gi,'bindle_$1=[redacted]').replace(/\b(?:https?|web\+bindle):\/\/\S+/gi,'[url]').replace(/\b(?:bearer|token|dpop)\s+\S+/gi,'[credential]').replace(/[A-Za-z0-9_\-+/]{24,}={0,2}/g,'[token]').replace(/\b\d{4,8}\b/g,'[code]').slice(0,MAX_CLASSIFIER_CHARS);
 }
-const ARROW=['list-unsubscribe','auto-submitted','precedence-bulk','dmarc-fail','sender-shape'];
-// Header heuristics (bridged mail only). They never finalize a tag and never reject.
-export function heuristics(item){
- if(item.origin!=='channel')return [];const hints=new Set(item.asserted.automation.map(h=>h.toLowerCase()));
- if(item.asserted.dmarc==='fail')hints.add('dmarc-fail');return ARROW.filter(h=>hints.has(h));
-}
 // Pure tier decision. result: {spam:number, evidence:{model,version,schema}} | null. `unscored`: the owner wanted the
 // request classified and it was not (a reason token), which holds it quietly instead of pushing it.
-export function decideTier({result,pins=[],allowlisted=false,hints=[],unscored=null}){
+export function decideTier({result,pins=[],allowlisted=false,unscored=null}){
  if(result&&typeof result.spam==='number'&&result.spam>=0&&result.spam<=1&&evidenceOK(result.evidence)){
   const pin=pins.find(x=>modelKey(x)===modelKey(result.evidence)),p=result.spam,high=pin?.high??T_HIGH,low=pin?.low??T_LOW;
   const tag={id:SPAM,source:'classifier',probability:p,evidence:{model:result.evidence.model,version:result.evidence.version,schema:result.evidence.schema}};
@@ -53,7 +42,6 @@ export function decideTier({result,pins=[],allowlisted=false,hints=[],unscored=n
   return {tier:'none',tags:[],history:[]};
  }
  const marker=unscored?[{action:'unscored',reason:unscored}]:[];
- if(hints.length)return {tier:'suspect',tags:[{id:SPAM,source:'heuristic',hints}],history:marker};
  if(unscored)return {tier:'unscored',tags:[],history:marker};
  return {tier:'none',tags:[],history:[]};
 }
@@ -73,66 +61,31 @@ export class IntakeSettings extends MailboxAction {
  }
 }
 const principalOf=p=>{if(!p||typeof p.issuer!=='string'||!/^https:\/\/[^/?#]+$/.test(p.issuer)||typeof p.subject!=='string'||!/^[a-f0-9-]{36}$/.test(p.subject))invalid('Choose a valid principal.');return {issuer:p.issuer,subject:p.subject};};
-const emailOf=v=>{if(typeof v!=='string'||v.length>254||!EMAIL.test(v))invalid('Choose a valid address.');return v.toLowerCase();};
-// Allowlist of principals and (for bridged mail) addresses. Addresses are convenience matches, never identity.
+// Allowlist of principals.
 export class IntakeAllow extends MailboxAction {
  static operation='intake.allow';static deps=['receive','clock'];
  async run({receive,clock}){
   actorOwner(this.actor);const input=this.input??{},allowed=input.allowed!==false;
-  const key=input.principal?KEYS.allowPrincipal(principalOf(input.principal)):KEYS.allowEmail(emailOf(input.email));
+  if(Object.keys(input).some(k=>!['principal','allowed'].includes(k)))invalid('Choose a valid principal.');
+  const principal=principalOf(input.principal),key=KEYS.allowPrincipal(principal);
   return receive.store.transaction(async tx=>{
-   if(allowed){if(!await tx.get(key)&&(await tx.list({prefix:'allow/'})).size>=BOUNDS.maxAllow)fault('limit_reached','The allowlist is full.',409);await tx.put(key,{at:clock.now(),...input.principal?{principal:principalOf(input.principal)}:{email:emailOf(input.email)}});}
+   if(allowed){if(!await tx.get(key)&&(await tx.list({prefix:'allow/'})).size>=BOUNDS.maxAllow)fault('limit_reached','The allowlist is full.',409);await tx.put(key,{at:clock.now(),principal});}
    else await tx.delete(key);return {allowed};
   });
  }
 }
 
-// Public-intake `deliver({message, provenance})` from the authenticated consumer (spec §9, review S-6). The app shell
-// authenticates the brokered token and passes the consumer origin; the consumer's published key comes from
-// providerBridge.consumerKey. Dedup on provenance jti and tx. The disposition never reflects later classification.
-export class IntakeDeliver extends MailboxAction {
- static operation='intake.deliver';static deps=['receive','providerBridge','clock'];static changes='incoming-changed';
- async run({receive,providerBridge,clock}){
-  actorOwner(this.actor,['ingress']);const {tx:txId,args,consumer,contract}=this.input??{},now=clock.now(),store=receive.store,config=await readConfig(store);
-  if(contract!==INTAKE_CONTRACT||typeof txId!=='string'||!/^[a-f0-9-]{36}$/.test(txId)||typeof consumer!=='string')fault('malformed','The request is malformed.',400);
-  let kid;try{kid=JSON.parse(decoder.decode(fromBase64url(String(args?.provenance).split('.')[0]))).kid;}catch{fault('malformed','The request is malformed.',400);}
-  let consumerKey;try{consumerKey=await providerBridge?.consumerKey?.({consumer,keyId:kid});}catch{fault('recipient_unavailable','The recipient is unavailable.',503);}
-  const v=await verifyProvenance(args,{consumerKey,consumer,recipient:config.principal,now});
-  const address=(v.asserted.sender.headerFrom.match(/<([^<>]+)>\s*$/)?.[1]??v.asserted.sender.headerFrom).trim().toLowerCase();
-  const budget=intakeBudgetIdentity({consumer,channel:v.channel,sender:v.asserted.sender});
-  const digest=await intakeDigest(args.message),txKey=KEYS.intakeTx(`${encodeURIComponent(consumer)}/${txId}`);
-  const id=await sha256(globalThis.crypto,jcs(['bindle-messaging-intake-v1',consumer,v.jti])),bytes=args.message.parts.reduce((n,x)=>n+fromBase64url(x.dataBase64url).byteLength,0);
-  return store.transaction(async tx=>{
-   await requireRestored(tx);
-   // Provenance cannot be accepted after seven days. Keep both replay fences an extra day, then prune bounded work.
-   let pruned=0;for(const prefix of ['intake/tx/','intake/jti/'])for(const [key,row]of await tx.list({prefix})){if(pruned>=32)break;if(row.at+8*86400000<=now){await tx.delete(key);pruned++;}}
-   // Dedup answers only after provenance verified, per (consumer, tx) and (consumer, jti), and only for the same
-   // message digest; the same tx or jti with other content is a conflict, never a stored disposition (BB2-R4).
-   const conflict=()=>fault('operation_conflict','The operation conflicts with an earlier one.',409);
-   const again=await tx.get(txKey);if(again){if(again.digest!==digest||again.jti!==v.jti)conflict();return {disposition:again.disposition};}
-   const seen=await tx.get(KEYS.intakeJti(consumer,v.jti));if(seen){if(seen.digest!==digest)conflict();await tx.put(txKey,seen);return {disposition:seen.disposition};}
-   await tx.put(KEYS.budget,chargeBudget(await tx.get(KEYS.budget),{now,plan:config.plan,bytes,parent:JSON.stringify(['intake',consumer,v.channel]),sender:budget.sender,request:budget}));
-   const item={id,origin:'channel',kind:'channel',channel:v.channel,bridge:{consumer,jti:v.jti},asserted:{...v.asserted,address},verifiedSender:false,subject:'',content:null,message:args.message,bodyRef:{storage:'mailbox'},createdAt:v.receivedAt,receivedAt:now,state:'pending',request:true,tags:[],tagHistory:[],quarantined:false,reviewed:false,notification:null};
-   await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);await tx.put(KEYS.pending(now,id),{id});
-   const record={disposition:'stored-receipt',digest,jti:v.jti,at:now};await tx.put(KEYS.intakeJti(consumer,v.jti),record);await tx.put(txKey,record);
-   return {disposition:record.disposition};
-  });
- }
-}
-
-const channelText=item=>item.message.parts.filter(x=>x.mimeType.startsWith('text/plain')).map(x=>decoder.decode(fromBase64url(x.dataBase64url))).join('\n');
 // Drains pending public requests: classification outside any transaction, then one result transaction per item that
 // rechecks the item is still pending (a quarantine, rescue or crash in between wins). Re-running is safe.
 export class IntakeDrain extends MailboxAction {
- static operation='intake.drain';static deps=['receive','classifier','providerBridge','clock'];static changes='incoming-changed';
- async run({receive,classifier,providerBridge,clock}){
+ static operation='intake.drain';static deps=['receive','classifier','clock'];static changes='incoming-changed';
+ async run({receive,classifier,clock}){
   actorOwner(this.actor,['system','owner']);const store=receive.store,limit=Math.min(Math.max(Number(this.input?.limit)||32,1),256);
   const queue=[...(await store.list({prefix:'pending/'})).entries()].slice(0,limit),out={processed:0,rejected:0,suspected:0,classified:0,unscored:0};
   for(const [pendingKey,{id}] of queue){
    const now=clock.now(),item=await store.get(KEYS.item(id));if(!item||item.state!=='pending'||item.quarantined){await store.transaction(tx=>tx.delete(pendingKey));continue;}
    const settings={...defaultSettings(),...await store.get(KEYS.settings)},day=Math.floor(now/86400000),used=settings.usage.day===day?settings.usage.calls:0;
-   // Address matches count only for DMARC-passing mail, so a spoofed allowlisted address cannot skip rejection (BB2-R6).
-   const allowlisted=Boolean(item.origin==='native'?await store.get(KEYS.allowPrincipal(item.author.principal)):item.asserted.dmarc==='pass'&&await store.get(KEYS.allowEmail(item.asserted.address)));
+   const allowlisted=Boolean(item.origin==='native'&&item.author?.principal&&await store.get(KEYS.allowPrincipal(item.author.principal)));
    let result=null,called=false,miss=null;
    // The field values are read once for this item's operation (extensions §3.2). A classifier call is reserved inside a
    // transaction before it is made, so concurrent drains cannot overspend the owner's allowance (BB2-R8).
@@ -140,18 +93,13 @@ export class IntakeDrain extends MailboxAction {
    if(settings.classifierConsent&&!candidates)miss='no_classifier';
    else if(settings.classifierConsent){called=await store.transaction(async tx=>{const s={...defaultSettings(),...await tx.get(KEYS.settings)},u=s.usage.day===day?s.usage.calls:0;if(!s.classifierConsent||u>=s.allowance)return false;await tx.put(KEYS.settings,{...s,usage:{day,calls:u+1}});return true;});if(!called)miss='allowance';}
    if(called){let body='';if(item.origin==='native'&&item.content?.mimeType?.startsWith('text/plain')){const b=await store.get(KEYS.body(id));if(b)body=decoder.decode(b);}
-    const text=minimize(item.origin==='channel'?channelText(item):`${item.subject}\n\n${body}`);
+    const text=minimize(`${item.subject}\n\n${body}`);
     // Parlay asks only its spam category here (item-classification/v1: the caller supplies the taxonomy).
-    const outcome=await classifyText(classifier,values,{text,source:item.origin==='channel'?'email':'message',hints:item.origin==='channel'?item.asserted.automation.slice(0,16):[]},['spam'],{now});
+    const outcome=await classifyText(classifier,values,{text,source:'message',hints:[]},['spam'],{now});
     if(outcome.status==='scored')result={spam:outcome.labels.spam,evidence:outcome.evidence};else miss=outcome.reason;
     await store.transaction(tx=>noteGap(tx,outcome,now));
-    // A host-published calibration for exactly this model version counts as a pin (architecture §12.1). It comes from
-    // the owner's provider (providerBridge.calibration), never from the occupant being calibrated, and must pass the same
-    // threshold checks as an owner pin (BB2-R5).
-    const published=result&&typeof providerBridge?.calibration==='function'?await Promise.resolve().then(()=>providerBridge.calibration(structuredClone(result.evidence))).catch(()=>null):null;
-    if(validPin(published)&&modelKey(published)===modelKey(result.evidence))settings.pins=[...settings.pins,{model:published.model,version:published.version,schema:published.schema,high:published.high,low:published.low}];
    }else if(miss==='no_classifier')await store.transaction(tx=>noteGap(tx,{status:'unscored',reason:miss},now));
-   const decision=decideTier({result,pins:settings.pins,allowlisted,hints:result?[]:heuristics(item),unscored:result?null:miss});
+   const decision=decideTier({result,pins:settings.pins,allowlisted,unscored:result?null:miss});
    await store.transaction(async tx=>{
     const current=await tx.get(KEYS.item(id));await tx.delete(pendingKey);
     if(!current||current.state!=='pending'||current.quarantined)return;
@@ -193,12 +141,12 @@ export class IntakeRescue extends MailboxAction {
    const item=await tx.get(KEYS.item(id));if(!item||item.state!=='rejected')fault('not_found','That item is not in Rejected.',404);
    await tx.delete(KEYS.rejected(item.rejectedAt,id));
    const next={...item,state:'request',priority:'normal',notification:null,reviewed:true,tags:item.tags.filter(t=>t.id!==FINAL_SPAM),tagHistory:[...item.tagHistory,{action:'rescued',at:now}]};await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);
-   if(allow===true){const key=item.origin==='native'?KEYS.allowPrincipal(item.author.principal):KEYS.allowEmail(item.asserted.address);await tx.put(key,{at:now,...item.origin==='native'?{principal:{issuer:item.author.principal.issuer,subject:item.author.principal.subject}}:{email:item.asserted.address}});}
+   if(allow===true&&item.origin==='native'&&item.author?.principal)await tx.put(KEYS.allowPrincipal(item.author.principal),{at:now,principal:{issuer:item.author.principal.issuer,subject:item.author.principal.subject}});
    return {id,state:'request'};
   });
  }
 }
-const view=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:i.imported?.verified!==false}:{asserted:{sender:i.asserted.sender,dmarc:i.asserted.dmarc,automation:i.asserted.automation},verified:false},subject:i.subject,receivedAt:i.receivedAt,state:i.state,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,rejectedAt:i.rejectedAt??null,...i.scoring?{scoring:{state:i.scoring.state,reason:i.scoring.reason}}:{}});
+const view=i=>({id:i.id,origin:i.origin,kind:i.kind,author:{principal:i.author?.principal??null,verified:i.origin==='native'&&i.imported?.verified!==false},subject:i.subject,receivedAt:i.receivedAt,state:i.state,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,rejectedAt:i.rejectedAt??null,...i.scoring?{scoring:{state:i.scoring.state,reason:i.scoring.reason}}:{}});
 // "Requests" View: suspected requests sorted to the bottom. Rejected view: not searchable, newest first.
 export class IntakeRequests extends MailboxQuery {
  static operation='intake.requests';static deps=['receive'];static refreshOn=['incoming-changed'];
@@ -208,18 +156,4 @@ export class IntakeRejected extends MailboxQuery {
  static operation='intake.rejected';static deps=['receive'];static refreshOn=['incoming-changed'];
  async fetch({receive}){actorOwner(this.actor);const out=[];for(const [,{id}] of [...(await receive.store.list({prefix:'rejected/'})).entries()].reverse()){const i=await receive.store.get(KEYS.item(id));if(i)out.push(view(i));}return out;}
 }
-export class IntakeAccept extends MailboxAction {
- static operation='intake.accept';static deps=['receive','providerBridge','clock'];static changes='incoming-changed';
- async run({receive,providerBridge,clock}){
-  actorOwner(this.actor);const {id}=this.input??{};if(typeof id!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(id))invalid('Choose an item.');
-  const bridge=await receive.store.transaction(async tx=>{
-   await requireRestored(tx);const item=await tx.get(KEYS.item(id)),config=await readConfig(tx);
-   if(!item||item.quarantined||item.origin!=='channel'||item.channel!=='email'||item.bridge?.consumer!==config.principal.issuer||!['request','accepted'].includes(item.state))fault('not_found','That email request is unavailable.',404);
-   if(item.state!=='accepted'){const next={...item,state:'accepted',acceptedAt:clock.now(),reviewed:true};await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);}
-   return item.bridge;
-  });
-  if(typeof providerBridge?.accepted!=='function')fault('recipient_unavailable','Your provider is unavailable.',503);
-  await providerBridge.accepted({jti:bridge.jti});return {id,state:'accepted'};
- }
-}
-export const INTAKE_OPERATIONS=[IntakeSettings,IntakeAllow,IntakeDeliver,IntakeDrain,IntakeSweep,IntakeRescue,IntakeAccept,IntakeRequests,IntakeRejected];
+export const INTAKE_OPERATIONS=[IntakeSettings,IntakeAllow,IntakeDrain,IntakeSweep,IntakeRescue,IntakeRequests,IntakeRejected];

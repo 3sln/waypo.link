@@ -10,7 +10,6 @@ export const PROVIDERS=Object.freeze({
  random:row('both','effect','skeleton','Injected {uuid(),bytes(n)}.'),
  audit:row('both','effect','skeleton','Injected {record(entry)}; never records input.'),
  egress:row('both','effect','local','Injected transport; CLI and tests use only simulated peers.'),
- providerBridge:row('mailbox','effect','local','Injected email-bridge port of the owner\'s provider: consumerKey, accepted and optional calibration (bridged intake only).'),
  directory:row('both','effect','local','Injected identity directory and status; CLI uses ephemeral local keys.'),
  classifier:row('mailbox','effect','planned','Optional host view of the shared item-classification fragment: fields(), capabilities(resource), classify(resource,args) (Parlay categories, per-kind selection with fallback, the owner\'s detail level); absent means no AI, and consented items are then unscored.'),
  activity:row('mailbox','effect','planned','Ordinary consented activity submission.'),
@@ -21,7 +20,6 @@ export const PROVIDERS=Object.freeze({
  views:row('mailbox','domain','local','Saved Views.',{scoped:true}),
  rules:row('mailbox','domain','local','Organization rules.',{scoped:true}),
  tags:row('mailbox','domain','local','Tag labels and provenance.',{scoped:true}),
- bridge:row('mailbox','domain','local','BB-B7: bridged public intake (provenance, consumer/channel binding, fingerprint dedup); no egress.',{scoped:true}),
  archive:row('mailbox','domain','local','BB-B6: sealed, signed owner-bucket archive, writer lease, export/import and reclamation (createArchiveProvider; default off).',{scoped:true}),
 });
 const subject=actor=>actor&&typeof actor==='object'?{kind:String(actor.kind),...typeof actor.owner==='string'?{owner:actor.owner}:{}}:null;

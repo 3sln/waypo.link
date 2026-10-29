@@ -52,7 +52,6 @@ import * as events from './events.mjs';
 import * as appSessions from './app-sessions.mjs';
 import * as integrations from './integrations.mjs';
 import * as connections from './connections.mjs';
-import * as emailBridge from './email-bridge.mjs';
 import * as exports from './exports.mjs';
 import * as retention from './retention.mjs';
 import * as appRemoval from './app-removal.mjs';
@@ -64,7 +63,7 @@ import * as relations from './relations.mjs';
 import * as signalingOwner from './signaling-owner.mjs';
 import * as signaling from './signaling.mjs';
 
-export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,profile,developerContact,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn,signalingOwner,signaling]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,profile,developerContact,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,delegation,incremental,events,appSessions,integrations,connections,exports,retention,appRemoval,orgs,transferIn,signalingOwner,signaling]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

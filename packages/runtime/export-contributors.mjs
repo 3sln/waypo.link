@@ -5,6 +5,7 @@ import {FLAGS} from '../flags/registry.mjs';
 import {fault} from '../app/faults.mjs';
 import {exportPath} from './export-tar.mjs';
 import {CONTACT_LINKS_RESET_PREFIXES} from './contact-links-reset.mjs';
+import {retiredEmailBridgeRow} from './email-bridge-reset.mjs';
 const fields=text=>text.split(' '),pick=(row,names)=>Object.fromEntries(names.filter(k=>row?.[k]!==undefined).map(k=>[k,structuredClone(row[k])]));
 const COMMON=fields('v version id owner name label title description status state createdAt updatedAt modifiedAt expiresAt revision generation');
 // These fields can occur inside otherwise public descriptors. User message
@@ -29,6 +30,8 @@ const definitions=[
  ['profile',['profile'],'displayName avatar'],
  ['resources',['resource/','hosted/'],'provider builtin contracts capabilities verifiedAt key version size contentType modifiedAt'],
  ['connections',['resource/'],'provider clientId scope fragments resources methods integration connectedAt disconnectedAt'],
+ // Rows of the removed email bridge (feature grant, public-intake field, their notices) are skipped until the
+ // `email-bridge-retired-v1` reset deletes them.
  ['integrations',['connections/field/','connections/feature/','connections/notice/'],'fragment entries purposes selection spec state grant approved'],
  ['events',['evbus/bus/','evbus/rec/'],'bus seq schema spec manifest digest host retention retentionSeconds features type published_at publisher data content payload source occurredAt'],
  ['external-storage',['drive/object/','drive/folder/'],'provider resource resourceId bucket prefix folderId key objectId fileId version size contentType'],
@@ -75,7 +78,7 @@ const excluded={
  'app-notification-budget/':'Derived: per-connection app message rate accounting.',
  'app-notification-receipt/':'Transient: app message replay receipts (48-hour retention).',
  'message-postback-prepared/':'Secret: prepared form-submission capabilities (encrypted scope).',
- 'migration/':'Derived: storage migration markers (including the BB-CUT and contact-links reset markers).', 'export/':'Transient: exports and download authority.',
+ 'migration/':'Derived: storage migration markers (including the BB-CUT, contact-links and email-bridge reset markers).', 'export/':'Transient: exports and download authority.',
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
  'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',
  'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',
@@ -145,7 +148,7 @@ export function createExportContributors({accountStore,identity,keys,grants,exte
   result.push({name,version:1,prefixes,async page({owner,cursor,limit}){
    const index=cursor?.index??0,prefix=prefixes[index],pageLimit=name==='messages'?Math.min(limit,15):limit,rows=EXPORT_SINGLETON_KEYS.has(prefix)?new Map([...await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit})].filter(([key])=>key===prefix)):await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit}),payloads=[],out=[];
    for(const [key,row]of rows){
-    if(row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
+    if(row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection'||name==='integrations'&&retiredEmailBridgeRow(row))continue;
     const value=projection(row,names);out.push({schemaVersion:1,record:value});
     if(row?.blobRef&&name==='messages')payloads.push({entryId:stable(row.id),kind:'message',source:{message:row.id,part:0},ref:row.blobRef,path:exportPath(`data/messages/${stable(row.id)}/0.bin`),size:row.size,contentType:row.mimeType});
     if(name==='messages')for(const part of row.presentation?.history??[])if(part.blobRef)payloads.push({entryId:stable(row.id)+'_'+part.revision,kind:'message',source:{message:row.id,part:part.revision},ref:part.blobRef,path:exportPath(`data/messages/${stable(row.id)}/${part.revision}.bin`),size:part.size,contentType:part.mimeType??'application/octet-stream'});

@@ -41,11 +41,10 @@ export async function deletionFixture(t,{seed=1,channels=true,billingFail=null,n
   async revokeAll(owner){billingCalls.push('revokeAll');events.push('billing.revokeAll');if(billingFailure?.revokeAll)throw Object.assign(new Error('polar down'),{code:'billing_provider_unavailable'});return {v:1,kind:'revoke',revoked:['sub_1']};},
   async anonymize(owner){billingCalls.push('anonymize');events.push('billing.anonymize');if(billingFailure?.anonymize)throw Object.assign(new Error('polar down'),{code:'billing_provider_unavailable'});return {v:1,kind:'anonymize'};},
  };
- const erased={federation:0,mcp:0,emailBridge:0};
+ const erased={federation:0,mcp:0};
  const erasurePorts=erasure??{
   federation:{async eraseSubject(owner){erased.federation++;events.push('federation.erase');return {deleted:3};}},
   mcp:{async eraseSubject(owner){erased.mcp++;events.push('mcp.erase');return {deleted:2};}},
-  emailBridge:{async erase(owner){erased.emailBridge++;events.push('emailBridge.erase');return {deleted:true};}},
   operatorApps:null,
  };
  const ports={

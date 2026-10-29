@@ -13,7 +13,7 @@ import {DiscoveryClient,DiscoveryBudget,createIntegrationEgress} from '../packag
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {brokeringKeys,mintAccessToken,verifyAccessToken} from '../packages/federation/signing.mjs';
 import {MESSAGING_INGRESS_FRAGMENT,MESSAGING_PROFILE} from '../packages/identity/messaging-ingress.mjs';
-import {PROVIDER_EXT,EXT,declare} from '../packages/core/extensions.mjs';
+import {EXT,declare} from '../packages/core/extensions.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {messagingDescribe,stages} from '../packages/runtime/routes/integrations.mjs';
@@ -22,9 +22,9 @@ import {fakeClock} from './helpers/chaos.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ISSUER='https://3sln.example',SUBJECT=`${ISSUER}/entities/${OWNER}`;
 const MAILBOX=B.MAILBOX_CONTRACT,MODEL='https://spec.bindle.example/contracts/decision-model/v1',FRAGMENT='https://notes.example/preferences/models/v1',APP='https://notes.example/client.json';
-const ALL=Object.values(DELEGATION_PURPOSES).sort(),MAILBOX_FEATURE=EXT.messagingMailbox,BRIDGE=PROVIDER_EXT.emailBridge;
+const ALL=Object.values(DELEGATION_PURPOSES).sort(),MAILBOX_FEATURE=EXT.messagingMailbox;
 // The provider's own feature declarations for the account-slice tests (extensions rev 3.2 §4.2).
-const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(EXT.keyDelegation),declare(MAILBOX_FEATURE),declare(BRIDGE)]},blocked:[]});
+const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(EXT.keyDelegation),declare(MAILBOX_FEATURE)]},blocked:[]});
 const code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}: ${e.message}`);return true;};
 const SECRET=Buffer.alloc(32,5).toString('base64');
 function memory(){const map=new Map();let tail=Promise.resolve();return {transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(map.get(k)),set:async(k,v)=>{map.set(k,structuredClone(v));},delete:async k=>{map.delete(k);},list:async()=>[]}));tail=run.catch(()=>{});return run;}};}
@@ -187,7 +187,7 @@ test('C1b describe: a provider-feature invoke token for exactly the mailbox desc
  box.answer=null;
  await assert.rejects(f.describe({...seat,generation:seat.generation+1}),code('resource_unavailable'),'a seat from another generation');
  await assert.rejects(f.describe({...seat,resource:crypto.randomUUID()}),code('resource_unavailable'));
- await assert.rejects(f.op(B.DescribeOccupant,f.system,{feature:BRIDGE,seat}),code('resource_unavailable'),'only the messaging-mailbox feature describes');
+ await assert.rejects(f.op(B.DescribeOccupant,f.system,{feature:EXT.keyDelegation,seat}),code('resource_unavailable'),'only the messaging-mailbox feature describes');
  await assert.rejects(f.describe({...seat,grant:undefined}),code('resource_unavailable'),'a call carries the feature grant');
  // Disabling the feature empties its projection: nothing names the record any more (extensions §4.2).
  await f.op(C.DisableFeature,f.owner,{feature:MAILBOX_FEATURE});assert.deepEqual((await f.op(C.FeatureResources,f.system,{feature:MAILBOX_FEATURE})).resources,[]);
@@ -231,17 +231,17 @@ test('fixture conformance: discovery, probes, pagination and registration agains
 });
 
 /** The real AccountController with the X7 slice and its ports. */
-async function account(t,{answer,intake=false,describe}={}){
+async function account(t,{answer,describe}={}){
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory()}),routes={};
  const egress=createIntegrationEgress({fetcher:(url,init)=>routes[new URL(url).hostname].fetch(url,init),resolve:async()=>['93.184.216.34'],publicRouting:true});
- const config={EMAIL_BRIDGE_ENABLED:intake?'true':'false',APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',EXTENSIONS_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,BROKERING_MINT:claims=>mintAccessToken(keys,claims),INTEGRATION_EGRESS:egress,INTEGRATION_DISCOVERY_BUDGET:new DiscoveryBudget(),PROVIDER_FEATURE_DECLARATIONS:DECLARED};
+ const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',EXTENSIONS_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,BROKERING_MINT:claims=>mintAccessToken(keys,claims),INTEGRATION_EGRESS:egress,INTEGRATION_DISCOVERY_BUDGET:new DiscoveryBudget(),PROVIDER_FEATURE_DECLARATIONS:DECLARED};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
- const fragment=intake?B.INTAKE_FRAGMENT:MESSAGING_INGRESS_FRAGMENT,contract=intake?B.INTAKE_CONTRACT:MAILBOX,feature=intake?BRIDGE:MAILBOX_FEATURE,s=snapshot('box.example',{contracts:[contract,MODEL]}),c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:s});routes['box.example']=stubIntegration('box.example',keys,{items:[{id:'https://box.example/r/mailbox',label:'Mailbox',contracts:[contract,MODEL]}],...describe?{describe}:{}});
+ const fragment=MESSAGING_INGRESS_FRAGMENT,contract=MAILBOX,feature=MAILBOX_FEATURE,s=snapshot('box.example',{contracts:[contract,MODEL]}),c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:s});routes['box.example']=stubIntegration('box.example',keys,{items:[{id:'https://box.example/r/mailbox',label:'Mailbox',contracts:[contract,MODEL]}],...describe?{describe}:{}});
  const record=await a.integrationsOwner(OWNER,{operation:'integrations.register',input:{connection:c.id,resource:'https://box.example/r/mailbox',contracts:[contract]}});
  // Extensions rev 3.2: the owner fills the field and enables the provider feature that consumes it (consent).
  await a.connectionsOwner(OWNER,{operation:'connections.enable-feature',input:{feature,assign:{connection:c.id,resource:record.id}}},{authTime:Date.now()});
- if(!intake){const field=(await a.connectionsOwner(OWNER,{operation:'connections.fields'})).find(x=>x.fragment===fragment);await a.connectionsOwner(OWNER,{operation:'connections.configure-seat',input:{fragment,seat:field.values[0].seat,purposes:ALL}});}
+ const field=(await a.connectionsOwner(OWNER,{operation:'connections.fields'})).find(x=>x.fragment===fragment);await a.connectionsOwner(OWNER,{operation:'connections.configure-seat',input:{fragment,seat:field.values[0].seat,purposes:ALL}});
  // The messaging-mailbox feature's describe call for the current occupant (the contact-link descriptor handoff that used to
  // wrap it was removed in contacts phase 4).
  const describeNow=async()=>{const port=await a.linkSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT});return messagingDescribe(a)({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT,occupant:{clientId:port?.clientId,generation:port?.generation}});};
@@ -318,33 +318,4 @@ test('review regressions: account slice remembers describe failures for a minute
  const fresh=await account(t,{describe:{...DESCRIBE('box.example'),ingress:'https://other.example/ingress'}});
  await assert.rejects(fresh.describeNow(),code('recipient_unavailable'));
  assert.equal((await fresh.a.delegationSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT})).ingress,null,'nothing is recorded for a foreign ingress');
-});
-
-
-test('BRIDGE account RPCs: current paid entitlement, live intake seat, signed brokered deliver and stale-seat refusal',async t=>{
- const {a,c,db,routes}=await account(t,{intake:true}),box=routes['box.example'];
- assert.equal(await a.emailBridgeEntitled(OWNER),false);assert.equal(await a.integrationsIntakeSeat(OWNER),null);
- await db.put('billing/state',{owner:OWNER,source:'polar',catalogVersion:2,plan:'paid',validUntil:Date.now()+3600000});
- assert.equal(await a.emailBridgeEntitled(OWNER),true);assert.equal(await a.emailBridgeEntitled(crypto.randomUUID()),false);
- const seat=await a.integrationsIntakeSeat(OWNER);assert.equal(seat.resource,'https://box.example/r/mailbox');assert.equal(seat.connection,c.id);
- const tx=crypto.randomUUID(),body=new TextEncoder().encode(JSON.stringify({version:'0',tx,resource:seat.resource,contract:B.INTAKE_CONTRACT,method:'deliver',args:{message:{parts:[{mimeType:'text/plain',dataBase64url:Buffer.from('large '.repeat(15000)).toString('base64url')}]},provenance:'signed-by-bridge'}}));
- box.answer=(path,rpc)=>Response.json({version:'0',tx:rpc.tx,result:{disposition:'stored-receipt'}});
- const result=await a.integrationsIntakeDeliver(OWNER,{seat,body});assert.equal(result.status,200);assert.equal(result.json.tx,tx);assert.equal(result.json.result.disposition,'stored-receipt');
- const token=box.tokens.at(-1);assert.equal(token.bindle.feature,BRIDGE,'bindle.feature is the extension spec URL');assert.equal(token.bindle.grant,`${seat.grant}.${seat.cnx}`);assert.deepEqual(token.bindle.methods,{[B.INTAKE_CONTRACT]:['deliver']});assert.equal(box.calls.at(-1).body.tx,tx);
- await assert.rejects(a.integrationsIntakeDeliver(OWNER,{seat:{...seat,resource:'https://box.example/r/other'},body}),code('recipient_unavailable'));
- await a.connectionsOwner(OWNER,{operation:'connections.suspend',input:{connection:c.id}});assert.equal(await a.integrationsIntakeSeat(OWNER),null);await assert.rejects(a.integrationsIntakeDeliver(OWNER,{seat,body}),code('recipient_unavailable'));
-});
-
-test('BRIDGE email-bridge resource (contacts phase 4, formerly on the links contract): only the live intake occupant can notify acceptance; disabled and changed grants fail closed',async t=>{
- const {a,c,db}=await account(t,{intake:true}),{emailBridgeResourceMethod}=await import('../packages/runtime/account/email-bridge.mjs'),{EMAIL_BRIDGE_CONTRACT}=await import('../packages/email-bridge/wire.mjs'),sent=[],linksResourceMethod=emailBridgeResourceMethod;
- await db.put('billing/state',{owner:OWNER,source:'polar',catalogVersion:2,plan:'paid',validUntil:Date.now()+3600000});
- a.config.FEDERATION_IDENTITY_CHECK=async()=>true;a.config.EMAIL_BRIDGE_OWNER={accepted:async(owner,jti)=>{sent.push({owner,jti});return {status:'sent'};}};
- const context={authority:'bindle',resource:`${ISSUER}/entities/${OWNER}/email-bridge`,resourceGeneration:OWNER,contract:EMAIL_BRIDGE_CONTRACT,method:'accepted',args:{jti:crypto.randomUUID()},clientId:c.clientId,connection:{id:c.id,generation:c.generation},epoch:'current'};
- assert.deepEqual(await linksResourceMethod(a,OWNER,context),{status:'sent'});assert.equal(sent.length,1);assert.equal(sent[0].owner,OWNER);
- await assert.rejects(linksResourceMethod(a,OWNER,{...context,args:{...context.args,owner:crypto.randomUUID()}}),code('forbidden'));
- for(const changed of [{resource:`${ISSUER}/entities/${OWNER}/links`},{contract:'https://spec.bindle.example/contracts/links/v1'}])await assert.rejects(linksResourceMethod(a,OWNER,{...context,...changed}),code('forbidden'),'the withdrawn links resource and contract');
- for(const method of ['issue','revoke','evaluate','list','changes'])await assert.rejects(linksResourceMethod(a,OWNER,{...context,method}),code('unsupported_method'),method);
- a.config.EMAIL_BRIDGE_ENABLED='false';await assert.rejects(linksResourceMethod(a,OWNER,context),code('not_found'));a.config.EMAIL_BRIDGE_ENABLED='true';
- await a.connectionsOwner(OWNER,{operation:'connections.unassign',input:{fragment:B.INTAKE_FRAGMENT,seat:(await a.integrationsIntakeSeat(OWNER)).seat}});
- await assert.rejects(linksResourceMethod(a,OWNER,context),code('forbidden'));assert.equal(sent.length,1);
 });

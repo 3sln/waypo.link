@@ -15,7 +15,7 @@ async function account(t,owner){
  let now=Date.now();const identity={id:owner,status:'active',handle:'person',assignmentId:'assign-1',createdAt:now-10*DAY};
  const base=createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}}});
  const flags={for:ctx=>({...base.for(ctx),enabled:n=>['ACCOUNT_DELETION_ENABLED','ACCOUNT_EXPORT_ENABLED'].includes(n)?true:base.for(ctx).enabled(n),background:()=>true,global:()=>true})};
- const ports={identity:{get:async()=>structuredClone(identity),tombstone:async()=>{identity.status='deleted';return true;}},security:async()=>({epoch:1,changedAt:null}),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,notices:{deliver:async()=>({accepted:true})},due:{put:async()=>{},delete:async()=>{}},exports:null,erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null}};
+ const ports={identity:{get:async()=>structuredClone(identity),tombstone:async()=>{identity.status='deleted';return true;}},security:async()=>({epoch:1,changedAt:null}),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,notices:{deliver:async()=>({accepted:true})},due:{put:async()=>{},delete:async()=>{}},exports:null,erasure:{federation:null,mcp:null,operatorApps:null}};
  const db=new SqliteMetadata(':memory:');
  const controller=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket(),archives:bucket(),sql:db.sql,config:{APP_ORIGIN:origin,KEY_ENCRYPTION_KEY:KEK,flags,LIFECYCLE_CLOCK:()=>now,LIFECYCLE_LOG:()=>{},ACCOUNT_DELETION_PORTS:ports,IDENTITY_ACCOUNT:async()=>structuredClone(identity),exportPorts:{identitySecurity:async()=>({epoch:1,changedAt:0}),notice:async()=>({})}}});
  t.after(async()=>{await controller.engine.dispose();db.close();});await controller.warm(owner);

@@ -1,7 +1,7 @@
 import {createWebHTTP} from '../web/http.mjs';
 import {webShell} from '../web/shell.mjs';
 import {ingressError} from '../../../packages/messaging-engine/domains/receive.mjs';
-import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,INTAKE_CONTRACT,fromBase64url} from '../../../packages/messaging-protocol/index.mjs';
+import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,fromBase64url} from '../../../packages/messaging-protocol/index.mjs';
 import {fault,MailboxFault} from '../../../packages/messaging-engine/faults.mjs';
 import {enabled} from './mailbox.mjs';
 import {handleConversationIngress} from '../../../packages/messaging-engine/domains/conversations.mjs';
@@ -63,9 +63,9 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
     const verified=await services.verifyIntegration({url:request.url,authorization:request.headers.get('Authorization'),purpose,...rpc?{resource:rpc.resource,contract:rpc.contract,method:rpc.method}:{}});
     if(!verified?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(verified.owner);
     if(purpose==='discover')return Response.json(await box.run(verified.owner,'shell.discover',{input:{verified,query:strictJSON(bytes,{maxBytes:65536,maxDepth:12})}}),{headers});
-    const name=rpc.contract===MAILBOX_CONTRACT?'shell.describe':rpc.contract===INTAKE_CONTRACT?'shell.public-intake':null;
+    const name=rpc.contract===MAILBOX_CONTRACT?'shell.describe':null;
     if(!name)fault('unsupported_contract','Unsupported contract.',400);
-    const result=await box.run(verified.owner,name,{input:{verified,resource:rpc.resource,tx:rpc.tx,contract:rpc.contract,args:rpc.args,consumer:verified.consumer}});
+    const result=await box.run(verified.owner,name,{input:{verified,resource:rpc.resource,tx:rpc.tx,contract:rpc.contract,args:rpc.args}});
     return Response.json({version:'0',tx:rpc.tx,result},{headers});
    }
    const sendId=/^\/api\/send\/([a-f0-9-]{36})(\/retry|\/cancel)?$/.exec(path);

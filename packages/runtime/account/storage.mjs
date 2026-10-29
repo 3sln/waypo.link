@@ -14,8 +14,6 @@ import {UUID_V4} from '../../core/primitives.mjs';
 import {archiveDigest} from './support.mjs';
 import {eventBusResourceMethod} from './events.mjs';
 import {EVENT_BUS_CONTRACT} from '../../events/limits.mjs';
-import {EMAIL_BRIDGE_CONTRACT} from '../../email-bridge/wire.mjs';
-import {emailBridgeResourceMethod} from './email-bridge.mjs';
 import {CLASSIFIER_CONTRACT,classifierResourceMethod} from './classifier.mjs'; // EXT-X10
 import {collectGarbageRef} from '../export-pins.mjs';
 import {WORK_PRECHARGED} from '../../mcp/account.mjs';
@@ -27,7 +25,6 @@ import {signalingResourceMethod,signalingRelayResourceMethod} from './signaling.
 export const RESOURCE_METHOD_HANDLERS=Object.freeze({
   [APP_NOTIFICATIONS]:createAppNotification,
   [ACTIVITY_CONTRACT]:activityResourceMethod,
-  [EMAIL_BRIDGE_CONTRACT]:emailBridgeResourceMethod, // the email bridge's occupant callbacks (consumerKey, accepted); not_found unless the bridge is enabled
   [EVENT_BUS_CONTRACT]:eventBusResourceMethod, // EV-2: 3sln.me-hosted event bus; not_found unless EVENT_BUSES_ENABLED
   [CLASSIFIER_CONTRACT]:classifierResourceMethod, // EXT-X10: explicit owner occupancy; INTEGRATIONS_ENABLED + EXTENSIONS_ENABLED
   [SIGNALING_CONTRACT]:signalingResourceMethod, // the built-in signaling/v1 resource; descriptor only while SIGNALING_ENABLED and SESSION_KINDS_ENABLED

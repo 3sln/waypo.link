@@ -1,7 +1,0 @@
-{
- "id":"https://spec.bindle.example/fragments/public-intake/v1",
- "title":"Receives outside messages",
- "description":"The app that receives messages arriving from outside Bindle, such as email sent to your public address.",
- "publisher":"https://spec.bindle.example",
- "fields":{"intake":{"title":"Receiving app","type":"resource","cardinality":{"min":0,"max":1},"contracts":["https://spec.bindle.example/contracts/public-intake/v1"],"selection":"exclusive","consumers":["provider"],"announce":true}}
-}

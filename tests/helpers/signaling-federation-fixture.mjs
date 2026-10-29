@@ -42,7 +42,7 @@ export {perform,read};
 export const fault=async promise=>{try{await promise;}catch(e){return {code:e.code,status:e.status};}return null;};
 const P256={name:'ECDSA',namedCurve:'P-256'};
 export async function keyPair(){const pair=await crypto.subtle.generateKey(P256,true,['sign','verify']);const {x,y}=await crypto.subtle.exportKey('jwk',pair.publicKey);const jwk={kty:'EC',crv:'P-256',x,y};return {...pair,jwk,jkt:await jwkThumbprint(jwk)};}
-export const relay=(address='203.0.113.7')=>({candidate:wireCandidate('relay',{address}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
+export const relay=(address='93.184.216.34')=>({candidate:wireCandidate('relay',{address}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
 const json=(body,status=200,maxAge=300)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':`max-age=${maxAge}`}});
 
 /**

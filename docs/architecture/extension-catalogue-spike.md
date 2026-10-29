@@ -243,6 +243,8 @@ So **3sln.me does check whether the slot is filled**, but only to decide between
 
 ### 4.3 The email bridge question
 
+> **Update:** the email bridge was removed 2026-10-28 (owner direction; revisit later). This section is design history.
+
 | | (a) Pure 3sln.me feature | (b) A hook in the messaging extension |
 | --- | --- | --- |
 | What is specified | Nothing about email in Bindle. 3sln.me runs SMTP ingress, address policy, eligibility and the auto-reply, and hands off through the generic intake slot. | The extension adds an email-specific declaration (an app says "I bridge email") and a provider plug-in contract for SMTP. |

@@ -7,17 +7,15 @@
 //     gone" and "the feature's grants are suspended" are the same fact.
 // Pure: no storage. The grants themselves live in the connections domain (packages/apps/connections.mjs).
 import {siteGlobal} from '../../flags/read.mjs';
-import {EXT,PROVIDER_EXT,declare} from '../../core/extensions.mjs';
-import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../../email-bridge/wire.mjs';
+import {EXT,declare} from '../../core/extensions.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
-import {bridgeConfig} from '../../email-bridge/engine.mjs';
 import {delegationLifetime} from '../../identity/delegation.mjs';
 import {memberCertificateLifetime,MEMBER_CERTIFICATE_DEFAULT_SECONDS,MEMBER_REVOCATION_BOUND_SECONDS} from '../../identity/member-certificates.mjs';
 
 export const MAILBOX_CONTRACT='https://spec.bindle.example/messaging/v1/contracts/mailbox';
 /** spec URL -> {fragment, field, methods}. Methods per contract are the feature's fixed request (extensions §4.2). */
 export const FEATURE_DEFINITIONS=Object.freeze({
- [PROVIDER_EXT.emailBridge]:Object.freeze({fragment:PUBLIC_INTAKE_FRAGMENT,field:'intake',methods:Object.freeze({[PUBLIC_INTAKE_CONTRACT]:Object.freeze(['deliver'])})}),
+ // The email-bridge feature (public-intake `intake` field) was removed on 2026-10-28 (owner direction; revisit later).
  // Bindle Messaging §2.5 (contacts spike CR-X1, provisional): the messaging-mailbox feature replaces the withdrawn
  // messaging-address one. Key delegation certifies the Parlay purposes only through it (identity/delegation.mjs).
  [EXT.messagingMailbox]:Object.freeze({fragment:MESSAGING_INGRESS_FRAGMENT,field:'mailbox',methods:Object.freeze({[MAILBOX_CONTRACT]:Object.freeze(['describe'])})}),
@@ -54,8 +52,6 @@ export const PROVIDER_FEATURE_ROWS=Object.freeze({
  // cover member certificates too when they are on (messagingKeyDelegationOptions); the directory route's member entry
  // merges into it by maximum (routes/directory.mjs, `merge:true`, review M3).
  [EXT.messagingMailbox]:Object.freeze({flag:Object.freeze(['KEY_DELEGATION_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.messagingMailbox===true,declare:c=>({extensions:[declare(EXT.keyDelegation,messagingKeyDelegationOptions(c?.config)),declare(EXT.messagingMailbox)]})}),
- // Extensions rev 3.2 (§11.1, Q2 provisional): integrations and brokered resources mounted, and a configured bridge.
- [PROVIDER_EXT.emailBridge]:Object.freeze({flag:Object.freeze(['EMAIL_BRIDGE_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.integrations===true&&c.mounts?.brokeredResources===true&&bridgeConfig(c.config).enabled===true,declare:()=>({extensions:[declare(PROVIDER_EXT.emailBridge)]})}),
 });
 // The manifest registry's flag rule (packages/federation/runtime.mjs createManifestDeclarationProvider): an explicit
 // true or "true" in the surfaced configuration. Never a populated key alone.

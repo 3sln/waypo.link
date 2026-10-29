@@ -36,8 +36,6 @@ const rows=[
  // that flag in contacts phase 4 (2026-10-28). It also gates the messaging-mailbox provider feature's declaration row and
  // MESSAGING_DESCRIBE (Bindle Messaging §2.5), which is what key-delegation occupancy reads.
  ['KEY_DELEGATION_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
- // The email bridge needs no messaging-app flag: delivery waits for any occupant of the public-message-intake slot.
- ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
  ['SEMANTIC_SEARCH_ENABLED','a','G A S P V',{experiment:{metrics:['search_result_opened']},capabilities:['AI','SEARCH_VECTORS']}],
  ['DEVICE_AUTHORIZATION_ENABLED','a','G A C',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Linked requests and lineages live in identity stores; session authorization is independent of federation.',envParse:'boolean'}],
  ['APP_METADATA_DISCOVERY_ENABLED','a','G C',{}],
@@ -147,7 +145,9 @@ export const RETIRED_FLAGS=freeze({
  RTC_SIGNALING_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_ENABLED'},
  RTC_FOREIGN_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_FOREIGN_ENABLED'},
  RTC_TICKETS_ENABLED:{retiredOn:'2026-10-28',reason:'Ticket links withdrawn with the link basis (signaling rev 3, §5.3)'},
- RTC_TURN_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_TURN_ENABLED'}
+ RTC_TURN_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_TURN_ENABLED'},
+ // The public email bridge was struck (owner direction 2026-10-28: not a current focus; revisit later). Nothing replaces it.
+ EMAIL_BRIDGE_ENABLED:{retiredOn:'2026-10-28',reason:'Email bridge removed (owner direction); revisit later'}
 });
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}
 export function validateRegistry(entries=FLAGS){

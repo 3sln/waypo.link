@@ -160,7 +160,7 @@ export async function lifecycleTick(c,{source='alarm'}={}){
   let busy=false;
   if(result.phase==='purging'&&result.action==='purging'&&settings.purge){
    const fence=async()=>(await lifecycle.step(owner)).action==='purging';
-   // Common erasure stages (R1-H3/H4): grants, drain, operator apps, email bridge and exports, as owner deletion.
+   // Common erasure stages (R1-H3/H4): grants, drain, operator apps and exports, as owner deletion.
    const batch=await purgeBatch(c,owner,{identity:c.config.LIFECYCLE_IDENTITY,fence,budget:settings.purgeBudget,log,clock,stages:erasureStages(c,{ports:deletionPortsFor(c),clock,log})});
    if(batch.done)return {mode,action:'deleted'};busy=!batch.halted;result={...result,purgeStage:batch.stage};
   }

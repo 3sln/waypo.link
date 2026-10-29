@@ -4,15 +4,15 @@
 >
 > **Status:** design candidate (2026-10-20); protocol validation and a local mailbox engine exist for the Parlay app; the contacts and links spike changes (invitations, first-contact gate, content refusal) are provisional, unsigned text (2026-10-28); single-use invitations and the first-contact gate are implemented locally in Parlay behind default-off flags, content refusal is not; not a published occupant, independent interop or production-verified.
 >
-> **Covers:** Bindle Messaging interop between people: delegation, invitations, records, call invitations and bridged intake.
+> **Covers:** Bindle Messaging interop between people: delegation, invitations, records and call invitations. (Bridged intake, §9, was removed 2026-10-28.)
 >
 > **Does not cover:** the Parlay app itself (`apps/parlay`); message content rules ([message content](message-content.md)); 3sln.me app messages ([messages from connected apps](../../3sln/services/app-messages.md)).
 
-> **Extensions revision 3 (draft, unsigned).** §2.1 and §9 are written in the [extensions revision 3](../extensions.md) shape: fragments and a provider-published bridge extension (CR-X3-31 and contacts spike CR-X1, CR-M8; applied 2026-10-28, provisional). The `messaging-address` consumer is withdrawn by the [contacts and links spike](../../architecture/contacts-and-links-rethink.md) (CL-4). Where any other text here still assumes revision 2 slots, extensions revision 3.3 and protocol §2–§4 govern.
+> **Extensions revision 3 (draft, unsigned).** §2.1 is written in the [extensions revision 3](../extensions.md) shape (CR-X3-31 and contacts spike CR-X1, CR-M8; applied 2026-10-28, provisional). §9 (bridged intake) was removed 2026-10-28 with the email bridge (owner direction; revisit later). The `messaging-address` consumer is withdrawn by the [contacts and links spike](../../architecture/contacts-and-links-rethink.md) (CL-4). Where any other text here still assumes revision 2 slots, extensions revision 3.3 and protocol §2–§4 govern.
 
 Status: **design candidate**, 2026-10-20. Protocol validation and a local mailbox engine exist in `packages/messaging-protocol/` and `packages/messaging-engine/`; provider delegation/status routing exists behind `KEY_DELEGATION_ENABLED` and the messaging-mailbox feature (default off). **Contacts and links spike applied (2026-10-28; provisional, unsigned; CR-M1 to CR-M8):** contact links, intake configuration, the links contract and the ingress descriptor are withdrawn (CL-4); an invitation is a Messaging intent (§4, CL-5); owner policy gates first contact only (§6.7, CL-6); a receiver may refuse content from an accepted peer (§6.4, CL-21). Single-use invitations and the first-contact gate are implemented locally (contacts phase 3, 2026-10-28); content refusal is not. **Contacts phase 4 (2026-10-28; provisional, unsigned):** the engine no longer accepts the withdrawn link kinds (a `BindleLink` credential is malformed), contact links and the links contract are removed from the reference host and from Parlay, and the core and Parlay data resets (`contact-links-retired-v1`, `parlay-contact-links-retired-v1`) exist locally; none of this is production-verified. **Phase 1 review fixes (2026-10-28; provisional, unsigned):** the inviter enforces the redemption shape (§4.3, §4.4); owner policy applies only after author verification, with pre-crypto budgets for credential-less first contact (§6.7, §7.4); identical redemption retries return the stored receipt (§4.4, §8.2); the inviter verifies only same-host redeemers (CL-24); the `mailbox` field is consumed by the Messaging-published messaging-mailbox feature, which gates key delegation (§2.5). These are local implementations, not a complete published occupant, independent interop or production verification. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders until publication authority is agreed. MUST/SHOULD/MAY are draft requirements.
 
-Naming (2026-10-27, DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"): this spec is **Bindle Messaging** (the user's 2026-10-20 name; formerly "BindleBox interop", `docs/spec/bindlebox.md`). The reference messaging app is **Parlay** (owner's working name, provisional), built in this monorepo under `apps/parlay` with `packages/messaging-protocol` and `packages/messaging-engine`. Identifiers moved with the rename while nothing is published: `…/bindlebox/v1` became `…/messaging/v1`, `application/vnd.bindlebox.*` became `application/vnd.bindle.messaging.*`, and the `bindlebox-*` signing domains became `bindle-messaging-*`. The spec is published by the messaging app's side, not by the core; its fragment documents are `docs/artefacts/fragments/messaging-ingress-v1.json` and `docs/artefacts/fragments/public-intake-v1.json`, the single copies the provider and Parlay both pin (extensions CR-X3-26; the former `docs/artefacts/slots/` copies are retired). **Known divergence (2026-10-28, provisional):** the messaging-ingress artefact still carries the pre-spike field name `ingress` and the old description; §2.1 governs, and the artefact is corrected in the code phase. Fragments are pinned by digest, so until then the two are different fragments. The former core messaging spec (blob messaging, collections and Views) is retired to apps/parlay/docs/legacy/messaging.md (Parlay legacy record `apps/parlay/docs/legacy/messaging.md`).
+Naming (2026-10-27, DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"): this spec is **Bindle Messaging** (the user's 2026-10-20 name; formerly "BindleBox interop", `docs/spec/bindlebox.md`). The reference messaging app is **Parlay** (owner's working name, provisional), built in this monorepo under `apps/parlay` with `packages/messaging-protocol` and `packages/messaging-engine`. Identifiers moved with the rename while nothing is published: `…/bindlebox/v1` became `…/messaging/v1`, `application/vnd.bindlebox.*` became `application/vnd.bindle.messaging.*`, and the `bindlebox-*` signing domains became `bindle-messaging-*`. The spec is published by the messaging app's side, not by the core; its fragment document is `docs/artefacts/fragments/messaging-ingress-v1.json`, the single copy the provider and Parlay both pin (extensions CR-X3-26; the former `docs/artefacts/slots/` copies are retired, and the public-intake fragment was removed 2026-10-28 with the email bridge). **Known divergence (2026-10-28, provisional):** the messaging-ingress artefact still carries the pre-spike field name `ingress` and the old description; §2.1 governs, and the artefact is corrected in the code phase. Fragments are pinned by digest, so until then the two are different fragments. The former core messaging spec (blob messaging, collections and Views) is retired to apps/parlay/docs/legacy/messaging.md (Parlay legacy record `apps/parlay/docs/legacy/messaging.md`).
 
 Architecture and rationale: [Parlay architecture](../../architecture/messaging-app.md). Extraction: [messaging extraction](../../architecture/messaging-extraction.md). Review: [messaging app review](../../release/messaging-app-review.md). Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -57,7 +57,6 @@ The [scaling spike](../../release/messaging-scaling-spike.md) P0 items are answe
 | Author purpose | `https://spec.bindle.example/messaging/v1/purposes/author` |
 | Receipt purpose | `https://spec.bindle.example/messaging/v1/purposes/receipt` |
 | Archive purpose | `https://spec.bindle.example/messaging/v1/purposes/archive` |
-| Public-intake fragment and contract | `https://spec.bindle.example/fragments/public-intake/v1`, `https://spec.bindle.example/contracts/public-intake/v1` |
 
 ## 2. Fragment, mailbox contract and fetch rules
 
@@ -85,7 +84,7 @@ This is a fragment under [protocol §3](../protocol.md#3-fragments-and-preferenc
 }
 ```
 
-Only the owner assigns the field (protocol §3). Its only consumer is the provider feature of the messaging-mailbox extension (§2.5). Other apps never obtain a credential for the mailbox contract (review P-17). The field is named `mailbox`, not `ingress`, because "ingress" is the occupant's delivery URL (§1). `announce: true` lets the provider tell the owner, under the [extensions §6](../extensions.md#6-announcements-announce) floor, that a newly connected messaging app can fill the field; it applies only while the messaging-mailbox feature is enabled. A messaging app lists the mailbox contract in its integration manifest's `resources.contracts`, and also the public-intake contract if it accepts bridged email (§9). It declares nothing else for this fragment.
+Only the owner assigns the field (protocol §3). Its only consumer is the provider feature of the messaging-mailbox extension (§2.5). Other apps never obtain a credential for the mailbox contract (review P-17). The field is named `mailbox`, not `ingress`, because "ingress" is the occupant's delivery URL (§1). `announce: true` lets the provider tell the owner, under the [extensions §6](../extensions.md#6-announcements-announce) floor, that a newly connected messaging app can fill the field; it applies only while the messaging-mailbox feature is enabled. A messaging app lists the mailbox contract in its integration manifest's `resources.contracts`. It declares nothing else for this fragment.
 
 ### 2.2 Mailbox contract (provider to occupant)
 
@@ -97,7 +96,7 @@ Only the messaging-mailbox feature (§2.5) invokes the mailbox resource, over or
 
 - `ingress`: an absolute HTTPS URL on the occupant's origin, with no userinfo, query or fragment. It SHOULD be the same for every mailbox the instance hosts. The instance routes by the signed `payload.recipient` and the credential, so the URL does not identify the user (review S-8).
 
-`describe` is declared `"effect": "read"` and MUST be side-effect free. The provider MUST validate the result (exact members) before using it, treats an invalid result as "no occupant", and records `ingress` as the `client.ingress` of the occupant's delegation certificates (§3.2). The result carries nothing else because the provider uses nothing else (contacts spike CR-M3, review L12). Bridged intake uses the separate public-intake contract (§9).
+`describe` is declared `"effect": "read"` and MUST be side-effect free. The provider MUST validate the result (exact members) before using it, treats an invalid result as "no occupant", and records `ingress` as the `client.ingress` of the occupant's delegation certificates (§3.2). The result carries nothing else because the provider uses nothing else (contacts spike CR-M3, review L12).
 
 **Binding parameters.** An occupant states its own parameters to peers only inside signed bindings (`creatorBinding` §6.1, `binding` §6.2 and §6.3):
 
@@ -520,13 +519,13 @@ Rewritten 2026-10-28 (contacts spike CL-6, CR-M5; provisional, unsigned).
 
 **What the gate does not cover.** Records, `peer-hello` and `rejoin` stay gated only by the per-conversation accepted-peer set and pair tokens (§6.3 to §6.6), so groups that include people outside the owner's policy, and rejoin, keep working.
 
-**After custody.** A receiver MAY filter, deprioritize or auto-reject admitted first contact and bridged intake under owner policy, including classifier-based rules ([architecture §12.1](../../architecture/messaging-app.md#121-public-request-filtering-and-auto-rejection)). A receiver:
+**After custody.** A receiver MAY filter, deprioritize or auto-reject admitted first contact under owner policy, including classifier-based rules ([architecture §12.1](../../architecture/messaging-app.md#121-public-request-filtering-and-auto-rejection)). A receiver:
 
 - MUST still return the ordinary receipt for admitted first contact;
 - MUST NOT return any error code, header, receipt member, timing class or reply that depends on classification, score, rule, list or policy state, beyond the pre-custody refusal above;
 - for a held, ignored or auto-rejected `conversation-init`, MUST send no invitation response. It lapses at `returnControl.expiresAt`, which is indistinguishable from an owner who did not answer.
 
-Other refusals before custody (credential, rate limit, size, author) use the ordinary §8.3 codes and never depend on content classification or owner policy. The user decision of 2026-10-14 "no anonymous link messages" applies, and its scope is provisionally widened to all Bindle first contact (contacts spike CL-17, unsigned): every first contact is authored (§3.3). Bridged email stays the separately decided channel-origin exception (§9).
+Other refusals before custody (credential, rate limit, size, author) use the ordinary §8.3 codes and never depend on content classification or owner policy. The user decision of 2026-10-14 "no anonymous link messages" applies, and its scope is provisionally widened to all Bindle first contact (contacts spike CL-17, unsigned): every first contact is authored (§3.3).
 
 ## 7. Transports
 
@@ -682,33 +681,9 @@ Sender classification:
 - 404, 410 and `ingress_moved` are terminal for first contact (an invitation dies with its inviter's old app, §4.2). For a conversation peer they become `retry_scheduled` with reason `moved`, awaiting that peer's `ingress` or `rejoin` record until the deadline.
 - 400, 409, 413 and 415 are terminal.
 
-## 9. Bridged and public intake (provider or app to occupant)
+## 9. Bridged and public intake (removed)
 
-Bridged intake uses the public-intake fragment of [extensions §11.1](../extensions.md#111-email-bridge-to-parlay-intake) (`https://spec.bindle.example/fragments/public-intake/v1`): one resource field `intake`, contract `https://spec.bindle.example/contracts/public-intake/v1`, `selection: "exclusive"`, `consumers: ["provider"]`. Bindle Messaging publishes it (CR-X3-31, contacts spike CR-M8; provisional, unsigned).
-
-Only provider features consume this field. The 3sln.me email bridge is the feature of its own provider-published extension (for example `https://provider.example/extensions/email-bridge/v1`). Application consumers (third-party channel bridges such as SMS) are deferred until a concrete bridge needs them (DEVLOG 2026-10-27 "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes, provisional): admitting them opens a new ingress path into the owner's mailbox and needs its own review of consumer provenance keys, consent and rate limits. While nothing is published, adding them is a correction of v1; afterwards it is a new fragment URL (extensions §7). A Parlay mailbox resource implements both the mailbox contract and the public-intake contract, and lists both in its integration manifest's `resources.contracts`.
-
-**Method `deliver({message, provenance})`.** It is idempotent per `tx`, and has effect `write`. A provider bridge uses `tx` = UUIDv5(spec URL, contract, entity, ingress fingerprint), encoded as [extensions §4.2](../extensions.md#42-provider-features) specifies.
-
-- `provenance` is a compact JWS (`typ` `bindle-intake-provenance+jwt`), signed by the consumer's published key: for the provider, its bridge key, discovered like the app-notification keys. Its payload is exactly `{bindle:"intake-provenance", v:1, iss, channel:"email"|<consumer-defined>, recipient: principal, receivedAt, sender:{envelopeFrom, headerFrom, replyTo?}, dmarc:"pass"|"fail"|"none"|"unknown", automation: hint labels, ingressFingerprint, normalizedDigest, jti}`.
-- `message` is `{parts:[{mimeType, dataBase64url}]}`, at most 1 MiB in total after the consumer's MIME bounds.
-
-The result is `{disposition:"stored-receipt"|"stored-invitation"|"refused"}`. It is owner-visible status only.
-
-**The occupant MUST** (review S-6):
-
-1. verify the provenance JWS against the consumer's discovered key;
-2. check that `recipient` equals its owner and that `iss` is the authenticated consumer;
-3. check that SHA-256 of the canonical parts equals `normalizedDigest`;
-4. deduplicate on `jti` and `tx`;
-5. bound `receivedAt` to the last 7 days;
-6. show `dmarc` and the sender fields only as the consumer's assertions.
-
-It MUST present the item as channel-origin with an unverified sender. It MUST NOT sign the item as authored by anyone, admit the sender into a conversation, or reply over that channel. A sender becomes a participant only through the bridge's mailbox-confirmation and identity flow, followed by an ordinary `conversation-init` or invitation response. Bridged intake never places anyone in the owner's contact lists or other first-contact policy (contacts spike CL-17).
-
-**Provider callbacks (3sln.me reference host; provisional, unsigned, 2026-10-28).** An occupant needs two answers from the bridging provider: the provider's public bridge key, to verify `provenance` (step 1), and confirmation that an intake item was accepted. On the 3sln.me reference host the occupant asks for both through the owner's provider resource `${subject}/email-bridge`, under the contract `https://3sln.me/contracts/email-bridge/v1`, with methods `consumerKey({consumer, keyId})` and `accepted({jti})`. The resource is offered only while the email bridge is enabled for that owner. This contract is a 3sln.me provider artefact, published by the 3sln.me email-bridge extension. It is not part of Bindle Messaging or of the Bindle core, and another provider may expose the same answers differently. It replaced the retired links contract in contacts phase 4. Implemented locally, not production-verified.
-
-**The provider's SMTP behaviour and auto-reply MUST NOT vary with occupancy, occupant availability or `disposition`** ([protocol §3](../protocol.md#3-fragments-and-preference-values), no occupancy oracle). See [architecture §13](../../architecture/messaging-app.md#13-email-bridge-handoff-shared-slice-x12).
+Removed 2026-10-28 (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). The public-intake fragment and contract, the `deliver` method, intake provenance and the 3sln.me email-bridge provider callbacks are withdrawn, and nothing here is implemented. The section number is kept so references stay stable. Native first contact is §6.7.
 
 ## 10. Portable archive
 
@@ -813,5 +788,5 @@ An interop claim requires two independently implemented occupants on separate or
 | Invitations (§4), first-contact gate (§6.7) | Single-use invitations and the gate implemented locally in Parlay behind default-off flags (contacts phase 3); public and multi-use links are phase 5. |
 | Content refusal (§6.4) | Not implemented (contacts phase 5); until then invitations may not target a `receive-only` list. |
 | Contact links (withdrawn, CL-4) | Removed locally (contacts phase 4, 2026-10-28; provisional, unsigned). The engine refuses `BindleLink` as malformed, and the link path, links contract and ingress descriptor are gone from the reference host and Parlay. The core reset `contact-links-retired-v1` and the Parlay reset `parlay-contact-links-retired-v1` delete the retired data locally. |
-| Bridged intake callbacks (§9) | Through the 3sln.me `${subject}/email-bridge` resource and its `https://3sln.me/contracts/email-bridge/v1` contract, locally. No Parlay host adapter implements the callback port yet, so the callbacks fail closed. |
+| Bridged intake (§9) | Removed 2026-10-28 with the email bridge (owner direction; revisit later). |
 | Published occupant and independent interop | Not established. Engine tests do not establish two independently implemented occupants or production provider conformance; see [extraction](../../architecture/messaging-extraction.md). |

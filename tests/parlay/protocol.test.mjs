@@ -303,7 +303,7 @@ test('multicast parsing: whole-request failures versus confined context errors',
  assert.equal(MULTICAST.startsWith(new URL(bob.ingress).origin),true);
 });
 
-test('mailbox and intake RPC: strict envelope, methods and provenance',async()=>{
+test('mailbox RPC: strict envelope and methods; the retired public-intake contract is unsupported',async()=>{
  const resource='https://hub.box.example/mailboxes/m1',req=(contract,method,args,extra={})=>encoder.encode(JSON.stringify({version:'0',tx:uuidOf(1),resource,contract,method,args,...extra}));
  assert.equal(B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{})).method,'describe');
  // Contacts spike phase 4: the mailbox contract is `describe` only; the withdrawn linkRevoked is unsupported.
@@ -314,21 +314,11 @@ test('mailbox and intake RPC: strict envelope, methods and provenance',async()=>
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{},{extra:1})),code('malformed'));
  assert.throws(()=>B.parseRPC(encoder.encode(`{"version":"0","version":"0","tx":"${uuidOf(1)}","resource":"${resource}","contract":"${B.MAILBOX_CONTRACT}","method":"describe","args":{}}`)),code('malformed'));
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{}),{resource:'https://hub.box.example/mailboxes/m2'}),code('malformed'));
- // Public intake with a consumer-signed provenance JWS.
- const consumer=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),consumerJwk=await crypto.subtle.exportKey('jwk',consumer.publicKey);
- const message={parts:[{mimeType:'text/plain',dataBase64url:B.base64url(encoder.encode('Hi from email'))}]};
- const claims={bindle:'intake-provenance',v:1,iss:'https://bob.provider.example',channel:'email',recipient:bob.principal,receivedAt:NOW-1000,sender:{envelopeFrom:'a@sender.example',headerFrom:'A <a@sender.example>'},dmarc:'pass',automation:[],ingressFingerprint:'fp-1',normalizedDigest:await B.intakeDigest(message),jti:'prov-1'};
- const enc=v=>B.base64url(encoder.encode(JSON.stringify(v))),head=`${enc({alg:'ES256',kid:'bridge-1',typ:'bindle-intake-provenance+jwt'})}.${enc(claims)}`;
- const provenance=`${head}.${B.base64url(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},consumer.privateKey,encoder.encode(head))))}`;
- const parsed=B.parseRPC(req(B.INTAKE_CONTRACT,'deliver',{message,provenance}));
- const key={keyId:'bridge-1',publicJwk:{kty:'EC',crv:'P-256',x:consumerJwk.x,y:consumerJwk.y}},ctx={consumerKey:key,consumer:'https://bob.provider.example',recipient:bob.principal,now:NOW};
- const v=await B.verifyProvenance(parsed.args,ctx);assert.equal(v.verifiedSender,false);assert.equal(v.asserted.dmarc,'pass');
- await assert.rejects(B.verifyProvenance(parsed.args,{...ctx,recipient:carol.principal}),code('not_authorized'));
- await assert.rejects(B.verifyProvenance(parsed.args,{...ctx,consumer:'https://evil.example'}),code('not_authorized'));
- await assert.rejects(B.verifyProvenance({...parsed.args,message:{parts:[{mimeType:'text/plain',dataBase64url:'AA'}]}},ctx),code('malformed'));
- await assert.rejects(B.verifyProvenance(parsed.args,{...ctx,now:NOW+8*86400000}),code('envelope_expired'));
- await assert.rejects(B.verifyProvenance(parsed.args,{...ctx,consumerKey:{...key,keyId:'other'}}),code('not_authorized'));
- assert.throws(()=>B.parseRPC(req(B.INTAKE_CONTRACT,'deliver',{message,provenance:alice.signer.delegation})),code('invalid_args'),'a delegation is not a provenance');
+ // The public-intake contract, its provenance JWS and helpers went with the email bridge (owner direction 2026-10-28).
+ const RETIRED_INTAKE='https://spec.bindle.example/contracts/public-intake/v1';
+ assert.throws(()=>B.parseRPC(req(RETIRED_INTAKE,'deliver',{message:{parts:[]},provenance:'a.b.c'})),e=>e.code==='unsupported_contract'&&e.rpc===true);
+ for(const name of ['INTAKE_CONTRACT','INTAKE_FRAGMENT','INTAKE_MEDIA_TYPE','intakeDigest','parseProvenance','verifyProvenance'])assert.equal(B[name],undefined,name);
+ assert.equal(Object.hasOwn(B.JWS_TYPES,'provenance'),false);assert.equal(Object.hasOwn(B.LIMITS,'maxIntakeParts'),false);
 });
 
 test('the dissolved link-era ingress descriptor, link kinds and link codes are gone (contacts spike phase 4)',()=>{

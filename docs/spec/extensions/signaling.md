@@ -1173,7 +1173,7 @@ These rules exist so that addresses travel only in `candidates` messages, where 
 - **In a cross-entity session:**
   - a `host` candidate's address MUST be a UUID followed by `.local` (mDNS);
   - a `srflx` candidate's `raddr` MUST be `0.0.0.0` or `::` with `rport 0`, an mDNS name, or absent;
-  - the address of a `srflx` or `relay` candidate MUST NOT be an unspecified, loopback, private, shared (RFC 6598), link-local, unique-local, multicast or reserved address. This includes IPv4-mapped, IPv4-compatible and NAT64 forms of one.
+  - the address of a `srflx` or `relay` candidate MUST NOT be an unspecified, loopback, private, shared (RFC 6598), link-local, unique-local, multicast, reserved or documentation (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32) address, or anything that is not an IP literal. This includes every spelling of one and the IPv4-mapped, IPv4-compatible, NAT64 (64:ff9b::/96) and 6to4 (2002::/16) forms of a non-public IPv4 address.
 - Raw host addresses are allowed only in own-entity sessions.
 
 **When the rules apply:**

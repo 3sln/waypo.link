@@ -58,7 +58,7 @@ Stale text: [account lifecycle](../3sln/accounts/account-lifecycle.md) still des
 | Organization links, relation participation statements, continuity statements | Identity signing key, signed by the provider | No | Unchanged |
 | Relation events, intent attributions | Certification keys | No | Unchanged |
 | Signaling leg certificates and control statements (signaling §6.1) | Certification keys. Pairings and admission are keyed by origin principal. | No | Unchanged |
-| Email-bridge intake provenance | The bridge's own key | No | Unchanged |
+| Email-bridge intake provenance | The bridge's own key (removed 2026-10-28 (owner direction; revisit later)) | No | Not applicable |
 | Name certificates | Provider recovery/name authority | No | Unchanged |
 | Organization memberships, relation edges, signaling pairings, Parlay peers | Keyed by **origin principal** `(iss₀, sub)` | No | Unchanged. The origin principal is kept (§3). |
 | Identity encryption key (ECDH) | No consumer. Provisioned and exported only. | — | Deleted (Q11, approved) |

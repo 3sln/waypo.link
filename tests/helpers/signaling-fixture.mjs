@@ -31,10 +31,10 @@ export const rejects=(promise,code,label)=>assert.rejects(promise,e=>e.code===co
 const P256={name:'ECDSA',namedCurve:'P-256'};
 export async function keyPair(){const pair=await crypto.subtle.generateKey(P256,true,['sign','verify']);const {x,y}=await crypto.subtle.exportKey('jwk',pair.publicKey);const jwk={kty:'EC',crv:'P-256',x,y};return {...pair,jwk,jkt:await jwkThumbprint(jwk)};}
 export const sdp=()=>wireSdp({media:['audio','video','application']});
-export const relay=(address='203.0.113.7')=>({candidate:wireCandidate('relay',{address}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
+export const relay=(address='93.184.216.34')=>({candidate:wireCandidate('relay',{address}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
 export const host=(address='1f3c6b2a-0000-4000-8000-000000000001.local')=>({candidate:wireCandidate('host',{address}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
 export const rawHost=()=>({candidate:wireCandidate('host',{address:'192.168.1.20'}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
-export const srflx=()=>({candidate:wireCandidate('srflx',{address:'198.51.100.9'}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
+export const srflx=()=>({candidate:wireCandidate('srflx',{address:'8.8.8.8'}),sdpMid:'0',sdpMLineIndex:0,usernameFragment:'abcd'});
 
 /** A session-kind body (intents §4 with the AMD-SG-I1 `session` member) for `line` at `version`. */
 export function kindBody({line,parties='any',profiles={webrtc:{},data:{}},bases,properties={},categories=['personal-data'],fieldCategories={},title='Kind',maxBytes=64}){

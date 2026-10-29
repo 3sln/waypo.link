@@ -26,7 +26,6 @@ import * as automation from './automation.mjs';
 import * as identity from './identity.mjs';
 import * as connections from './connections.mjs';
 import * as events from './events.mjs';
-import * as emailBridge from './email-bridge.mjs';
 import {account as integrations} from '../routes/integrations.mjs';
 import * as integrationEvents from '../integration-events.mjs';
 import * as classifier from './classifier.mjs';
@@ -45,7 +44,7 @@ import * as memberCertificates from './member-certificates.mjs';
 import * as relations from './relations.mjs';
 import * as signaling from './signaling.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,developerContact,storage,billing,search,lifecycle,notifications,profile,automation,identity,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,signaling});
+export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,developerContact,storage,billing,search,lifecycle,notifications,profile,automation,identity,connections,events,integrations,integrationEvents,classifier,brokeredTokens,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,signaling});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){

@@ -61,20 +61,21 @@ export function decodeValue(v,depth=0){
 // wins. Excluded by omission: owner, config, shell:*, edge outboxes, conv/secret, conv/route, conv/work, conv/response,
 // bb:send body/queue/breaker/events, cursors, hot usage (recomputed on import) and archive/* itself.
 const R=(prefix,type,phase,exact=false,retired=false)=>Object.freeze({prefix,type,phase,exact,...retired?{retired:true}:{}});
-// Retired families (contacts spike phase 4: contact-link parents, contacts added from links and their indexes) are never
-// exported; an older archive's lines for them still parse, in order, and are skipped on import.
-const RETIRED=(prefix,type)=>R(prefix,type,3,false,true);
+// Retired families (contacts spike phase 4: contact-link parents, contacts added from links and their indexes; the email
+// bridge removal of 2026-10-28: bridge settings and fingerprints, public-intake replay fences and address allowlist
+// entries) are never exported; an older archive's lines for them still parse, in order, and are skipped on import.
+const RETIRED=(prefix,type,phase=3,exact=false)=>R(prefix,type,phase,exact,true);
 export const ARCHIVE_CLASSES=Object.freeze([
  R('block/','block',0),R('revoked/','revocation',0),R('conv/frontier/','frontier',0),R('conv/counter/','frontier',0),R('conv/mutations/','pending-mutation',0),
- R('conv/replay/','replay',0),R('replay/','replay',0),R('conv/evidence/','evidence',0),R('intake/jti/','replay',0),R('intake/tx/','replay',0),
- R('bridge/fp/','replay',0),R('edge-seq','counter',0,true),R('conv-edge-seq','counter',0,true),
+ R('conv/replay/','replay',0),R('replay/','replay',0),R('conv/evidence/','evidence',0),RETIRED('intake/jti/','replay',0),RETIRED('intake/tx/','replay',0),
+ RETIRED('bridge/fp/','replay',0),R('edge-seq','counter',0,true),R('conv-edge-seq','counter',0,true),
  R('conv/settings','overlay',1,true),R('conv/room/','conversation',1),R('conv/peer/','peer',1),R('conv/stream/','stream-head',1),
  R('conv/intro/','peer',1),R('conv/invite/','peer',1),R('conv/rotation/','peer',1),R('conv/allowance','quota',1,true),R('conv/placeholder/','gap',1),
  R('bb:send:message/','outbox',2),R('bb:send:task/','outbox',2),R('conv/op/','outbox',2),
  R('conv/event/','item',3),R('conv/body/','body-ref',3),R('conv/by-jkt/','item',3),R('conv/decided/','overlay',3),
  R('item/','item',3),R('body/','body-ref',3),R('pending/','item',3),R('rejected/','item',3),R('by-jkt/','item',3),R('seen-jkt/','item',3),
- RETIRED('parent/','link-parent'),RETIRED('contact/','contact'),RETIRED('contact-link/','contact'),RETIRED('known/','contact'),RETIRED('decision/','link-decision'),R('allow/','rule',3),
- R('settings/','overlay',3),R('budget/','quota',3),R('bridge/settings','overlay',3,true),R('storage-gc/','gc',3),
+ RETIRED('parent/','link-parent'),RETIRED('contact/','contact'),RETIRED('contact-link/','contact'),RETIRED('known/','contact'),RETIRED('decision/','link-decision'),RETIRED('allow/e/','rule'),R('allow/','rule',3),
+ R('settings/','overlay',3),R('budget/','quota',3),RETIRED('bridge/settings','overlay',3,true),R('storage-gc/','gc',3),
  R('bb:views/','view',3),R('bb:view-operations/','view',3),R('bb:rules','rule',3,true),R('bb:classify:settings','rule',3,true),R('bb:tag-labels','tag-label',3,true),
  R('bb:incoming:row/','overlay',3),R('bb:incoming:organization/','overlay',3),R('bb:incoming:revision','counter',3,true),
 ]);
@@ -95,6 +96,8 @@ export function sanitize(key,value,{phase='export'}={}){
  if(key.startsWith('conv/op/')){const unsent=!v.submitted;return {operationId:v.operationId,cid:v.cid,eventId:v.eventId,type:v.type,kid:v.kid,createdAt:v.createdAt,knownRotation:Boolean(v.knownRotation),recipients:unsent?[]:(v.recipients??[]).map(r=>({principal:r.principal})),prepared:null,secret:null,payload:null,hasBody:false,submitted:true,abandoned:Boolean(v.abandoned),...unsent?{unsent:true}:{}};}
  if(key.startsWith('bb:send:task/')){const t=compactTask(v);if(phase==='import'&&!FINAL.has(t.state))Object.assign(t,{state:'expired',reason:'moved',resend:true,manualUsed:true});return t;}
  if(key.startsWith('bb:send:message/'))return compactMessage(v);
+ // Channel-origin (bridged email) items went with the email bridge (2026-10-28): never exported, dropped on import.
+ if(key.startsWith('item/')&&v?.origin==='channel')return undefined;
  // Invitations lose the secret and the creator's return capability; an undecided one needs a fresh invitation (BB6-S9).
  if(key.startsWith('item/')&&v?.envelope?.payload?.conversation){const c=v.envelope.payload.conversation;if(Object.hasOwn(c,'sharedSecret')||Object.hasOwn(c,'returnControl')||Object.hasOwn(c,'creatorBinding')){delete c.sharedSecret;delete c.returnControl;delete c.creatorBinding;v.secretRedacted=true;v.needsReinvite=true;}}
  return v;

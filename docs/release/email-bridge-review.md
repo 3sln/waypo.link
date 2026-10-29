@@ -1,5 +1,7 @@
 # Email bridge (BRIDGE) security review
 
+> **Status: superseded 2026-10-28.** The email bridge reviewed here was removed (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). Kept as review history; the code paths it cites no longer exist.
+
 Status: provisional, 2026-10-21. One independent agent review, plus a re-review of the fixes (EB-1, 2, 6, 7 and 8 confirmed; EB-3 and EB-4 completed afterwards; EB-10 found and fixed). It covers the uncommitted BRIDGE slice (`packages/email-bridge/*`, the Worker `email` handler in `apps/worker/index.mjs`, `tests/email-bridge*.mjs`). It is not a human sign-off. Human reviewer: ______ Date: ______ Outcome: ______.
 
 Scope: spam and amplification, backscatter, recipient enumeration through response differences, header injection, provenance confusion, plus MIME denial of service, dedup bypass, unbounded state, crash consistency and fail-open paths. Design inputs: [public email bridge](../architecture/public-email-bridge.md), [messaging app §13](../architecture/messaging-app.md#13-email-bridge-handoff-shared-slice-x12) and [BindleBox spec §9](../spec/extensions/messaging.md).

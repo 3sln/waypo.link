@@ -9,8 +9,8 @@ import {createTestEngine} from './helpers/app-engine.mjs';
 import {fakeEgress,body} from './client-metadata-helpers.mjs';
 
 const ID='https://inbox.example/bindle/client.json',JWKS='https://inbox.example/bindle/jwks.json',P='https://inbox.example/bindle/';
-const CONTRACT='https://spec.bindle.example/contracts/public-intake/v1',OTHER='https://spec.bindle.example/contracts/other/v1';
-const SLOT='https://spec.bindle.example/slots/public-message-intake/v1',CLASSIFIER='https://spec.bindle.example/slots/item-classifier/v1';
+const CONTRACT='https://spec.bindle.example/contracts/example-records/v1',OTHER='https://spec.bindle.example/contracts/other/v1';
+const SLOT='https://spec.bindle.example/slots/example-inbox/v1',CLASSIFIER='https://spec.bindle.example/slots/item-classifier/v1';
 const strip=value=>JSON.parse(JSON.stringify(value));
 const manifest=(over={})=>strip({v:1,setup:{fragments:[{id:'https://inbox.example/preferences/inbox-settings/v1',required:true,purpose:'Where to store your messages.',fields:['store','retention']}]},management_url:P+'manage',events_endpoint:P+'events',events:[PREFERENCES_UPDATED_EVENT],
  resources:{rpc_endpoint:P+'rpc',discovery_endpoint:P+'resources',contracts:[CONTRACT],dpop:'supported'},extensions:[{slot:SLOT,role:'occupant',ref:'inbox'},{slot:CLASSIFIER,role:'consumer',ref:'triage',purpose:'Sort incoming messages.'}],...over});

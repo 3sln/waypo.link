@@ -24,7 +24,7 @@ Status: design with local implementation, updated 2026-10-22 (DX-10 status below
    3. sever connections and tombstone the identity (sessions, credentials, recovery, email claim, app-grant lineage);
    4. erase federation and MCP grants;
    5. drain integration and severance outboxes (bounded);
-   6. purge vectors, email-bridge state, exports, archives and blobs;
+   6. purge vectors, email-bridge state (stage removed 2026-10-28 with the email bridge), exports, archives and blobs;
    7. anonymize the Polar customer;
    8. send the final notice;
    9. wipe metadata and leave the account tombstone.
@@ -355,7 +355,7 @@ Therefore:
 | **E3 grants** | `federation.eraseSubject(owner)`: delete grant, token-family, preference and brokered-JTI rows for the subject in the federation store. Then `mcp.eraseSubject(owner)` on the owner's `McpAuthorizationObject` shard (Node: the SQLite MCP shard), whose MCP grants and tokens are otherwise kept after access ends (R1-H4). These are new ports; verify the store placement during DX-3. Device grants are erased the same way. | Access has already ended at E2. This removes the *records*, which are personal data. |
 | **E4 drain** | Call `brokeredSeveranceDrain`, `integrationEventsAlarm`, `eventBusSweep` and the connection cascade drains directly (the alarm no longer runs them once fenced) until each outbox is empty, each with a bounded retry. Give up after 72 h, logging the count dropped. | Severance notices ask integrations and buses to delete their copies. The wipe would otherwise destroy the outbox. Security does not depend on delivery (E2). |
 | **E5 vectors** (existing, tightened) | `purgeSearchVectors`. When `search-vector-revision` rows exist but the vector index is unavailable, owner deletion **holds**. Today's code sets `vectorIndexUnavailable` and continues, which leaves embeddings in Vectorize that nothing can enumerate after the wipe (R1-M10). Inactivity purge adopts the same hold. | Rows that name vector IDs must outlive the vectors. |
-| **E5b email bridge** | `emailBridge.erase(owner)`: delete the owner's `EmailBridgeObject` instance (`owner/<uuid>`) with its settings, holding queue (inbound message content), dedup and reply ledger, via `deleteAll`. Sender-shard suppression rows are keyed by external sender, not the owner, so they stay. A no-op when the bridge was never enabled; Cloudflare-only, so Node has nothing to erase (R1-H4). | It is first-party storage of the owner's mail; privacy §8 promises its removal. |
+| **E5b email bridge** | **Removed 2026-10-28** with the email bridge (owner direction; revisit later); `EmailBridgeObject` storage goes with its Wrangler `deleted_classes` migration. Previously `emailBridge.erase(owner)`: delete the owner's `EmailBridgeObject` instance (`owner/<uuid>`) with its settings, holding queue (inbound message content), dedup and reply ledger, via `deleteAll`. Sender-shard suppression rows are keyed by external sender, not the owner, so they stay. A no-op when the bridge was never enabled; Cloudflare-only, so Node has nothing to erase (R1-H4). | It is first-party storage of the owner's mail; privacy §8 promises its removal. |
 | **E6 exports** | `exports.cancel` for every job; delete exact part keys; clear `export/active`. Deferred garbage becomes collectable. | Before the blob stages, so deferred refs are deleted too |
 | **E7 archive, E8 blobs** (existing) | delete owned refs (`messages/<owner>/`, `objects/<owner>/` only, `ownedBlobRef`); foreign refs are counted, never touched | unchanged. External connector objects are never addressed. |
 | **E9 billing-anonymize** | `customers.deleteExternal(owner,{anonymize:true})` (Polar SDK), if Q3 is accepted. Failure holds before the wipe. | After revoke, so financial records stay reconcilable until now. Polar keeps orders as tax law requires. |
@@ -379,7 +379,7 @@ Two Node gaps must close first (R1-M9):
 - `FileBucket.get` reads the whole file and offers no `body` stream and no `range`. It gains `get(key, {range:{offset,length}})` returning `{size, body: ReadableStream}`, read with `fs.createReadStream({start, end})`.
 - The `digest` provider replaces `crypto.DigestStream` (§1.2).
 
-Node has no Vectorize, email bridge or Parlay, so E5 and E5b are no-ops there, while the MCP SQLite shards are erased at E3.
+Node has no Vectorize or Parlay, so E5 is a no-op there (E5b was removed 2026-10-28), while the MCP SQLite shards are erased at E3.
 
 ### 2.4 Others' contact links and delivered messages
 
@@ -502,10 +502,10 @@ When "law or safety prevents it", the admin sets `exportUntil=null` with a reaso
 
 ## 6. Interfaces to agree before coding
 
-- `purgeBatch(c, owner, {identity, fence, budget, log, reason, basis, stages:{billingStop, eraseGrants, drain, eraseEmailBridge, exportsCancel, billingAnonymize, notice}})`. The stage hooks are injected. **Both** callers pass `eraseGrants`, `drain`, `eraseEmailBridge` and `exportsCancel`. Only owner and admin deletion pass `billingStop`, `billingAnonymize` and `notice` (R1-H3). Otherwise an inactivity purge would leave export parts in `ARCHIVES`, MCP and federation records, and the email-bridge mailbox. Stage names stay append-only in `job.stage`. A deletion job starts at `billing-stop`; a lifecycle job keeps starting at `identity`.
+- `purgeBatch(c, owner, {identity, fence, budget, log, reason, basis, stages:{billingStop, eraseGrants, drain, exportsCancel, billingAnonymize, notice}})`. The stage hooks are injected. **Both** callers pass `eraseGrants`, `drain` and `exportsCancel` (`eraseEmailBridge` was removed 2026-10-28 with the email bridge). Only owner and admin deletion pass `billingStop`, `billingAnonymize` and `notice` (R1-H3). Otherwise an inactivity purge would leave export parts in `ARCHIVES`, MCP and federation records, and the email-bridge mailbox. Stage names stay append-only in `job.stage`. A deletion job starts at `billing-stop`; a lifecycle job keeps starting at `identity`.
 - `identitySecurity(owner) → {epoch, changedAt}` (identity port, R1-H1), plus `security` maintenance in every security-sensitive CAS in `IdentityService`.
 - `deletionHold(owner)` (§4.2) and `deletionTick(c) → {busy, wakeAt}`, with the min-merge alarm helper (§2.2).
-- `mcp.eraseSubject(owner)` and `emailBridge.erase(owner)`.
+- `mcp.eraseSubject(owner)` (`emailBridge.erase(owner)` was removed 2026-10-28).
 - The `deletion-due/<executeAfter>/<owner>` index in the identity directory, with `put`/`delete` through the identity port.
 - `FileBucket.get(key, {range})` returning `{size, body}`, and a `digest` provider (Workers `DigestStream`, Node `createHash`).
 - `lifecycleIdentityPort.tombstone(owner, {assignmentId, reason})`. The audit event is `account-deleted-${reason}`. The default is `'inactive'`, which keeps the existing value.

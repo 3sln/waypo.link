@@ -79,7 +79,6 @@ Columns:
 | `INCREMENTAL_AUTH_ENABLED` | a | G A S P C | off | `FEDERATION_ENABLED` | crit | safe | off | Before the owner is known, only G and C rules match. |
 | `EXTENSIONS_ENABLED` | a | G A C | off | — | std | safe | off | |
 | `KEY_DELEGATION_ENABLED` | a | G A S P | off | — | std | safe | off | Contacts spike CR-C0 (provisional, unsigned). Key-delegation issuance and renewal, the delegation routes and the member-certificate status fallback; since 2026-10-28 also the messaging-mailbox provider feature's declaration row and `MESSAGING_DESCRIBE` (Bindle Messaging §2.5), which key-delegation occupancy reads, together with `INTEGRATIONS_ENABLED`, `BROKERING_ENABLED` and `EXTENSIONS_ENABLED`. Stateful: retained state comes from live `key-delegation/` rows only. It decides alone: its transitional `LINKS_ENABLED` fallback ended when CR-C7 retired that flag (contacts phase 4, 2026-10-28). |
-| `EMAIL_BRIDGE_ENABLED` | a | G A S P | off | — (delivery waits for any public-intake slot occupant) | crit | safe | off | Subject = recipient owner. Paid entitlement and owner opt-in still apply. |
 | `SEMANTIC_SEARCH_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Also needs the AI/Vectorize bindings (adapter capability). The global budget is unchanged. |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | — | crit | safe | off | Its declaration uses the global component only (§3.6). |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | G C | off | — | std | safe | off (Worker unset) | |
@@ -109,7 +108,7 @@ Columns:
 
 Numeric and policy settings stay in env: `SIGNUP_*_LIMIT`, `STORAGE_WRITE_*`, `SIGNUP_CONTACT_REQUIRED`, `RELEASE_READY` and `LOCAL_DEVELOPMENT`.
 
-**Retired flags.** `LINKS_ENABLED` (renamed from `BINDLEBOX_ENABLED` on 2026-10-26) moved to `RETIRED_FLAGS` with `retiredOn: 2026-10-28` when contacts phase 4 removed contact links (contacts spike CR-C7; provisional, unsigned). Its `envAlias` went with it, so no registered flag declares an alias; neither name has a replacement, and a stored record under either is quarantined, never carried to `KEY_DELEGATION_ENABLED`. The separate Parlay deployment keeps its own `PARLAY_*` env with retired `BINDLEBOX_*` aliases (`apps/parlay/env.mjs`). `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` moved to `RETIRED_FLAGS` in [registry.mjs](../../packages/flags/registry.mjs) with `retiredOn: 2026-10-26` when Beam was removed from the core (provisional, unsigned; see DEVLOG). A flag leaves the registry only through `RETIRED_FLAGS`, so existing console records are not orphaned ([removal guard](../../tests/flags-registry-removals.test.mjs)). The `BEAM_MONTHLY_*` settings were removed with them.
+**Retired flags.** `EMAIL_BRIDGE_ENABLED` moved to `RETIRED_FLAGS` with `retiredOn: 2026-10-28` when the email bridge was removed (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). It has no replacement, a stored record under it is quarantined, and the `EMAIL_BRIDGE_*` settings are no longer read. `LINKS_ENABLED` (renamed from `BINDLEBOX_ENABLED` on 2026-10-26) moved to `RETIRED_FLAGS` with `retiredOn: 2026-10-28` when contacts phase 4 removed contact links (contacts spike CR-C7; provisional, unsigned). Its `envAlias` went with it, so no registered flag declares an alias; neither name has a replacement, and a stored record under either is quarantined, never carried to `KEY_DELEGATION_ENABLED`. The separate Parlay deployment keeps its own `PARLAY_*` env with retired `BINDLEBOX_*` aliases (`apps/parlay/env.mjs`). `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` moved to `RETIRED_FLAGS` in [registry.mjs](../../packages/flags/registry.mjs) with `retiredOn: 2026-10-26` when Beam was removed from the core (provisional, unsigned; see DEVLOG). A flag leaves the registry only through `RETIRED_FLAGS`, so existing console records are not orphaned ([removal guard](../../tests/flags-registry-removals.test.mjs)). The `BEAM_MONTHLY_*` settings were removed with them.
 
 A flag is class (b) when any of these holds:
 - it selects a binding, secret, route mount or protocol metadata;
@@ -245,7 +244,7 @@ The adapter builds `ctx` from trusted sources only:
 ## 4. Stateful features
 
 - **Off means no new creates or grants (`feature_unavailable`).** Existing records stay untouched. The owner can still list, read, export, revoke, disconnect, delete and see status.
-- **Reverse paths are never gated by targeting:** integration severance, event-bus reader revocation, delegation revocation, link revoke and the email-bridge opt-out.
+- **Reverse paths are never gated by targeting:** integration severance, event-bus reader revocation, delegation revocation and link revoke.
 - **Background work follows the env kill only, not targeting or console state:** event-bus sweeps, severance drains, revocation outbox delivery and retention. Cleanup must run even when the console has a flag off. If env kills a flag, background work stops and the data stays.
 - **The account single writer is authoritative.** For stateful (a) flags it makes the final decision. The edge refuses early and drives the UI. The writer's snapshot version is never older than the edge's (§5).
 - **`retainExisting` (per flag, optional) replaces stored "sticky enrolment".**
@@ -376,7 +375,7 @@ experiment: { id /*uuid*/, status:'draft'|'running'|'stopped'|'concluded',
 
 **Recording.**
 - `search_result_opened` is declared for future use but remains unrecorded: opening a search result has no verified server-side outcome signal. Search exposure alone must not be counted as an open.
-- Device authorization, incremental authorization and email bridge are non-retainable in the registry: their requests, lineages and queues live in external identity/federation/bridge stores, so the account writer has no authoritative `hasState` predicate. Existing owner reads and reverse paths remain available.
+- Device authorization and incremental authorization are non-retainable in the registry: their requests and lineages live in external identity/federation stores, so the account writer has no authoritative `hasState` predicate. Existing owner reads and reverse paths remain available.
 
 - `flags.record({experimentId, variant, kind:'exposure'|metric, day})` is called at the server point where the variant actually changes what the subject gets (exposure), or where a declared outcome happens.
 - The account writer or edge sends it to a `flagStats` port, fire-and-forget with `waitUntil` and bounded retry. A lost increment is tolerated.
@@ -507,7 +506,7 @@ Write ownership does not overlap. The `FLAG_STATS` binding is FF-8's; the DO cla
 3. **Lifecycle and abuse limits stay env-only, with a console "pause lifecycle" that forces dry run.** Recommended. Accepted as provisional (coordinator relay, 2026-10-21). Reviewer ___ Date ___ Outcome ___.
 4. **Critical edits by one administrator with the extra confirmations; no second approver.** Recommended. Accepted as provisional (coordinator relay, 2026-10-21). Reviewer ___ Date ___ Outcome ___.
 
-### Complete flag registry (2026-10-24; `KEY_DELEGATION_ENABLED` added and `LINKS_ENABLED` retired 2026-10-28)
+### Complete flag registry (2026-10-24; `KEY_DELEGATION_ENABLED` added, `LINKS_ENABLED` and `EMAIL_BRIDGE_ENABLED` retired 2026-10-28)
 
 All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
 
@@ -527,7 +526,6 @@ All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `INCREMENTAL_AUTH_ENABLED` | a | false | false | false |
 | `EXTENSIONS_ENABLED` | a | false | false | false |
 | `KEY_DELEGATION_ENABLED` | a | false | unset | false |
-| `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
 | `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | false | unset | false |

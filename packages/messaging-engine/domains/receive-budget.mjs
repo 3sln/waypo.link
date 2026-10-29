@@ -10,19 +10,14 @@ const MiB=1048576,names=Object.keys(WINDOWS);
 const owner=(m,b)=>Object.freeze(Object.fromEntries(names.map((n,i)=>[n,Object.freeze({messages:m[i],bytes:b[i]*MiB})])));
 const half=limits=>Object.freeze(Object.fromEntries(Object.entries(limits).map(([n,l])=>[n,Object.freeze({messages:l.messages/2,bytes:l.bytes/2})])));
 const plan=(m,b)=>{const o=owner(m,b);return Object.freeze({owner:o,parent:half(o),sender:Object.freeze({messages:Math.max(10,m[2]/10),bytes:b[2]*MiB/8}),
- // §12.1: per sender principal or address 5/day, per email domain 50/day, per owner 200 public requests/day. The
- // native issuer-domain row is a provisional reading (a hostile provider can mint principals cheaply).
- public:Object.freeze({sender:5,emailDomain:50,issuer:100,owner:200})});};
+ // §12.1: per sender principal 5/day, per issuer host 100/day, per owner 200 public requests/day. The issuer-host row
+ // is a provisional reading (a hostile provider can mint principals cheaply). The email-domain row went with the email
+ // bridge (removed 2026-10-28, owner direction).
+ public:Object.freeze({sender:5,issuer:100,owner:200})});};
 export const BUDGET_DEFAULTS=Object.freeze({free:plan([30,300,1000],[16,128,512]),paid:plan([120,1000,5000],[64,512,2048]),plus:plan([240,2000,10000],[128,1024,4096]),ultra:plan([240,2000,10000],[256,2048,8192])});
 // Hard cardinality ceiling for per-day maps; exceeding it fails closed as rate_limited rather than growing rows.
 export const MAX_DAY_KEYS=4096;
 
-// Channel budgets use provider-verified provenance, never sender-written From/Reply-To. A null or malformed
-// envelope has one bounded unverified bucket per consumer/channel. DMARC is display evidence, not a budget key.
-export function intakeBudgetIdentity({consumer,channel,sender}){
- const raw=typeof sender?.envelopeFrom==='string'?sender.envelopeFrom.trim().toLowerCase():'',m=/^[^\s@<>()]{1,64}@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/.exec(raw),scope=['intake',consumer,channel];
- return {sender:JSON.stringify([...scope,'envelope',m?raw:null]),domain:JSON.stringify([...scope,'domain',m?m[1]:null]),email:channel==='email'};
-}
 const epochs=now=>Object.fromEntries(names.map(n=>[n,Math.floor(now/WINDOWS[n])]));
 const retryAfter=(window,now)=>Math.max(1,Math.ceil(((Math.floor(now/WINDOWS[window])+1)*WINDOWS[window]-now)/1000));
 const limited=(window,now)=>{const error=new MailboxFault('rate_limited','Too many messages. Try again later.',429);error.retryAfter=retryAfter(window,now);throw error;};
@@ -36,8 +31,7 @@ export function currentBudget(state,now){
  return next;
 }
 const fits=(row,limit,bytes)=>row.messages+1<=limit.messages&&row.bytes+bytes<=limit.bytes;
-// One admitted new message attempt. charge = {bytes, parent (jti), sender (principal key), request?:{sender, domain,
-// email}}. Every layer is checked before any is applied. A message larger than any configured window is too_large.
+// One admitted new message attempt. charge = {bytes, parent (jti), sender (principal key), request?:{sender, domain}}. Every layer is checked before any is applied. A message larger than any configured window is too_large.
 export function chargeBudget(state,{now,plan:planName='free',limits=BUDGET_DEFAULTS[planName]??BUDGET_DEFAULTS.free,bytes,parent,sender,request}){
  if(!Number.isSafeInteger(bytes)||bytes<0)throw new TypeError('Invalid charge');
  const next=currentBudget(state,now);
@@ -48,7 +42,7 @@ export function chargeBudget(state,{now,plan:planName='free',limits=BUDGET_DEFAU
  const newKeys=(next.parents[parent]?0:1)+(next.senders[sender]?0:1)+(request&&!next.public.senders[request.sender]?1:0)+(request?.domain&&!next.public.domains[request.domain]?1:0);
  if(Object.keys(next.parents).length+Object.keys(next.senders).length+Object.keys(next.public.senders).length+Object.keys(next.public.domains).length+newKeys>MAX_DAY_KEYS)limited('day',now);
  if(request){
-  const p=limits.public,domainLimit=request.email?p.emailDomain:p.issuer;
+  const p=limits.public,domainLimit=p.issuer;
   if(next.public.owner+1>p.owner||(next.public.senders[request.sender]??0)+1>p.sender||(request.domain&&(next.public.domains[request.domain]??0)+1>domainLimit))limited('day',now);
   next.public.owner++;next.public.senders[request.sender]=(next.public.senders[request.sender]??0)+1;if(request.domain)next.public.domains[request.domain]=(next.public.domains[request.domain]??0)+1;
  }

@@ -52,7 +52,7 @@ export const sameValue=(a,b)=>jcs(a)===jcs(b);
 
 // The signed-object profile helpers (contacts-and-links spike §4.1 and CR-C0; provisional, unsigned). They moved here
 // unchanged from packages/links/envelope.mjs (strictIJSON, plainObject, exactMembers) and packages/links/author-proof.mjs
-// (ijsonJCS), so identity, federation, the email bridge and signaling never import packages/links. They keep their
+// (ijsonJCS), so identity, federation and signaling never import packages/links. They keep their
 // original semantics and fault codes, which differ from strictJSON/jcs above: strictIJSON admits finite non-integer
 // numbers and noncharacters, nests at most 8 deep and throws MessagingFault('invalid_json'); ijsonJCS admits
 // noncharacters and throws MessagingFault(code). Merging the two profiles would change verdicts, so it waits for a

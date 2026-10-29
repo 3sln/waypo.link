@@ -1,10 +1,9 @@
 // Broker/SET cryptography is an explicit trusted service port; these engine operations recheck local authority
 // in the mailbox transaction. No token, snapshot or populated binding is treated as approval by itself.
 import {MailboxAction,MailboxQuery,ownerOf,operations} from '../../../packages/messaging-engine/engine.mjs';
-import {BridgeReceive} from '../../../packages/messaging-engine/domains/bridge.mjs';
 import {KEYS,readConfig} from '../../../packages/messaging-engine/store/mailbox.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
-import {MAILBOX_CONTRACT,INTAKE_CONTRACT} from '../../../packages/messaging-protocol/index.mjs';
+import {MAILBOX_CONTRACT} from '../../../packages/messaging-protocol/index.mjs';
 import {APP_BRAND} from './brand.mjs';
 const invalid=()=>fault('invalid_input','Invalid integration request.',400),denied=()=>fault('not_authorized','Not authorized.',403);
 export const resourceId=config=>new URL(`/bindle/mailbox/${config.principal.subject}`,config.ingress).href;
@@ -22,22 +21,13 @@ export class MailboxDescribe extends MailboxQuery {
 export class MailboxDiscover extends MailboxQuery {
  static operation='shell.discover';static deps=['mailboxStore'];
  async fetch({mailboxStore:store}){
-  const config=await authority(store,ownerOf(this.actor),this.input?.verified,{purpose:'discover'}),q=this.input?.query,contracts=[MAILBOX_CONTRACT,INTAKE_CONTRACT],id=resourceId(config);
+  const config=await authority(store,ownerOf(this.actor),this.input?.verified,{purpose:'discover'}),q=this.input?.query,contracts=[MAILBOX_CONTRACT],id=resourceId(config);
   if(!q||q.v!==1||!Array.isArray(q.contracts)||!q.contracts.length||q.contracts.some(c=>!contracts.includes(c))||!Number.isInteger(q.limit??50)||(q.limit??50)<0||(q.limit??50)>100||q.text!=null&&(typeof q.text!=='string'||[...q.text].length>200)||q.ids!=null&&(!Array.isArray(q.ids)||q.ids.length>50||q.ids.some(id=>typeof id!=='string')))invalid();
   if(q.facets!=null&&(typeof q.facets!=='object'||Array.isArray(q.facets))||q.cursor!=null&&(typeof q.cursor!=='string'||q.cursor.length>1024)||q.parent!=null&&(typeof q.parent!=='string'||q.parent.length>2048))invalid();
   if(q.facets&&Object.keys(q.facets).length)fault('unsupported_facet','Unsupported facet.',400);
   if(q.ids!=null&&(q.text!=null||q.parent!=null||q.facets&&Object.keys(q.facets).length))invalid();
   const exists=!q.parent&&!q.cursor&&(!q.ids||q.ids.includes(id))&&(!q.text||APP_BRAND.toLowerCase().includes(q.text.toLowerCase()));
   return q.limit===0?{v:1,items:[],exists}:{v:1,items:exists?[{id,label:APP_BRAND,contracts,container:false,facets_applied:[]}]:[],cursor:null};
- }
-}
-// Reuse B2's proven admission implementation while wrapping its commit handle with live local broker checks.
-export class MailboxPublicIntake extends BridgeReceive {
- static operation='shell.public-intake';
- async run(resources){const {receive,bridge}=resources,store=receive.store,owner=this.actor?.owner,v=this.input?.verified;
-  await authority(store,owner,v,{purpose:'invoke',write:true,resource:this.input?.resource,method:'deliver'});
-  const guarded={get:key=>store.get(key),list:options=>store.list(options),transaction:work=>store.transaction(async tx=>{await authority(tx,owner,v,{purpose:'invoke',write:true,resource:this.input?.resource,method:'deliver'});return work(tx);})};
-  const body=new TextEncoder().encode(JSON.stringify({version:'0',tx:this.input.tx,resource:this.input.resource,contract:this.input.contract,method:'deliver',args:this.input.args}));const receiver=new BridgeReceive({actor:this.actor,input:{body,consumer:this.input.consumer,resource:this.input.resource}});return receiver.run({...resources,receive:{...receive,store:guarded},bridge:{...bridge,store:guarded}});
  }
 }
 export class MailboxIntegrationEvent extends MailboxAction {
@@ -69,4 +59,4 @@ export class MailboxPurgeExpired extends MailboxAction {
  static operation='shell.purge-expired';static deps=['mailboxStore','clock'];
  run({mailboxStore:store,clock}){return store.transaction(async tx=>{const pending=await tx.get('shell:purge');if(!pending)return {purged:false};const grant=await tx.get('shell:authorization');if(grant?.generation>=pending.floor){await tx.delete('shell:purge');return {purged:false};}if(pending.at>clock.now())return {purged:false};await purge(tx);return {purged:true};});}
 }
-export const INTEGRATION_OPERATIONS=operations(MailboxPurgeExpired,MailboxDescribe,MailboxDiscover,MailboxPublicIntake,MailboxIntegrationEvent);
+export const INTEGRATION_OPERATIONS=operations(MailboxPurgeExpired,MailboxDescribe,MailboxDiscover,MailboxIntegrationEvent);

@@ -1,5 +1,7 @@
 # Public email bridge to Bindle
 
+> **Status: removed 2026-10-28** (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). Nothing in this design is implemented (the earlier local implementation was removed); kept as design history.
+
 > **Superseded in part (2026-10-27).** The bridge no longer delivers into owner message resources or conversation invitations: peer messaging is the Parlay app, the bridge forwards to the messaging app the owner chose, and slots are removed (extensions revision 3, draft). The email bridge is a 3sln.me feature; a short 3sln.me feature doc is planned. Links to `packages/messaging/*` below point at deleted code.
 
 Status: provisional design, 2026-10-13. No receiving route, DNS record, sending identity, runtime feature or production capability is implemented or enabled by this document. Human reviewer: ______ Date: ______ Outcome: ______. Independent review: [public email bridge review](../release/public-email-bridge-review.md).

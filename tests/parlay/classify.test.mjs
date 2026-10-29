@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import {createTestEngine} from './helpers/engine.mjs';
 import {createTagsProvider} from '../../packages/messaging-engine/domains/tags.mjs';
 import {organizationProviders} from '../../packages/messaging-engine/domains/views.mjs';
-import {base64url} from '../../packages/messaging-protocol/index.mjs';
 import {TAXONOMY} from '../../packages/messaging-engine/domains/categories.mjs';
 import {decodeBase64url} from '../../packages/sdk/src/item-classification.mjs';
 import {classifierDouble,classifierPort} from '../helpers/classifier-double.mjs';
 // Parlay binds pins to {model id, model version, its own taxonomy}; the classifier reports only the model.
 const MODEL={model:'triage',version:'1',schema:TAXONOMY},pin={...MODEL,thresholds:{social:.8,spam:.97,automation:.9,promotional:.8}},encoder=new TextEncoder();
 const fresh=(t,classifier=null,extra={})=>{const e=createTestEngine({providers:{...organizationProviders({PARLAY_ENABLED:true,classifier}),...extra}});t.after(()=>e.dispose());return e;};
-const put=(e,id='a',extra={})=>e.store.put('item/'+id,{id,origin:'channel',kind:'channel',subject:'',receivedAt:10,state:'inbox',tags:[],notification:'push',asserted:{automation:['auto-submitted','list-id'],sender:{headerFrom:'private@sender.example'}},message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(encoder.encode('Hello 123456 https://signed.example/token?secret=private bearer secretBearerValue bindle_meta=capability '+'😀'.repeat(3000)))}]},...extra});
+// A native one-off message with a text/plain body (bridged channel items went with the email bridge, 2026-10-28).
+const put=async(e,id='a',extra={},text='Hello 123456 https://signed.example/token?secret=private bearer secretBearerValue bindle_meta=capability '+'😀'.repeat(3000))=>{await e.store.put('body/'+id,encoder.encode(text));await e.store.put('item/'+id,{id,origin:'native',kind:'one-off',subject:'',content:{mimeType:'text/plain'},receivedAt:10,state:'inbox',tags:[],notification:'push',...extra});};
 const enable=e=>e.run('classify.settings',{input:{consent:true,pin}});
 // A host port over the shared item-classification fragment (categories.mjs): the approved field values, capabilities and
 // classify per resource. One score per label Parlay asked for (unlisted labels score 0).
@@ -20,11 +20,11 @@ const answer=(input,labels,evidence=MODEL)=>({scores:Object.fromEntries(input.la
 const fake=(labels={social:.9},evidence=MODEL,{values={text:TEXT,textDetail:'full'},capabilities=TEXT_CAPS}={})=>({calls:[],resources:[],values,async fields(){return structuredClone(this.values);},async capabilities(){return structuredClone(capabilities);},async classify(resource,input){this.calls.push(input);this.resources.push(resource);return answer(input,labels,evidence);}});
 const sent=call=>new TextDecoder().decode(decodeBase64url(call.item.data));
 
-test('classification without a classifier, consent or allowance yields header hints only and never finalizes/rejects',async t=>{
+test('classification without a classifier, consent or allowance adds only the failure tag and never finalizes/rejects',async t=>{
  for(const mode of ['absent','consent','allowance','throw','malformed','requiresConsent']){
   const c=fake();if(mode==='throw')c.classify=async()=>{c.calls.push({});throw new Error('Unavailable');};if(mode==='malformed')c.classify=async()=>({scores:{'sys:spam':1},model:{id:MODEL.model,version:MODEL.version}});if(mode==='requiresConsent')c.classify=async()=>({requiresConsent:true});
   const e=fresh(t,mode==='absent'?undefined:c);await put(e);if(!['absent','consent'].includes(mode))await enable(e);if(mode==='allowance')await e.run('classify.settings',{input:{allowance:0}});
-  const r=await e.run('classify.item',{id:'a'}),failedTag=!['absent','consent'].includes(mode)?['sys:classification-failed']:[];assert.equal(r.source,'heuristic');assert.deepEqual([...r.item.tags].sort(),[...failedTag,'sys:suspected.automation','sys:suspected.promotional']);assert.equal(r.item.quarantined,undefined);assert.equal(r.item.state,'inbox');
+  const r=await e.run('classify.item',{id:'a'}),failedTag=!['absent','consent'].includes(mode)?['sys:classification-failed']:[];assert.equal(r.source,'heuristic');assert.deepEqual([...r.item.tags].sort(),[...failedTag]);assert.equal(r.item.quarantined,undefined);assert.equal(r.item.state,'inbox');
   if(['absent','consent','allowance'].includes(mode))assert.equal(c.calls.length,0);
   // Without consent nothing was wanted; with consent, every shortfall fails the item explicitly (§8.4): the failure tag
   // (owner direction 2026-10-28) with the reason kept in the classifier evidence.
@@ -37,9 +37,9 @@ test('a consented host classifier sees minimized text only, model-bound threshol
  const c=fake({social:.91,spam:.96,promotional:.2}),e=fresh(t,c);await put(e);await enable(e);
  const status=await e.run('classify.status');assert.equal(status.consent,true);assert.deepEqual(status.pins,[pin]);
  const r=await e.run('classify.item',{id:'a'});assert.equal(r.source,'classifier');assert.deepEqual(r.item.tags,['sys:social']);assert.equal(r.item.tagProvenance['sys:social'].source,'rule');assert.equal(r.item.tagProvenance['sys:social'].from,'sys:suspected.social');assert.equal(r.item.automated['sys:suspected.social'].classifier.probability,.91);
- // Full detail (the owner's choice for this field): the source and recognized header hints as context tags; never an origin.
+ // Full detail (the owner's choice for this field): the source as a context tag; never an origin.
  assert.deepEqual(Object.keys(c.calls[0]).sort(),['detail','item','labels','tags']);assert.equal(c.calls[0].detail,'full');assert.deepEqual(Object.keys(c.calls[0].item).sort(),['data','kind','mediaType','size']);assert.deepEqual([c.calls[0].item.kind,c.calls[0].item.mediaType],['text','text/plain']);
- assert.deepEqual(c.calls[0].tags,{source:'email',context:['auto-submitted','list-id']});const text=sent(c.calls[0]);assert.ok(encoder.encode(text).byteLength<=2000);assert.equal(c.calls[0].item.size,encoder.encode(text).byteLength);assert.equal(text.includes('\ufffd'),false);for(const secret of ['123456','signed.example','secretBearerValue','capability','private@sender.example'])assert.equal((text+JSON.stringify(c.calls[0].tags)).includes(secret),false,secret);
+ assert.deepEqual(c.calls[0].tags,{source:'message'});const text=sent(c.calls[0]);assert.ok(encoder.encode(text).byteLength<=2000);assert.equal(c.calls[0].item.size,encoder.encode(text).byteLength);assert.equal(text.includes('\ufffd'),false);for(const secret of ['123456','signed.example','secretBearerValue','capability'])assert.equal((text+JSON.stringify(c.calls[0].tags)).includes(secret),false,secret);
  const before=await e.store.get('item/a');await e.run('classify.item',{id:'a'});assert.deepEqual(await e.store.get('item/a'),before,'repeated identical evidence has no state changes');
 });
 test('new model/version/schema is calibration only; disabled defaults leave genuine suspected tags',async t=>{
@@ -105,7 +105,7 @@ test('post-intake tag overflow skips tag changes while retaining evidence and qu
 // Item-classification §8 (provisional): per-kind selection with the fallback field, the owner's detail ceiling per field,
 // the no-effect failover rule, explicit unscored items and owner-visible gaps.
 test('the detail level of the field actually used bounds what Parlay sends; absent means minimal',async t=>{
- for(const [values,detail,tags] of [[{text:TEXT},'minimal',undefined],[{text:TEXT,textDetail:'minimal'},'minimal',undefined],[{text:TEXT,textDetail:'standard'},'standard',undefined],[{text:TEXT,textDetail:'full'},'full',{source:'email',context:['auto-submitted','list-id']}],[{fallback:FALLBACK,textDetail:'full'},'minimal',undefined],[{fallback:FALLBACK,fallbackDetail:'full'},'full',{source:'email',context:['auto-submitted','list-id']}],[{text:TEXT,textDetail:'everything'},'minimal',undefined]]){
+ for(const [values,detail,tags] of [[{text:TEXT},'minimal',undefined],[{text:TEXT,textDetail:'minimal'},'minimal',undefined],[{text:TEXT,textDetail:'standard'},'standard',undefined],[{text:TEXT,textDetail:'full'},'full',{source:'message'}],[{fallback:FALLBACK,textDetail:'full'},'minimal',undefined],[{fallback:FALLBACK,fallbackDetail:'full'},'full',{source:'message'}],[{text:TEXT,textDetail:'everything'},'minimal',undefined]]){
   const c=fake(undefined,undefined,{values}),e=fresh(t,c);await put(e);await enable(e);await e.run('classify.item',{id:'a'});
   assert.equal(c.calls[0].detail,detail,JSON.stringify(values));assert.deepEqual(c.calls[0].tags,tags,JSON.stringify(values));assert.equal(c.resources[0],values.text??values.fallback);
  }
@@ -143,7 +143,7 @@ test('no classifier for text, or none that can classify it, is an unscored item 
 });
 test('engine path through the contract test double: Parlay arguments pass contract validation and scores come back',async t=>{
  const double=classifierDouble({log:true}),port=classifierPort({values:{text:TEXT,textDetail:'full'},resources:{[TEXT]:double}}),e=fresh(t,port);
- await put(e,'a',{message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(encoder.encode('your social plans for friday'))}]}});
+ await put(e,'a',{},'your social plans for friday');
  await e.run('classify.settings',{input:{consent:true,pin:{model:'test/double',version:'1',schema:TAXONOMY,thresholds:{social:.9}}}});
  const r=await e.run('classify.item',{id:'a'});assert.equal(r.source,'classifier');assert.equal(r.item.automated['sys:suspected.social'].classifier.probability,.95);
  assert.deepEqual(port.dispatches.map(d=>d.method),['capabilities','classify']);assert.equal(new Set(port.dispatches.map(d=>d.tx)).size,2,'a fresh tx per call');

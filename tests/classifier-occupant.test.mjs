@@ -200,10 +200,10 @@ test('Parlay through the built-in: its 11 categories are split into calls of at 
  const f=await fixture(t,{plan:'ultra'}),built={capabilities:async()=>f.read(X.ClassifierCapabilities,system,{}),classify:args=>f.classify(args)},port=classifierPort({values:{text:'builtin',textDetail:'full'},resources:{builtin:built}});
  const box=mailboxEngine({providers:organizationProviders({PARLAY_ENABLED:true,classifier:port})});t.after(()=>box.dispose());
  await box.run('classify.settings',{input:{consent:true,pin:{model:X.CLASSIFIER_MODEL,version:VERSION,schema:TAXONOMY,thresholds:{social:.9}}}});const rules=await box.run('rules.list');await box.run('rules.replace',{input:{rules:rules.map(r=>({...r,enabled:false}))}});
- await box.store.put('item/a',{id:'a',origin:'channel',kind:'channel',subject:'',receivedAt:10,state:'inbox',tags:[],asserted:{automation:['list-id','x-private-header']},message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(enc.encode('Hello friend'))}]}});
+ await box.store.put('body/a',enc.encode('Hello friend'));await box.store.put('item/a',{id:'a',origin:'native',kind:'one-off',subject:'',content:{mimeType:'text/plain'},receivedAt:10,state:'inbox',tags:[]});
  const result=await box.run('classify.item',{id:'a'});assert.equal(result.status,'complete');assert.deepEqual(result.item.tags,['sys:suspected.social']);
  assert.deepEqual(f.modelCalls.map(c=>Object.keys(c.request.questions).length),[6,5]);assert.deepEqual(f.modelCalls.flatMap(c=>Object.keys(JSON.parse(c.request.state).categories)),TAG_CATEGORIES);
- assert.deepEqual(JSON.parse(f.modelCalls[0].request.state).categories.spam,CATEGORY_DESCRIPTIONS.spam);assert.deepEqual(JSON.parse(f.modelCalls[0].request.state).untrusted_item.tags,{source:'email',context:['list-id']});
+ assert.deepEqual(JSON.parse(f.modelCalls[0].request.state).categories.spam,CATEGORY_DESCRIPTIONS.spam);assert.deepEqual(JSON.parse(f.modelCalls[0].request.state).untrusted_item.tags,{source:'message'});
 });
 
 test('discovery: descriptors list both methods, the manifest lists the contract only while offered, and the fragment is served',async t=>{

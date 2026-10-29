@@ -38,6 +38,7 @@ import {messagingMailboxMounted} from '../../app/domains/provider-features.mjs';
 import {EXT} from '../../core/extensions.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
 import {StorageError} from '../../storage/policy.mjs';
+import {resetEmailBridge,EMAIL_BRIDGE_RESET_MARKER} from '../email-bridge-reset.mjs';
 import {GOOGLE_DRIVE_INTEGRATION} from '../../storage/google-drive-integration.mjs'; // EXT-X10 registry entry
 
 export const CONNECTION_ENGINE_OPERATIONS=operations(...CONNECTION_OPERATIONS);
@@ -82,6 +83,14 @@ async function exclusiveOccupant(c,{owner,fragment}={}){
 }
 
 export const methods={
+ /** One bounded slice of the email-bridge removal reset (../email-bridge-reset.mjs). Called from `warm` and the account
+  * alarm (accounts.mjs); reschedules itself until the marker exists. */
+ async resetEmailBridge(owner,{alarm=false,limit=256}={}){
+  if(await this.metadata.get(EMAIL_BRIDGE_RESET_MARKER)!==undefined)return {done:true,deleted:0};
+  const result=await resetEmailBridge(this.metadata,{limit});
+  if(!result.done)await this.scheduleAlarm(Date.now()+(alarm?1000:60000));
+  return result;
+ },
   async connectionClientAuth(owner,clientId){if(!await bound(this,owner))return null;const binding=await this.apps.binding(owner,clientId);return binding?.id?this.brokeredIntegrationAuth(owner,{connection:binding.id}):null;},
   async connectionsSetupComplete(owner,input){return this.connectionsSystem(owner,{operation:'connections.configured',input});},
   async connectionsOwner(owner,{operation,id,input}={},{authTime}={}){

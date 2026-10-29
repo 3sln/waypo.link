@@ -84,7 +84,7 @@ A provider that does not declare `integrations.v1` MUST refuse a confidential cl
     "resources": {
       "rpc_endpoint": "https://inbox.example/bindle/rpc",
       "discovery_endpoint": "https://inbox.example/bindle/resources",
-      "contracts": ["https://spec.bindle.example/contracts/public-intake/v1"],
+      "contracts": ["https://spec.bindle.example/messaging/v1/contracts/mailbox"],
       "dpop": "supported"
     }
   }
@@ -211,7 +211,7 @@ Host: inbox.example
 Authorization: Bearer <provider-minted JWT>
 Content-Type: application/json
 
-{"v":1,"contracts":["https://spec.bindle.example/contracts/public-intake/v1"],
+{"v":1,"contracts":["https://spec.bindle.example/messaging/v1/contracts/mailbox"],
  "text":"work","facets":{},"parent":null,"ids":null,"cursor":null,"limit":50}
 ```
 
@@ -241,7 +241,7 @@ Its lifetime is at most 60 seconds.
 ```json
 {"v":1,"items":[
   {"id":"https://inbox.example/r/7f3a","label":"Work inbox","description":"Messages for work",
-   "contracts":["https://spec.bindle.example/contracts/public-intake/v1"],
+   "contracts":["https://spec.bindle.example/messaging/v1/contracts/mailbox"],
    "container":false,"facets_applied":[]}
  ],"cursor":null}
 ```
@@ -577,7 +577,7 @@ A hint carries no data and no authority. It only schedules revalidation (§4.4),
 
 | Party offline | Effect |
 | --- | --- |
-| Provider | Consumers cannot refresh brokered tokens, so brokered access ends within one token lifetime (fail closed). Integrations cannot read preferences or send hints. Queued events resume when it returns. Provider consumers, such as an email bridge, stop with the provider. |
+| Provider | Consumers cannot refresh brokered tokens, so brokered access ends within one token lifetime (fail closed). Integrations cannot read preferences or send hints. Queued events resume when it returns. Provider consumers, such as provider features, stop with the provider. |
 | Integration | Its resources fail with `temporarily_unavailable` or network errors. `ordered` slots fail over where permitted ([extensions §3.3](../extensions.md#33-failover-for-ordered)). Events and revalidation are retried. Setup steps on the integration's own pages cannot complete. The connection becomes `degraded` after the retry window. |
 | Consumer | No effect on others. |
 | Slot or fragment publisher | Pinned copies govern ([extensions §7](../extensions.md#7-versioning-change-and-disappearance)). |

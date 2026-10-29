@@ -47,8 +47,7 @@
   "rpc_endpoint": "https://messages.example/bindle/rpc",
   "discovery_endpoint": "https://messages.example/bindle/resources",
   "contracts": [
-   "https://spec.bindle.example/messaging/v1/contracts/mailbox",
-   "https://spec.bindle.example/contracts/public-intake/v1"
+   "https://spec.bindle.example/messaging/v1/contracts/mailbox"
   ],
   "dpop": "none"
  }

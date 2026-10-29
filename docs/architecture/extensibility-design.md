@@ -166,6 +166,8 @@ These examples exercise the mechanism. They do not design the messaging app ([me
 
 ### 7.1 Email bridge hands off to the owner's messaging app
 
+> **Update:** the email bridge and the public-intake handoff were removed 2026-10-28 (owner direction; revisit later).
+
 The messaging interop spec publishes slot `…/slots/public-message-intake/v1`: one field `occupant`, contracts `[…/contracts/public-intake/v1]` (method `deliver({message, provenance})`, idempotent per `tx`), `selection: "exclusive"`, `consumers: ["provider", "application"]`.
 
 1. **3sln.me manifest** declares `features: {"extensions.v1":{}, "integrations.v1":{…}, "brokered-resources.v1":{}}` and `extensions: [{"slot": "…/public-message-intake/v1", "role": "consumer", "ref": "email-bridge", "purpose": "Delivers email sent to your public address."}]`.

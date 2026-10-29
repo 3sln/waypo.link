@@ -37,7 +37,7 @@ Input: the owner directions recorded in DEVLOG "2026-10-28 — Owner directions:
 | Signaling (`signaling/v1`) | Built-in, listed in manifest `contracts` | Fields; signaling owner pages | Owner assigns. Kind approvals via intents |
 | Connection relay (`ice-relay/v1`, TURN) | Built-in | Fields | Owner assigns. Per-plan relay allowance (RTC-f, provisional). `SIGNALING_TURN_ENABLED` |
 | Classifier (`item-classification/v1`, Workers AI) | Built-in (CR-X3-25) | Fields | An earlier 2026-10-28 direction withdrew the default classifier; the later owner direction of the same day restores a built-in classifier for paid tiers only, on 3sln.me's plan, highly rate-limited per tier (§3.8). Its implementation belongs to the concurrent classifier work |
-| Email bridge | Provider feature (`PROVIDER_EXT.emailBridge`, consumes the `intake` field) plus an email-bridge callback resource | Console "Provider features" | Owner enables, with recent auth. Paid-only (`account/email-bridge.mjs`) |
+| Email bridge | Removed 2026-10-28 (owner direction, DEVLOG "Owner direction: strike the email bridge for now"; revisit later). Was: provider feature (`PROVIDER_EXT.emailBridge`, consumes the `intake` field) plus an email-bridge callback resource | — | — |
 | Messaging mailbox | Provider feature of the Parlay-published extension, with a key-delegation declaration | Console "Provider features" | Owner enables, with recent auth. Several flags |
 | Key delegation / member certificates | Extension declaration (not a resource) | Parlay / orgs | Certifies only through the mailbox feature or org membership |
 | Google Drive | Built-in integration (`BUILT_IN_INTEGRATIONS`) whose upstream folders are adapter resources | Console "Available built-in services" | Owner connects, then Google OAuth (`drive.file`). Gated only on Google being configured, **not on plan** |
@@ -48,7 +48,7 @@ Input: the owner directions recorded in DEVLOG "2026-10-28 — Owner directions:
 
 Observations:
 
-- **Nothing summarises a plan.** Plan contents are scattered across code: `storageBytes`, activity limits, relay allowance, the email-bridge check, search budgets.
+- **Nothing summarises a plan.** Plan contents are scattered across code: `storageBytes`, activity limits, relay allowance, search budgets (the email-bridge check was removed 2026-10-28 (owner direction; revisit later)).
 - **"Built-in" means two different things in the console.** The "Built-in" kind label is used for built-in integrations (Drive). The "Provided by 3sln.me" marker is used for built-in resources.
 - **Built-ins have no home in the console.** They appear only as field candidates, and provider features sit in their own section.
 
@@ -80,7 +80,7 @@ Observations:
 - **Extend the plan record** with `includes`: a list of `{item, allowance?}`. An item is a built-in kind (`hosted-storage`, `relay`, …), a provider-feature spec URL, a built-in integration id (`cloudflare`, `google-drive`) or a service (`semantic-search`).
   - Static mode: in `BILLING_PLANS`.
   - Metadata mode: validated like `validPlanParameters`, with unknown items ignored.
-- **One source of truth.** Server gates (`email-bridge.mjs`, search admission, relay allowance, `connectBuiltIn`) read `includes` instead of hard-coded `['paid','plus','ultra']` checks.
+- **One source of truth.** Server gates (search admission, relay allowance, `connectBuiltIn`) read `includes` instead of hard-coded `['paid','plus','ultra']` checks.
 - **Never trust the browser.** The card renders only what the server reports.
 
 ### 2.4 Plan changes
