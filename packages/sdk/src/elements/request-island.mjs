@@ -13,7 +13,10 @@ export function mountRequestIsland({element,container,session,spec,prepare,onFlo
  const tokens=()=>({});
  const frame=element.ownerDocument.createElement('iframe');frame.src=islandURL(embedOrigin,clientId,'request',version);frame.name=formatIslandName({nonce,lang:lang(),colorScheme:scheme()});frame.title=requestText(lang())[element.kind==='configure'?'settings':'access'];frame.referrerPolicy='no-referrer';
  frame.setAttribute('allow',"identity-credentials-get 'none'; storage-access 'none'; browsing-topics 'none'; attribution-reporting 'none'; shared-storage 'none'; join-ad-interest-group 'none'; run-ad-auction 'none'; private-aggregation 'none'; sync-xhr 'none'");
- Object.assign(frame.style,{display:'block',border:'0',inlineSize:'100%',blockSize:'3.5em',colorScheme:scheme()});
+ // Same fixed height rule as the sign-in island (44, or 48 on coarse pointers, scaled with the root font size):
+ // an embedder-side constant, never derived from island content (C1).
+ const coarse=win.matchMedia?.('(pointer: coarse)')?.matches,scale=Number.parseFloat(win.getComputedStyle?.(element.ownerDocument.documentElement)?.fontSize)/16||1;
+ Object.assign(frame.style,{display:'block',border:'0',inlineSize:'100%',blockSize:`${(coarse?48:44)*scale}px`,colorScheme:scheme()});
  let live=false,dead=false,port=null,loads=0,flow=false,received=false,prepared=null,seq=0,calls=Promise.resolve(),violations=[],previous=null;
  const post=m=>{if(live&&!dead)port.postMessage(m);};
  const close=()=>{clearTimeout(timer);observer?.disconnect();port?.close();frame.remove();session.removeEventListener('bindle-session-change',changed);};

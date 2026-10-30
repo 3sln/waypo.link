@@ -29,7 +29,7 @@ For `alice@example.org`, fetch `https://example.org/.well-known/bindle/manifest.
   "version": "0",
   "issuer": "https://example.org",
   "authorization_request_endpoint": "https://example.org/api/oauth/requests",
-  "preferences_contract": "https://3sln.me/artefacts/contracts/preferences/v1",
+  "preferences_contract": "https://3sln.me/artefacts/contracts/preferences/v2",
   "authorization_endpoint": "https://example.org/oauth/authorize",
   "token_endpoint": "https://example.org/oauth/token",
   "rpc_endpoint": "https://example.org/bindle/rpc",

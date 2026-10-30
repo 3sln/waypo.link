@@ -22,7 +22,9 @@ import {validateBusManifest} from '../federation/event-buses.mjs';
 // observed the old version-1 record would answer `artefact_history_rewritten` for the line forever, so the store moves
 // to a fresh name (Worker: a new Durable Object; Node: a new SQLite file). O(1), idempotent; the old store is abandoned
 // unread. Grants or requests that still pin an old digest fail closed (`artefact_digest_mismatch`) until re-consent.
-export const ARTEFACT_STORE='bindle-artefacts-v2',ARTEFACT_STORE_FILE='artefacts-v2.sqlite';
+// Preferences v1 drop (2026-10-29, coordinator decision under owner delegation, provisional): preferences/v2 was
+// rewritten in place again (its description no longer says brokering-only), so the store moves once more (same reset).
+export const ARTEFACT_STORE='bindle-artefacts-v4',ARTEFACT_STORE_FILE='artefacts-v4.sqlite';
 // Messaging-published intent kinds this provider ships as operator-reviewed documents (contacts spike §4.2, CL-11,
 // CR-C3, contacts phase 4; provisional, unsigned). Kinds stay public URL-identified artefacts: the intents code hard-codes
 // none, and these are ordinary operator registrations, pinned only while INTENT_LINKS_ENABLED (the intent router is their

@@ -9,7 +9,7 @@ import {mintBootToken,bootTokenDigest} from '../packages/identity/boot.mjs';
 import {IdentityCrypto,encode} from '../packages/identity/crypto.mjs';
 import {createScheduler,injectFaults,forEachSeed,fakeClock} from './helpers/chaos.mjs';
 
-const origin='https://admin.example',start=1792000000000,PASSWORD='long boot operator password';
+const origin='https://admin.example',start=1792000000000,BOOT_KEY='boot-passkey';
 const catalogWith=description=>({version:1,capabilities:{'beta.access':{class:'user',description:'Try beta features.'}},roles:{beta:{class:'user',name:'Beta',description,capabilities:['beta.access']},early:{class:'user',name:'Early',description:'Early access.',capabilities:[]}},badgeClasses:{}});
 function fixture({random,faults,txFaults}={}){
  const clock=fakeClock(start),raw=new SqliteMetadata(':memory:');
@@ -19,13 +19,15 @@ function fixture({random,faults,txFaults}={}){
  const accounts=new Map(),repository={get:async id=>structuredClone(accounts.get(id)??null),findByHandle:async()=>null,onboardingLookup:async()=>null};
  const identity={origin(context){if(context?.origin!==origin)throw Object.assign(new Error('csrf'),{code:'csrf'});},crypto:new IdentityCrypto(),repository,config:{}};
  const config={APP_ORIGIN:origin,BOOT_ACCESS_HOURS:'24',ONBOARDING_KEY:encode(new Uint8Array(32).fill(5))},issued=[];
- const admin=new AdminService({store,identity,onboarding:{issue:async token=>{issued.push(token);}},webauthn:{registrationOptions:async()=>({challenge:'reg'})},passwordHasher:{hash:async x=>'hash:'+x,verify:async(x,h)=>h==='hash:'+x},rateLimiter:{check:async()=>true},clock:clock.now,config});
+ const admin=new AdminService({store,identity,onboarding:{issue:async token=>{issued.push(token);}},webauthn:{registrationOptions:async()=>({challenge:'reg'}),verifyRegistration:async({response})=>{if(response?.ok!==true)throw Error('bad');return {id:response.id,publicKey:'pk',counter:0};},authenticationOptions:async()=>({challenge:'auth'}),verifyAuthentication:async({response})=>{if(response?.ok!==true)throw Error('bad');return {counter:1,backedUp:false};}},rateLimiter:{check:async()=>true},clock:clock.now,config});
  const ctx=(extra={})=>({origin,remoteIP:'192.0.2.9',...extra});
  const deploy=async()=>{const token=mintBootToken(origin,{now:clock.now()});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);return token;};
- const claimBoot=async(token,binding='boot-browser')=>{await admin.bootStart({bootToken:token},ctx({setupBinding:binding}));const result=await admin.bootComplete({bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},ctx({setupBinding:binding}));return ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken});};
+ const claimBoot=async(token,binding='boot-browser')=>{await admin.bootStart({bootToken:token},ctx({setupBinding:binding}));const result=await admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},ctx({setupBinding:binding}));return ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken});};
+ // Boot is passkey only (2026-10-29, provisional).
+ const bootLogin=async()=>{const begun=await admin.bootLoginBegin({},ctx());return admin.bootLogin({method:'passkey',challengeId:begun.challengeId,response:{id:BOOT_KEY,ok:true}},ctx());};
  const addAccount=()=>{const id=crypto.randomUUID();accounts.set(id,{id,assignmentId:crypto.randomUUID(),handle:'n.'+accounts.size+'a',status:'active',createdAt:start,lastActiveAt:start,credentials:[],sessions:[]});return id;};
  const audit=async()=>{const rows=[];let startAfter='';for(;;){const page=await storage.list('audit/',{startAfter,limit:100});if(!page.length)return rows;rows.push(...page.map(r=>r.value));startAfter=page.at(-1).key;}};
- return {admin,storage,raw,scheduler,clock,ctx,deploy,claimBoot,addAccount,audit,issued,close:()=>raw.close()};
+ return {admin,storage,raw,scheduler,clock,ctx,deploy,claimBoot,bootLogin,addAccount,audit,issued,close:()=>raw.close()};
 }
 // The whole log verifies, sequence numbers have no gaps, and the head is the last entry.
 async function assertAuditIntact(f){const rows=await f.audit();assert.deepEqual(await f.storage.verifyAudit(),{valid:true,seq:rows.length});assert.deepEqual(rows.map(r=>r.seq),rows.map((_,i)=>i+1));return rows;}
@@ -52,7 +54,7 @@ test('a boot token is reserved once and consumed once across seeded interleaving
   const token=await f.deploy(),starts=await f.scheduler.run(['a','b','c'].map(b=>()=>f.admin.bootStart({bootToken:token},f.ctx({setupBinding:b}))));
   assert.equal(starts.filter(r=>r.status==='fulfilled').length,1);assert(codes(starts).every(c=>c==='boot_token_consumed'));
   const winner=['a','b','c'][starts.findIndex(r=>r.status==='fulfilled')],loser=winner==='a'?'b':'a';
-  const complete=binding=>()=>f.admin.bootComplete({bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},f.ctx({setupBinding:binding}));
+  const complete=binding=>()=>f.admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},f.ctx({setupBinding:binding}));
   const done=await f.scheduler.run([complete(winner),complete(winner),complete(loser),complete('fresh')]);
   assert.equal(done.filter(r=>r.status==='fulfilled').length,1);assert.equal(done[0].status==='fulfilled'||done[1].status==='fulfilled',true,'only the reserving browser completes');
   assert(codes(done).every(c=>c==='boot_token_consumed'));
@@ -120,10 +122,10 @@ test('duplicate delivery of a boot completion consumes the token once and the op
  const f=fixture({faults:[{method:'commit',mode:'duplicate',when:call=>Object.keys(call.args[0]?.writes??{}).includes('boot/principal')}]});try{
   const token=await f.deploy();await f.admin.bootStart({bootToken:token},f.ctx({setupBinding:'b'}));
   // The duplicate's refusal is what the caller sees; the first delivery already applied.
-  await assert.rejects(f.admin.bootComplete({bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},f.ctx({setupBinding:'b'})),{code:'boot_token_consumed'});
+  await assert.rejects(f.admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},f.ctx({setupBinding:'b'})),{code:'boot_token_consumed'});
   assert.equal((await f.storage.get('boot/principal')).generation,1);
   await assert.rejects(f.admin.bootStart({bootToken:token},f.ctx({setupBinding:'b'})),{code:'boot_token_consumed'});
-  const fault=f.admin.store;f.admin.store=f.storage;try{const login=await f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx());assert.match(login.sessionToken,/^[A-Za-z0-9_-]{43}$/);}finally{f.admin.store=fault;}
+  const fault=f.admin.store;f.admin.store=f.storage;try{const login=await f.bootLogin();assert.match(login.sessionToken,/^[A-Za-z0-9_-]{43}$/);}finally{f.admin.store=fault;}
   assert.equal((await assertAuditIntact(f)).filter(e=>e.action==='boot.claim').length,1);
  }finally{f.close();}
 });
@@ -132,7 +134,7 @@ test('clock jumps fail closed: backwards before step-up and past boot expiry ref
  const f=fixture();try{
   const boot=await f.claimBoot(await f.deploy()),head=await f.storage.get('audit-head');
   f.clock.advance(-1);await assert.rejects(f.admin.reserve({name:'helpdesk'},boot),{code:'step_up_required'});await assert.rejects(f.admin.overview({},boot),{code:'step_up_required'});
-  f.clock.set(start+24*3600000);await assert.rejects(f.admin.reserve({name:'helpdesk'},boot),{code:'boot_expired'});await assert.rejects(f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx()),{code:'boot_expired'});
+  f.clock.set(start+24*3600000);await assert.rejects(f.admin.reserve({name:'helpdesk'},boot),{code:'boot_expired'});await assert.rejects(f.bootLogin(),{code:'boot_expired'});
   assert.deepEqual(await f.storage.get('audit-head'),head);assert.equal(await f.storage.get('reservation/helpdesk'),null);
  }finally{f.close();}
 });
@@ -157,7 +159,7 @@ test('bounded reads at scale: overview, principal pages, audit pages and boot se
   assert.deepEqual(seen.sort(),owners.sort());
   const latest=await f.admin.audit({},boot);assert(latest.entries.length<=50);assert.equal(latest.verified.valid,true);assert.equal(latest.entries.at(-1).seq,latest.head);
   assert.equal((await f.admin.audit({fromSeq:1,verify:true},boot)).verified.valid,true);
-  for(let i=0;i<10;i++)await f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx());
+  for(let i=0;i<10;i++)await f.bootLogin();
   assert((await f.storage.get('boot/sessions')).sessions.length<=3,'boot keeps at most three live sessions');
  }finally{f.close();}
 });

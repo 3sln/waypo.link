@@ -209,9 +209,9 @@ export async function boot({config = {}, contracts = {}} = {}) {
     const code = new URL(decision.redirectUri).searchParams.get('code');
     const token = await (await post('/oauth/token', {clientId: client.id, redirectUri: client.redirectUris[0], code, verifier}, {appOrigin: client.origin, ip: acct.ip})).json();
     const rpc = (bearer, resource, contract, method, args = {}) => post('/bindle/rpc', {version: '0', tx: randomUUID(), resource, contract, method, args}, {bearer, appOrigin: client.origin, ip: acct.ip});
-    const prefsRead = await rpcBody(await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v1', 'read', {fragment: FRAGMENT}));
-    assert.ok(prefsRead.result?.values?.signaling, 'preferences read: ' + JSON.stringify(prefsRead) + ' token: ' + JSON.stringify(token));
-    const ref = prefsRead.result.values.signaling;
+    const prefsRead = await rpcBody(await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v2', 'read', {fragment: FRAGMENT}));
+    assert.ok(prefsRead.result?.values?.signaling?.[0]?.token, 'preferences read: ' + JSON.stringify(prefsRead) + ' token: ' + JSON.stringify(token));
+    const ref = prefsRead.result.values.signaling[0];
     for (const approved of await widen(acct, approve.map(line => ({action: 'session-approve', input: {clientId: client.id, kind: REF[line]}})))) assert.equal(approved.status, 200, 'session handler approval: ' + await approved.clone().text());
     const call = async (method, args = {}) => { const res = await rpc(ref.token, ref.id, CONTRACT, method, args); return {status: res.status, ...await rpcBody(res)}; };
     /** One RPC with a chosen `tx` (protocol §5), for the §10.2 retention rule. */

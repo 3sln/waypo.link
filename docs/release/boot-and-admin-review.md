@@ -27,7 +27,7 @@ F8 details:
 
 - Administrators can manage `bs1` system accounts that do not hold `admin`.
 - A revoke could race a claimant's setup. **Fixed:** a revoked claim never counts as internal provenance.
-- Boot password guessing is limited per IP only.
+- Boot password guessing is limited per IP only. **Superseded:** boot is passkey only (coordinator decision under owner delegation, 2026-10-29, provisional; reviewer ___ / date ___ / outcome ___); no boot password path exists, and stored hashes are dropped by the reset `boot-password-retired-v1` ([boot-and-admin.md](../architecture/boot-and-admin.md)).
 - `boot/status` is public.
 - Boot cannot end its own access early.
 - Restore does not undo administrators created by a compromised boot.

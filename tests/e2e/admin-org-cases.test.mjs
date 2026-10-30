@@ -12,7 +12,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {firefox} from 'playwright';
 import {launch,baseURL,virtualAuthenticator,screenshot} from './browser.mjs';
 const bootToken=process.env.E2E_BOOT_TOKEN||'';
-const BOOT_PASSWORD='correct horse battery staple boot';
 const ORG='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',LAPSE='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',CLAIM='dddddddd-dddd-4ddd-8ddd-dddddddddddd',DAY=86400000;
 async function probe(){try{const response=await fetch(baseURL+'/api/admin/boot/status',{method:'POST',headers:{Origin:baseURL,'Content-Type':'application/json','X-Bindle-Admin-Actor':'boot'},body:'{}'});return response.ok?await response.json():null;}catch{return null;}}
 /** The org-case fixture: one held break-glass claim and one escalated lapse claim; `me` switches operators. */
@@ -57,10 +56,10 @@ test('ORG-12d operator case screens in the real admin shell',async t=>{
  const browsers={chromium:await launch(),firefox:await firefox.launch({headless:true})};t.after(async()=>{for(const b of Object.values(browsers))await b.close();});
  const errors=[];
  // ---- boot mints an administrator (real) ----
- const bootContext=await browsers.chromium.newContext({viewport:{width:1280,height:900}}),boot=await bootContext.newPage();boot.on('pageerror',e=>errors.push(e.message));
+ const bootContext=await browsers.chromium.newContext({viewport:{width:1280,height:900}}),boot=await bootContext.newPage();await virtualAuthenticator(bootContext,boot);boot.on('pageerror',e=>errors.push(e.message));
  await boot.goto(baseURL+'/console?boot');await boot.getByRole('heading',{name:'Set up boot access'}).waitFor();
  await boot.getByLabel('Boot token',{exact:true}).fill(bootToken);await boot.getByRole('button',{name:'Check token',exact:true}).click();await boot.getByRole('heading',{name:'Claim boot access'}).waitFor();
- await boot.getByRole('radio',{name:/Password/}).check();await boot.getByLabel('Boot password',{exact:true}).fill(BOOT_PASSWORD);await boot.getByLabel('Repeat the password',{exact:true}).fill(BOOT_PASSWORD);
+ // Boot is passkey only (2026-10-29, provisional): the virtual authenticator creates the boot passkey.
  await boot.getByRole('checkbox',{name:/I understand boot access ends/}).check();await boot.getByRole('button',{name:'Claim boot',exact:true}).click();await boot.getByRole('heading',{name:'Overview'}).waitFor();
  assert.equal(await boot.getByRole('navigation',{name:'Administration sections'}).getByRole('button',{name:'Organization cases'}).count(),0,'boot is never an operator: no org-case navigation');
  const nav=name=>boot.getByRole('navigation',{name:'Administration sections'}).getByRole('button',{name,exact:true}).click();

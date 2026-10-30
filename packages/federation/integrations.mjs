@@ -287,7 +287,7 @@ export function shapeContractResult(root,method,value,{check=null}={}){
 /** Isolated validator for the shipped JSON Schema dialect. Unsupported assertion keywords fail closed; no registry,
  * coercion, defaults, remote references or mutable compilation cache. The caller keys each instance by record digest. */
 export function compileContractVersion(root){
- const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions','x-permissions','x-status']);
+ const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions','x-permissions','x-status','x-runtime-validation']);
  // CBOR phase 6 keywords (spike §2.5): x-type, x-element, x-shape, x-table, x-minimum, x-maximum (contract-values.mjs).
  const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not','dependentRequired',...X_KEYWORDS]);
  const reference=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');const s=ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);if(s===undefined)fail('artefact_unverifiable');return s;};

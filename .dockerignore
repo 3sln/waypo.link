@@ -1,0 +1,10 @@
+node_modules
+.output
+.wrangler
+.data
+artifacts
+coverage
+dist
+.env
+.env.*
+.dev.vars

@@ -21,7 +21,7 @@ import {key} from '../core/records.mjs';
 import {livePushRows} from '../activity/notifications.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
 
-export const SECURITY_NOTICE_EVENTS=Object.freeze(['email-removed','export-created','export-downloaded','recovery-reissued','recovery-reissue-started','recovery-reissue-cancelled','recovery-reissue-reminder','passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','email-sign-in-enabled','email-sign-in-removed','notice-email-changed','email-sign-in','email-sign-in-cancelled']);
+export const SECURITY_NOTICE_EVENTS=Object.freeze(['email-added','email-removed','export-created','export-downloaded','recovery-reissued','recovery-reissue-started','recovery-reissue-cancelled','recovery-reissue-reminder','passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','email-sign-in-enabled','email-sign-in-removed','notice-email-changed','email-sign-in','email-sign-in-cancelled']);
 const contactReady=channel=>AccountLifecycle.prototype.contactReady.call(null,channel);
 const MAX_PUSH=10;
 

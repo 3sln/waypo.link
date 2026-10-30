@@ -7,7 +7,7 @@ import {siteGlobal,capability} from '../flags/read.mjs';
 import {eventDoorbellGrant} from './event-readers.mjs';
 import {appSessionInventory} from './session-inventory.mjs';
 import {incrementalPort} from './incremental-ports.mjs';
-import {FederationService} from './service.mjs';
+import {FederationService,PREFERENCES} from './service.mjs';
 import {fail} from './schema.mjs';
 import {encode,decode,fingerprintInput} from '../core/cbor.mjs';
 import {AppQuery} from '../app/engine.mjs';
@@ -148,7 +148,7 @@ export class FederationController {
   incrementalPort(method,input){this.requireReady();return incrementalPort(this.service,method,input);}
   ready(){return this.enabled&&(this.clients.length>0||this.clientMetadata)&&typeof this.service.schemaFetcher==='function'&&(typeof this.dispatcher==='function'||typeof this.dispatcher?.execute==='function');}
   requireReady(){if(!this.ready())fail('temporarily_unavailable','Federation is not configured and release enabled.');}
-  manifest(){this.requireReady();return withManifestDeclarations({version:'0',issuer:this.issuer,...providerLegalMetadata(this.issuer),grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},this.manifestDeclarations?.()??{});}
+  manifest(){this.requireReady();return withManifestDeclarations({version:'0',issuer:this.issuer,...providerLegalMetadata(this.issuer),grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:PREFERENCES,authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},this.manifestDeclarations?.()??{});}
   // New grants and preference/resource content require current terms. Reads, token use, denial and revocation
   // retain their ordinary authentication; the identity provider rechecks this trusted context at each owner read.
   authority(context,mutation,requireCurrentTerms=false){return {context:requireCurrentTerms?{...context,requireCurrentTerms:true}:context,mutation};}

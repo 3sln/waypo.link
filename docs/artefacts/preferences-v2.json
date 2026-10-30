@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://3sln.me/artefacts/contracts/preferences/v2",
   "title": "Read approved preference fields with brokered credentials",
-  "description": "Validates the contract method/args projection of a Bindle RPC envelope addressed to @preferences. Every resource-field value is a list of uniform references in owner order (integrations §5.1, AMD-C3/C9). Brokered members name the integration endpoint and resource and carry a provider-minted RFC 9068 token of at most 300 seconds; consumers treat tokens as opaque, never persist them past expires_at and refresh by reading again. Served only by providers declaring brokered-resources.v1. Provisional (EXT-X8, 2026-10-21); publish changes under a new URL.",
+  "description": "Validates the contract method/args projection of a Bindle RPC envelope addressed to @preferences. Every resource-field value is a list of uniform references in owner order (integrations §5.1, AMD-C3/C9). Brokered members name the integration endpoint and resource and carry a provider-minted RFC 9068 token of at most 300 seconds; consumers treat tokens as opaque, never persist them past expires_at and refresh by reading again. The one preferences contract: served by every provider, with brokered members reported unavailable where brokering is not configured. Provisional (EXT-X8, 2026-10-21; preferences/v1 dropped before release, 2026-10-29); publish changes under a new URL.",
   "type": "object",
   "required": ["method", "args"],
   "properties": {
@@ -24,7 +24,7 @@
         "revision": {"type": "string", "maxLength": 80},
         "values": {
           "type": "object",
-          "description": "Approved fields. Non-resource fields keep their v1 value; resource fields are arrays of #/$defs/reference.",
+          "description": "Approved fields. Non-resource fields carry their configured value; resource fields are arrays of #/$defs/reference.",
           "additionalProperties": {
             "anyOf": [
               {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/reference"}},

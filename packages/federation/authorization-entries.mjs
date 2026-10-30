@@ -113,7 +113,7 @@ export class AuthorizationEntries {
   if(input.dpopJkt!==undefined&&(!this.dpop||input.intent==='end-session'||!jktPattern.test(input.dpopJkt)))generic();
   if(input.loginHint!==undefined&&!boundedString(input.loginHint,320)||input.colorScheme!==undefined&&!['light','dark'].includes(input.colorScheme)||input.uiLocales!==undefined&&(!Array.isArray(input.uiLocales)||input.uiLocales.length>4||input.uiLocales.some(tag=>typeof tag!=='string'||tag.length>35||!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,4}$/.test(tag))))generic();
   const members=incremental?incrementalMembers(input,{artefactVersions:this.artefactVersions}):null,requests=incremental?members.requests??[]:this.validRequests(input.requests,input.intent);let digests;
-  if(this.pinSchema&&requests.length){try{digests=await Promise.all(requests.map(async r=>{const pin=await this.pinSchema(this.artefactVersions?r:r.fragment);if(this.artefactVersions){r.digest=pin.digest;if(pin.version)r.version=pin.version;}return pin.digest;}));}catch{generic();}}
+  if(this.pinSchema&&requests.length){try{digests=await Promise.all(requests.map(async r=>{const pin=await this.pinSchema(this.artefactVersions?r:r.fragment);if(this.artefactVersions){r.digest=pin.reference?.digest??pin.digest;if(pin.version)r.version=pin.version;}return pin.digest;}));}catch{generic();}}
   // A hint naming another host is ignored, never resolved at creation.
   const hint=input.loginHint?.split('@'),loginHint=hint?.length===2&&hint[1].toLowerCase()===new URL(this.issuer).host?input.loginHint:undefined;
   // A single-shard host mints IDs on its own shard; 250 random bits remain.

@@ -8,20 +8,21 @@ import {flagsFor,ownerFlags,existingFeature} from './account/flags.mjs';
 //
 // Rows. The X4 connections outbox (packages/apps/connections.mjs) is drained into per-connection rows here, in one
 // transaction with an ingest cursor, and acknowledged afterwards (a lost ack re-reads from the cursor, never twice):
-// `connection-revoked` (generation_floor = the post-bump generation) and `connection-resumed` map to SETs; the other X4
+// `connection-revoked` (generation_floor = the post-bump generation) and `connection-resumed` map to events; the other X4
 // events carry nothing an integration may see. Other writers append in their own commit with enqueueIntegrationEvent(tx)
 // (credential-revoked, resource-detached, preferences-updated markers), or across single writers with the idempotent
 // system Actions. Coalescing: one marker per (connection, fragment) and per detached resource, a newer marker replacing
 // an undelivered or in-flight older one; a connection-revoked supersedes pending ones it covers (floors only rise) and
 // pending resumes below its floor; a resume supersedes older resumes.
 //
-// Delivery (RFC 8417 SETs pushed per RFC 8935). Per connection, revocations go first, then resumes, then the rest; across
-// connections every due revocation goes before any other row. Each attempt is leased (attempt id, next time) in its own
-// commit before anything is signed, then signed afresh (new iat, same jti) and POSTed to the pinned events_endpoint; the
+// Delivery (CBOR phase 5: untagged COSE_Sign1 CWTs, `application/cwt`, packages/core/cose.mjs; push delivery modelled on
+// RFC 8935). Per connection, revocations go first, then resumes, then the rest; across connections every due revocation
+// goes before any other row. Each attempt is leased (attempt id, next time) in its own commit before anything is signed,
+// then signed afresh (new iat, same 16-byte cti) and POSTed to the pinned events_endpoint; the
 // outcome is settled in a second commit that only applies to the same lease. `seq` is assigned when a row is first sent
 // and increases strictly per connection id across generations; a preferences snapshot is rebuilt at every attempt, and a
-// changed snapshot (or generation) gets a fresh jti and seq, so a receiver that already processed the old jti never
-// drops newer state (at-least-once; receivers dedupe by jti and order by seq). 202 acknowledges; 400 is a permanent
+// changed snapshot (or generation) gets a fresh cti and seq, so a receiver that already processed the old cti never
+// drops newer state (at-least-once; receivers dedupe by cti and order by seq). 202 acknowledges; 400 is a permanent
 // rejection; anything else is retried with exponential backoff (≤ 10 s first, ≤ 1 h apart) for 72 h, after which a
 // non-revocation row is dropped and the connection becomes `degraded` (X4 health), and a revocation is recorded as
 // unacknowledged (§7.3). A later acknowledgment clears the degradation this module caused.
@@ -39,15 +40,17 @@ import {publicAddress} from '../apps/form-fetch-policy.mjs';
 import {BUS_ADVANCED_EVENT,doorbellTarget,markDoorbellSent,eventDoorbellsProvider,RingEventDoorbells,CancelEventDoorbells,SetEventBusPush,EventBusSubscriptions,EVENT_DOORBELL_APP_OPERATIONS} from '../events/doorbell.mjs';
 import {busKeys} from '../events/cursor.mjs';
 // ==== end EV-3 doorbell hunk ====
+import {INTEGRATION_EVENT_MEDIA_TYPE,INTEGRATION_EVENT_MAX_BYTES,IntegrationEventFault,integrationEventSize,rejectionCode} from '../core/cose.mjs';
+export {INTEGRATION_EVENT_MEDIA_TYPE,INTEGRATION_EVENT_TYP,INTEGRATION_EVENT_AAD,verifyIntegrationEvent,parseIntegrationEvent,IntegrationEventFault,integrationEventRejection,ctiId} from '../core/cose.mjs';
 
 const EVENT=name=>`https://spec.bindle.example/events/${name}/v1`;
 export const INTEGRATION_EVENT_TYPES=Object.freeze({'preferences-updated':PREFERENCES_UPDATED_EVENT,...Object.fromEntries(['credential-revoked','connection-revoked','subject-deleted','connection-resumed','resource-detached'].map(name=>[name,EVENT(name)])),'bus-advanced':BUS_ADVANCED_EVENT/* EV-3 */});
-export const SET_TYP='secevent+jwt',SET_MEDIA_TYPE='application/secevent+jwt';
 const REVOCATION=new Set(['connection-revoked','credential-revoked','subject-deleted']),CONTROL=new Set([...REVOCATION,'connection-resumed']),LIVE=['configuring','active','degraded'];
 const PRIORITY=Object.freeze({'subject-deleted':0.5,'connection-revoked':0,'credential-revoked':0,'connection-resumed':1,'preferences-updated':2,'resource-detached':2,'bus-advanced':3/* EV-3: lowest */});
 const FIELDS=Object.freeze({'subject-deleted':['generation','notBefore'],'preferences-updated':['fragment'],'credential-revoked':['grants','until'],'connection-revoked':['floor','terminal'],'connection-resumed':['generation'],'resource-detached':['resource'],'bus-advanced':['bus','resource']/* EV-3 */});
-/** Spec bounds (§6.4, §11.6, §11.10). `window` ≥ 72 h; `firstRetry` ≤ 10 s; `maxRetry` ≤ 1 h; events responses ≤ 4 KiB. */
-export const INTEGRATION_EVENT_LIMITS=Object.freeze({rows:512,perConnection:64,window:72*3600000,firstRetry:10000,maxRetry:3600000,timeoutMs:5000,responseBytes:4096,setBytes:32768,sends:8,perConnectionSends:2,deadlineMs:20000,ingest:200,log:128,unacked:64,doorbellRows:64,doorbellsPerConnection:32/* EV-3: a separate doorbell row budget */});
+/** Spec bounds (§6.4, §11.6, §11.10). `window` ≥ 72 h; `firstRetry` ≤ 10 s; `maxRetry` ≤ 1 h; events responses ≤ 4 KiB;
+ * `eventBytes` the encoded COSE message bound (64 KiB, spike §8 item 23, provisional). */
+export const INTEGRATION_EVENT_LIMITS=Object.freeze({rows:512,perConnection:64,window:72*3600000,firstRetry:10000,maxRetry:3600000,timeoutMs:5000,responseBytes:4096,eventBytes:INTEGRATION_EVENT_MAX_BYTES,sends:8,perConnectionSends:2,deadlineMs:20000,ingest:200,log:128,unacked:64,doorbellRows:64,doorbellsPerConnection:32/* EV-3: a separate doorbell row budget */});
 const L=INTEGRATION_EVENT_LIMITS;
 const ROW='integration-events/row/',CONN='integration-events/conn/',META='integration-events/meta',LOG='integration-events/log/',UNACKED='integration-events/unacked/';
 const pad=n=>String(n).padStart(16,'0'),fault=(code,message,status=400)=>{throw new AppFault(code,message,status);};
@@ -55,8 +58,8 @@ const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.getProto
 const UUID=/^[a-f0-9-]{36}$/,CONNECTION=/^[A-Za-z0-9._~-]{1,128}$/,GRANT=/^[A-Za-z0-9._~-]{1,128}$/,CODE=/^[a-z0-9_]{1,64}$/;
 const httpsId=(v,max=256)=>{if(typeof v!=='string'||v.length>max||/[\u0000- \u007f]/.test(v))return false;try{const u=new URL(v);return u.protocol==='https:'&&u.href===v&&!u.username&&!u.password&&!u.search&&!u.hash;}catch{return false;}};
 const b64u=bytes=>{let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');};
-const utf8=new TextEncoder(),size=v=>utf8.encode(JSON.stringify(v)).length;
 const token16=random=>b64u(random.bytes(16));
+const fromToken16=value=>{const raw=atob(value.replaceAll('-','+').replaceAll('_','/')+'==');const out=Uint8Array.from(raw,c=>c.charCodeAt(0));if(out.length!==16)throw new TypeError('A cti is 16 bytes.');return out;};
 
 // ---- Outbox rows (pure transaction functions over tx.get/put/delete/list) ----
 function eventInput(e){
@@ -161,8 +164,8 @@ function endpointOf(c,issuer){
 const subscribed=c=>c.integration?.snapshot?.manifest?.events??[PREFERENCES_UPDATED_EVENT];
 const egressError=()=>Object.assign(new Error('The events endpoint could not be reached safely.'),{code:'event_transport_unavailable'});
 function egressLimits({timeoutMs=L.timeoutMs,maxConcurrent=4}={}){if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>10000||!Number.isSafeInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>16)throw new TypeError('Event egress needs timeoutMs ≤ 10 s and maxConcurrent ≤ 16.');return {timeoutMs,maxConcurrent};}
-function egressInput({url,body,timeoutMs}={},issuer,limit){const u=eventEndpointURL(url,{issuer});if(!u||typeof body!=='string'||!body.length||body.length>4*L.setBytes||!/^[A-Za-z0-9_.-]+$/.test(body))throw egressError();return {u,body:utf8.encode(body),timeout:Math.min(Number.isSafeInteger(timeoutMs)&&timeoutMs>0?timeoutMs:limit,limit)};}
-const REQUEST_HEADERS=Object.freeze({'Content-Type':SET_MEDIA_TYPE,Accept:'application/json','Accept-Encoding':'identity'});
+function egressInput({url,body,timeoutMs}={},issuer,limit){const u=eventEndpointURL(url,{issuer});if(!u||!(body instanceof Uint8Array)||!body.length||body.length>L.eventBytes)throw egressError();return {u,body:new Uint8Array(body),timeout:Math.min(Number.isSafeInteger(timeoutMs)&&timeoutMs>0?timeoutMs:limit,limit)};}
+const REQUEST_HEADERS=Object.freeze({'Content-Type':INTEGRATION_EVENT_MEDIA_TYPE,Accept:'application/cbor','Accept-Encoding':'identity'});
 /** Node egress: DNS-pinned, globally routable IPv4 only (the reviewed form-postback policy), original-hostname TLS
  * verification, port 443, POST, no redirects (3xx is returned and treated as a failure), identity encoding, a 4 KiB
  * body bound and one deadline. `lookup` (node:dns/promises) and `request` (node:https) are injected so this module
@@ -223,38 +226,9 @@ export function createWorkerEventEgress({publicRouting=false,fetcher=globalThis.
  }};
 }
 
-// ---- SET verification (the §6.1 checklist; used by the conformance fixture and available to integrations) ----
-const N=0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n,HALF=N>>1n;
-const big=bytes=>BigInt('0x'+(Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('')||'0'));
-const invalid=reason=>{throw Object.assign(new AppFault('invalid_token','The security event token is invalid.',401),{reason});};
-const unb64u=(value,reason)=>{if(typeof value!=='string'||!/^[A-Za-z0-9_-]*$/.test(value)||value.length%4===1)invalid(reason);let raw;try{raw=atob(value.replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-value.length%4)%4));}catch{invalid(reason);}const out=Uint8Array.from(raw,c=>c.charCodeAt(0));if(b64u(out)!==value)invalid(reason);return out;};
-const segment=(value,reason)=>{let raw,parsed;try{raw=new TextDecoder('utf-8',{fatal:true}).decode(unb64u(value,reason));parsed=JSON.parse(raw);}catch(e){if(e.code)throw e;invalid(reason);}if(!plain(parsed)||JSON.stringify(parsed)!==raw)invalid(reason);return parsed;};
-/** Verifies a provider SET in the §6.1 order: `typ`/`alg`, then `connection({iss, connection})` (reject an unknown
- * connection before any key is consulted), then the signature under `keys` (a JWKS object, or `async kid => jwks` with
- * the caller's cache rules), then `aud`, `sub` and the `iat` window (10 min back, 30 s ahead). Duplicate
- * `jti` handling and `seq` comparison are the receiver's. Throws `invalid_token` with a `reason`. */
-export async function verifySecurityEventToken(token,{keys,issuer,audience,connection,subject,now=Date.now(),crypto=globalThis.crypto}={}){
- // X6-S4: the §6.1 step-2 lookup and step-5 subject are mandatory, never skipped by omission.
- if(typeof connection!=='function'||typeof subject!=='string'||typeof issuer!=='string'||typeof audience!=='string')throw new TypeError('SET verification needs issuer, audience, subject and a connection lookup.');
- if(typeof token!=='string'||token.length>4*L.setBytes)invalid('malformed');const parts=token.split('.');if(parts.length!==3)invalid('malformed');
- const header=segment(parts[0],'header'),claims=segment(parts[1],'claims');
- if(Object.keys(header).length!==3||header.typ!==SET_TYP)invalid('typ');if(header.alg!=='ES256')invalid('alg');if(typeof header.kid!=='string'||!/^event\.[A-Za-z0-9_-]{22}$/.test(header.kid))invalid('kid');
- const events=plain(claims.events)?Object.entries(claims.events):[];if(events.length!==1||!plain(events[0][1]))invalid('events');
- if(claims.iss!==issuer)invalid('iss');
- if(typeof events[0][1].connection!=='string')invalid('events');
- if(!await connection({iss:claims.iss,connection:events[0][1].connection}))invalid('connection');
- const set=typeof keys==='function'?await keys(header.kid):keys;if(!plain(set)||!Array.isArray(set.keys)||set.keys.length>64)invalid('jwks');
- const matches=set.keys.filter(k=>k?.kid===header.kid);if(matches.length!==1)invalid('kid');const jwk=matches[0];
- if(jwk.kty!=='EC'||jwk.crv!=='P-256'||jwk.alg!==undefined&&jwk.alg!=='ES256'||jwk.d!==undefined||![jwk.x,jwk.y].every(v=>typeof v==='string'&&/^[A-Za-z0-9_-]{43}$/.test(v)))invalid('jwks');
- const signature=unb64u(parts[2],'signature');if(signature.length!==64||big(signature.slice(32))>HALF)invalid('signature');
- let key;try{key=await crypto.subtle.importKey('jwk',{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y},{name:'ECDSA',namedCurve:'P-256'},false,['verify']);}catch{invalid('jwks');}
- if(!await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,signature,utf8.encode(`${parts[0]}.${parts[1]}`)))invalid('signature');
- const names=Object.keys(claims);if(names.length!==6||!['iss','sub','aud','iat','jti','events'].every(n=>names.includes(n)))invalid('claims');
- if(claims.aud!==audience)invalid('aud');if(claims.sub!==subject)invalid('sub');
- const seconds=Math.floor(now/1000);if(!Number.isSafeInteger(claims.iat)||claims.iat>seconds+30||claims.iat<seconds-600)invalid('iat');
- if(typeof claims.jti!=='string'||!/^[A-Za-z0-9_-]{16,128}$/.test(claims.jti))invalid('jti');
- return {header,claims,type:events[0][0],payload:events[0][1]};
-}
+// ---- Verification ----
+// Receivers verify with verifyIntegrationEvent (packages/core/cose.mjs, re-exported above and by the SDK as
+// @3sln/bindle/integration-events.mjs): the spike §5.4 order, every strict COSE rule, cti returned for dedupe.
 
 // ---- Delivery ----
 // Least data (§6.2, §11.5): resource references in a snapshot lose `token`, `token_type` and `expires_at`.
@@ -273,7 +247,7 @@ function backoff(x,attempts){const base=Math.min(x.limits.maxRetry,x.limits.firs
 function classify(response){
  if(!plain(response)||!Number.isInteger(response.status))return {kind:'retry',code:'transport'};
  if(response.status===202)return {kind:'ack'};
- if(response.status===400){let code='invalid_request';try{const doc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(response.bytes));if(typeof doc?.err==='string'&&CODE.test(doc.err))code=doc.err;}catch{}return {kind:'rejected',code};}
+ if(response.status===400){const code=response.bytes instanceof Uint8Array?rejectionCode(response.bytes):null;return {kind:'rejected',code:code&&CODE.test(code)?code:'invalid_request'};}
  return {kind:'retry',code:response.status>=300&&response.status<400?'redirect':'http_'+response.status};
 }
 function payloadOf(r,c,snap,target){
@@ -313,9 +287,13 @@ async function attempt(x,owner,port,r,c){
   // A composition whose connection port is not backed by this store has no row here and relies on the listing.
   if(!REVOCATION.has(r.type)){const live=await tx.get('resource/'+c.id);if(live&&(live.generation!==c.generation||!LIVE.includes(live.state??(live.status==='active'?'active':'disconnected'))))return {stale:true};}
   if(r.type==='bus-advanced'){const again=await doorbellTarget(tx,{row:r,connection:c});if(!again)return {moot:true};built=payloadOf(r,c,snap,again);await markDoorbellSent(tx,{row:r,now});}/* EV-3 */
-  if(built&&(!cur.jti||JSON.stringify([cur.sentGeneration,cur.body])!==JSON.stringify([built.generation,built.body]))){
+  // CBOR phase 5 reset (`integration-events-cti-v1`): a row leased under the SET format carries a `jti`; that pending
+  // signed attempt is discarded here (bounded: this row, in this commit; idempotent: the field is gone afterwards) and
+  // the row is sent afresh with a new cti and seq.
+  if(Object.hasOwn(cur,'jti')){delete cur.jti;delete cur.cti;}
+  if(built&&(!cur.cti||JSON.stringify([cur.sentGeneration,cur.body])!==JSON.stringify([built.generation,built.body]))){
    const k=await conn(tx,c.id);if(k.seq>=Number.MAX_SAFE_INTEGER)fault('unavailable','Event sequence exhausted.',503);
-   Object.assign(cur,{jti:token16(x.random),seq:++k.seq,sentGeneration:built.generation,body:built.body});await tx.put(CONN+c.id,k);
+   Object.assign(cur,{cti:token16(x.random),seq:++k.seq,sentGeneration:built.generation,body:built.body});await tx.put(CONN+c.id,k);
   }
   cur.attempts++;cur.firstAttemptAt??=now;cur.nextAt=now+backoff(x,cur.attempts);cur.attempt=token16(x.random);await tx.put(r.key,cur);return cur;
  });
@@ -324,9 +302,12 @@ async function attempt(x,owner,port,r,c){
  let outcome;
  if(!built)outcome={kind:'retry',code:'snapshot_unavailable'};
  else{
-  const claims={iss:x.issuer,sub:x.subject(owner),aud:endpoint,iat:Math.floor(now/1000),jti:lease.jti,events:{[INTEGRATION_EVENT_TYPES[r.type]]:{connection:c.id,generation:lease.sentGeneration,seq:lease.seq,...lease.body}}};
-  if(size(claims)>x.limits.setBytes)outcome={kind:'rejected',code:'oversize'};
-  else try{const signed=await x.signer.sign('event',claims);if(typeof signed?.token!=='string')throw egressError();outcome=classify(await x.egress.send({url:endpoint,body:signed.token,timeoutMs:x.limits.timeoutMs}));}catch{outcome={kind:'retry',code:'transport'};}
+  const claims={iss:x.issuer,sub:x.subject(owner),aud:endpoint,iat:Math.floor(now/1000),cti:fromToken16(lease.cti),events:{[INTEGRATION_EVENT_TYPES[r.type]]:{connection:c.id,generation:lease.sentGeneration,seq:lease.seq,...lease.body}}};
+  // Never sign an oversize event (size-limits spike): the exact encoded size under the longest allowed kid.
+  let bytes;try{bytes=integrationEventSize(claims);}catch(error){if(!(error instanceof IntegrationEventFault))throw error;bytes=null;}
+  if(bytes===null)outcome={kind:'rejected',code:'invalid_event'};
+  else if(bytes>x.limits.eventBytes)outcome={kind:'rejected',code:'oversize'};
+  else try{const signed=await x.signer.sign('event',claims);if(!(signed?.message instanceof Uint8Array))throw egressError();outcome=classify(await x.egress.send({url:endpoint,body:signed.message,timeoutMs:x.limits.timeoutMs}));}catch{outcome={kind:'retry',code:'transport'};}
  }
  return settle(x,owner,port,r,c,lease,outcome);
 }
@@ -353,7 +334,20 @@ async function settle(x,owner,port,r,c,lease,outcome){
  return s.result;
 }
 const listed=async port=>{const out=await port.list(),list=Array.isArray(out)?out:out?.connections;if(!Array.isArray(list))fault('unavailable','Connections are unavailable.',503);return list;};
+// CBOR phase 5 destructive reset `integration-events-cti-v1` (spike §7.2): rows leased under the SET format carry a
+// `jti` (the signed-but-undelivered SET attempt's identity). Once per account store, in one commit bounded by the row
+// caps, the `jti` is dropped so the next attempt is a fresh COSE event with a new cti and seq; the marker on META makes
+// it idempotent. Rows themselves (re-derived markers), `seq` and generation counters are kept. The lease applies the
+// same rule per row, for a delivery pass that runs before any ingest.
+export const INTEGRATION_EVENTS_CTI_RESET='integration-events-cti-v1';
+async function resetSetAttempts(x){
+ if((await x.store.get(META))?.cti===1)return 0;
+ return x.store.transaction(async tx=>{const m=await meta(tx);if(m.cti===1)return 0;let n=0;
+  for(const [key,row] of await rowsUnder(tx,ROW))if(plain(row)&&Object.hasOwn(row,'jti')){const next={...row};delete next.jti;delete next.cti;await tx.put(key,next);n++;}
+  m.cti=1;await tx.put(META,m);return n;});
+}
 async function ingest(x,owner){
+ await resetSetAttempts(x);
  const port=x.connections(owner),before=await x.store.get(META),start=before?.v===1?before.cursor:0;
  const out=await port.outbox({after:start,limit:x.limits.ingest});
  if(!plain(out)||!Array.isArray(out.events)||typeof out.gap!=='boolean')fault('unavailable','The connections outbox is unavailable.',503);

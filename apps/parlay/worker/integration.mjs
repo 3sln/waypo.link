@@ -1,10 +1,15 @@
-// Broker/SET cryptography is an explicit trusted service port; these engine operations recheck local authority
+// Broker/event cryptography is an explicit trusted service port (events: verifyIntegrationEvent, COSE_Sign1 CWTs); these engine operations recheck local authority
 // in the mailbox transaction. No token, snapshot or populated binding is treated as approval by itself.
 import {MailboxAction,MailboxQuery,ownerOf,operations} from '../../../packages/messaging-engine/engine.mjs';
 import {KEYS,readConfig} from '../../../packages/messaging-engine/store/mailbox.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
 import {MAILBOX_CONTRACT} from '../../../packages/messaging-protocol/index.mjs';
 import {APP_BRAND} from './brand.mjs';
+import {encode} from '../../../packages/sdk/src/cbor.mjs';
+// CBOR phase 5 reset: the SET-era processed-jti cache. `cti` replaces `jti`, so the old cache can never match; it is
+// deleted (one key: bounded and idempotent) in the first event transaction that finds it.
+export const LEGACY_JTI_CACHE='shell:set-jtis',CTI_CACHE='shell:event-ctis';
+const CTI=/^[A-Za-z0-9_-]{22}$/;
 const invalid=()=>fault('invalid_input','Invalid integration request.',400),denied=()=>fault('not_authorized','Not authorized.',403);
 export const resourceId=config=>new URL(`/bindle/mailbox/${config.principal.subject}`,config.ingress).href;
 async function authority(tx,owner,v,{purpose,write=false,method,resource}={}){
@@ -36,9 +41,10 @@ export class MailboxIntegrationEvent extends MailboxAction {
   const owner=ownerOf(this.actor),event=this.input?.event,config=await tx.get(KEYS.config),grant=await tx.get('shell:authorization');
   // The verifier resolved (iss, sub) before key fetching; a purged/unknown subject is silent and does no work.
   if(event?.type==='subject-deleted'&&!config)return {accepted:true};
-  if(await tx.get('owner')!==owner||!event||event.owner!==owner||event.issuer!==config?.principal?.issuer||!grant?.connection||event.connection!==grant.connection||typeof event.jti!=='string'||!event.jti||event.jti.length>128||!Number.isSafeInteger(event.seq)||event.seq<0)denied();
+  if(await tx.get('owner')!==owner||!event||event.owner!==owner||event.issuer!==config?.principal?.issuer||!grant?.connection||event.connection!==grant.connection||typeof event.cti!=='string'||!CTI.test(event.cti)||!Number.isSafeInteger(event.seq)||event.seq<0)denied();
   if(event.type==='subject-deleted'){if(event.subject!==undefined&&event.subject!==config.principal.subject)denied();await purge(tx);return {accepted:true};}
-  const log=await tx.get('shell:set-jtis')??[];if(log.includes(event.jti))return {accepted:true};
+  if(await tx.get(LEGACY_JTI_CACHE)!==undefined)await tx.delete(LEGACY_JTI_CACHE);
+  const log=await tx.get(CTI_CACHE)??[];if(log.includes(event.cti))return {accepted:true};
   const p=event.payload??{},type=event.type;
   if(type==='connection-revoked'){
    if(!Number.isSafeInteger(p.generation_floor)||p.generation_floor<0)invalid();const floor=Math.max(await tx.get('shell:generation-floor')??0,p.generation_floor);await tx.put('shell:generation-floor',floor);
@@ -48,12 +54,13 @@ export class MailboxIntegrationEvent extends MailboxAction {
    if(!Array.isArray(p.grants)||p.grants.length>1024||p.grants.some(id=>typeof id!=='string'||!id||id.length>256)||!Number.isSafeInteger(p.until))invalid();
    const revoked=new Map((await tx.get('shell:revoked-grants')??[]).filter(r=>r.until>clock.now()).map(r=>[r.id,r]));for(const id of p.grants)revoked.set(id,{id,until:Math.max(revoked.get(id)?.until??0,p.until)});if(revoked.size>1024)fault('recipient_unavailable','Revocation capacity exhausted.',503);await tx.put('shell:revoked-grants',[...revoked.values()]);
   }else if(type==='preferences-updated'){
-   if(typeof p.fragment!=='string'||p.fragment.length>2048||p.values===undefined||JSON.stringify(p.values).length>8192)invalid();const key='shell:preferences/'+encodeURIComponent(p.fragment),prior=await tx.get(key);if(!prior&&(await tx.list({prefix:'shell:preferences/'})).size>=8)fault('recipient_unavailable','Configuration capacity exhausted.',503);if(!prior||event.seq>prior.seq)await tx.put(key,{seq:event.seq,values:p.values});
+   if(typeof p.fragment!=='string'||p.fragment.length>2048||p.values===undefined||!bounded(p.values,8192))invalid();const key='shell:preferences/'+encodeURIComponent(p.fragment),prior=await tx.get(key);if(!prior&&(await tx.list({prefix:'shell:preferences/'})).size>=8)fault('recipient_unavailable','Configuration capacity exhausted.',503);if(!prior||event.seq>prior.seq)await tx.put(key,{seq:event.seq,values:p.values});
   }
   // Resumption never restores a local grant: trusted provisioning installs the new generation after consent.
-  log.push(event.jti);if(log.length>1000)log.shift();await tx.put('shell:set-jtis',log);return {accepted:true};
+  log.push(event.cti);if(log.length>1000)log.shift();await tx.put(CTI_CACHE,log);return {accepted:true};
  });}
 }
+const bounded=(value,max)=>{try{return encode(value,{maxBytes:max}).length<=max;}catch{return false;}};
 async function purge(tx){if(typeof tx.deleteAll==='function')await tx.deleteAll();else for(const [key]of await tx.list({prefix:''}))await tx.delete(key);}
 export class MailboxPurgeExpired extends MailboxAction {
  static operation='shell.purge-expired';static deps=['mailboxStore','clock'];

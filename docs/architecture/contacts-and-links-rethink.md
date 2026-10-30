@@ -298,7 +298,7 @@ Hidden concepts the user still meets: provider choice, the app chooser and conse
 Each mark below records where the change landed. Applying a request is not a sign-off.
 
 **links.md.**
-- **CR-LK1** *(applied: [keys](../spec/keys.md), [Organizations link envelope annex](../spec/extensions/organizations-link-envelope.md); [links](../spec/superseded/links.md) kept in place as a dissolved, frozen record because `tests/public-documentation.test.mjs` pins its path and AMD-L1 text).* Split it. §3.1 and §7.2 (minus link rows) go to the core identity-and-keys spec. §2, §3.2–§5 and §8 become an Organizations annex. §6, §7, §9 and §10 are deleted. AMD-L1 is withdrawn.
+- **CR-LK1** *(applied: [keys](../spec/keys.md), [Organizations link envelope annex](../spec/extensions/organizations-link-envelope.md); links was first kept as a dissolved, frozen record because `tests/public-documentation.test.mjs` pinned its path and AMD-L1 text; that copy was retired on 2026-10-29 and is in git history: `git show bbbbdad:docs/spec/superseded/links.md`).* Split it. §3.1 and §7.2 (minus link rows) go to the core identity-and-keys spec. §2, §3.2–§5 and §8 become an Organizations annex. §6, §7, §9 and §10 are deleted. AMD-L1 is withdrawn.
 - **CR-LK2** *(applied in text: annex §8, keys §5; splitting `bindle-links.vectors.json` waits for the code phase, CR-C2).* Envelope vectors 1, 3–7, 12 and 13 go to Organizations. Audience vectors 2, 8–11 and 14 are dropped. Pure-JWS vectors go with the profile.
 
 **Core identity-and-keys spec (new or existing; Q2).**

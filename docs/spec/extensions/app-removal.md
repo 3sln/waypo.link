@@ -322,7 +322,7 @@ A provider SHOULD offer the owner a view of what remains after removal: storage 
 | --- | --- | --- |
 | `…/events/subject-deleted/v1` | none | The entity is permanently deleted at this provider. Treat the connection as `connection-revoked` with `terminal: true` for every generation, then purge, as §8.3 says, all state held for (`iss`, `sub`). |
 
-The SET carries no personal data beyond its `sub` claim and the opaque connection identifier. It carries no reason, handle, email or deletion basis. It is a revocation-class event: it is always sent, whatever the manifest's `events` list says, and is delivered with revocation priority.
+The event carries no personal data beyond its `sub` claim and the opaque connection identifier. It carries no reason, handle, email or deletion basis. It is a revocation-class event: it is always sent, whatever the manifest's `events` list says, and is delivered with revocation priority.
 
 ### 8.2 When it is sent
 
@@ -371,7 +371,7 @@ Compliance cannot be verified or enforced. The provider sends the event; what th
 | `subject-deleted` arrives before `connection-revoked` | It implies terminal revocation. A later `connection-revoked` changes nothing. |
 | A removal is open when deletion commits | The deletion's severance commit concludes the removal with `state: forced`. No redirect happens. `subject-deleted` is still sent to that connection. |
 | The app already purged and a retry arrives | Unknown subject: 202, no processing. |
-| A captured SET is replayed | Answered 202 while its `jti` is cached; later replays fail the `iat` window. A replay can only re-trigger a purge that already happened. |
+| A captured event is replayed | Answered 202 while its `cti` is cached; later replays fail the `iat` window. A replay can only re-trigger a purge that already happened. |
 
 ### 8.5 Apps without an events endpoint, and what deleted identities answer
 
@@ -389,7 +389,7 @@ A provider declaring `subject-deleted.v1` MUST state in its privacy disclosures 
 
 ### 9.1 Slots
 
-Removal vacates every slot the connection occupies ([extensions §5.1](../superseded/extensions-rev2.md#51-assigning-occupants)). It is a removal, not a replacement, so the extensions §3.4 per-consumer review does not apply to it. Choosing a replacement later is an ordinary assignment, with that review.
+Removal vacates every slot the connection occupies. Occupancy is the owner's preference value, which only the owner assigns ([extensions §5.3](../extensions.md#53-assignment-and-disclosure)). It is a removal, not a replacement, so the extensions §3.4 per-consumer review does not apply to it. Choosing a replacement later is an ordinary assignment, with that review.
 
 | Policy | Effect |
 | --- | --- |

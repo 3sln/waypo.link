@@ -568,3 +568,18 @@ test('a peer issuer\'s declared max_leg_certificate_seconds bounds its leg certi
 });
 
 void OPS;void perform;void CALLBACK;void offerDigest;
+
+test('minting an offer publishes the certification key a foreign initiator pins before open (lazy keys)',async()=>{
+ // Certification keys are minted on first use. An entity that has only registered and minted an offer has signed
+ // nothing yet; without a published key the foreign initiator's `open` fails temporarily_unavailable (found by the
+ // multi-provider simulation: a Meet host on one provider could not be called from another).
+ const W=await signalingWorld(),b=W.provider(B).device(1),a=W.provider(A).device(1),e=b.entity;
+ e.certKeys=[];e.signing=null;
+ e.service.signer=async()=>{if(!e.signing)await e.addCertKey();const k=e.certKeys.find(c=>c.kid===e.signing);return {kid:k.kid,privateKey:k.privateKey};};
+ await b.register();await a.register();
+ assert.equal(e.certKeys.length,0,'registering an endpoint mints no certification key');
+ const offer=await b.offer(CHAT,{principals:[a.principal]});
+ assert.equal(e.certKeys.length,1,'minting the offer published a certification key');
+ const s=await a.open(b.principal,CHAT,{basis:offer});
+ assert.ok(s.result?.peer_keys?.length>0,'the foreign initiator found the recipient key and opened: '+JSON.stringify(s.error??s.result));
+});

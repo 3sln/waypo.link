@@ -229,7 +229,7 @@ test('review test gaps: wrong aud, the pre-purge fence in authorize and certify,
  await w.B.metadata.put('rel/closing',{at:w.h.clock.now(),cursor:null});await rejects(w.certify(),'relation_certificate_unavailable');
 }finally{await w.h.close();}});
 
-test('review test gap: preferences v1 never projects an imported mirror (it reports the field as needing consent)',async()=>{const w=await world();try{
+test('review test gap: without the relation port an imported mirror is projected unavailable, with no token (preferences/v1 dropped)',async()=>{const w=await world();try{
  const {PREFERENCES}=await import('../packages/federation/service.mjs');
  const subject=w.B.id,fragment='https://schema.example/files/v1',store=new MemoryFederationStore();
  const schema={id:fragment,title:'Files',description:'Files',publisher:'https://schema.example',fields:{store:{title:'Files',type:'resource',cardinality:{min:0,max:4},contracts:[STORE]}}};
@@ -240,5 +240,5 @@ test('review test gap: preferences v1 never projects an imported mirror (it repo
   await tx.set('federation/grant/g1',{...grant,subject,fragment,digest:'d',epoch:1,fields:['store']});
   await tx.set('federation/token/'+hash,{issuer:ISS,audience:RPC,subject,epoch:1,clientId:CLIENT,grants:['g1'],expiresAt:w.h.clock.now()+600000});});
  const out=(await service.rpc(token,{version:'0',tx:randomUUID(),resource:'@preferences',contract:PREFERENCES,method:'read',args:{fragment}})).result;
- assert.equal(out.values.store,undefined);assert.deepEqual(out.requiresConsent,['store']);
+ assert.equal(out.values.store.length,1);assert.equal(out.values.store[0].status,'unavailable');assert.equal(out.values.store[0].token,undefined);assert.equal(out.requiresConsent,undefined);
 }finally{await w.h.close();}});

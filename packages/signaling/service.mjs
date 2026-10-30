@@ -662,6 +662,10 @@ export class SignalingService{
   if(bound&&input.uses!==undefined&&input.uses!==1)invalid('A bound offer is single-use.');
   const approved=await this.requireApproval(app,input.kind);
   this.checkKind(approved.body,{own:false,profile:input.profile,basis:'offer'});
+  // A cross-entity initiator pins this entity's certification keys before its `open` is admitted (§5.1). Certification
+  // keys are minted on first use, so an entity that only receives would have none published: minting an offer is the
+  // first moment another entity is expected to open, so the key exists from here on (multi-provider simulation finding).
+  if(!await this.signer(owner))unavailable();
   const now=this.now();
   const service=await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);const ep=await this.endpointAuth(tx,app,input,now);return {ep,service:await this.serviceClass(tx,owner,ep)};});
   const maxUses=service.service?BOUNDS.offerUsesService:BOUNDS.offerUsesPerson,uses=bound?1:input.uses??1;

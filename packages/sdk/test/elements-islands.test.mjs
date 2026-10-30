@@ -54,7 +54,10 @@ test('sign-in island: exact iframe and handshake, prepare per port, translated e
   assert.equal(iframe.getAttribute('referrerpolicy'),'no-referrer');assert.equal(iframe.hasAttribute('sandbox'),false);assert.equal(iframe.hasAttribute('credentialless'),false);
   assert.match(iframe.getAttribute('allow'),/^identity-credentials-get 'none'; storage-access 'none';.* sync-xhr 'none'$/,'FedCM is not delegated unless declared and allowed');
   assert.equal(iframe.title,'Continue with 3sln.example');assert.equal(element.state.islands,'mounting');
-  assert.ok(element.shadowRoot.querySelector('form'),'the standard composition shows until the island is live');
+  // While mounting (V25), the island box keeps its final size and the handle form waits behind "Use a different
+  // provider"; the standard composition replaces it only on fallback.
+  assert.equal(element.shadowRoot.querySelector('.island').hidden,false);assert.ok(element.shadowRoot.querySelector('.island').classList.contains('mounting'));
+  assert.equal(element.shadowRoot.querySelector('form'),null);assert.ok(element.shadowRoot.querySelector('.other'));
   const fake=island(iframe);
   assert.equal(fake.init.origin,embed,'exact targetOrigin, never *');
   assert.deepEqual(Object.keys(fake.init.data).sort(),['colorScheme','locale','nonce','part','props','theme','type','v','version']);

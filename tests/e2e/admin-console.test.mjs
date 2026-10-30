@@ -8,7 +8,6 @@ import {readFileSync} from 'node:fs';
 import {launch,baseURL,virtualAuthenticator,screenshot,passkeyAccount} from './browser.mjs';
 const bootToken=process.env.E2E_BOOT_TOKEN||(process.env.E2E_BOOT_TOKEN_FILE?JSON.parse(readFileSync(process.env.E2E_BOOT_TOKEN_FILE,'utf8')).token:'');
 export const shimmed=[];
-const BOOT_PASSWORD='correct horse battery staple boot';
 async function probe(){try{const response=await fetch(baseURL+'/api/admin/boot/status',{method:'POST',headers:{Origin:baseURL,'Content-Type':'application/json','X-Bindle-Admin-Actor':'boot'},body:'{}'});if(!response.ok)return null;return await response.json();}catch{return null;}}
 const noOverflow=page=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
 /** Claims an invited name through the real token-onboarding UI with a passkey,
@@ -33,13 +32,14 @@ test('boot setup, administrator step-up, reservation, claim, onboarding and audi
  if(!bootToken||!status?.configured||status.token!=='unused'){t.skip('Admin routes, an unused boot token for this origin and ONBOARDING_KEY are required.');return;}
  const browser=await launch();t.after(async()=>{if(process.env.E2E_DEBUG){let i=0;for(const context of browser.contexts())for(const page of context.pages())await page.screenshot({path:`${process.env.E2E_ARTIFACTS}/admin-debug-${i++}.png`,fullPage:true}).catch(()=>{});}await browser.close();});
  // ---- boot ----
- const bootContext=await browser.newContext({viewport:{width:1280,height:900}}),boot=await bootContext.newPage(),errors=[],scripts=[];
+ const bootContext=await browser.newContext({viewport:{width:1280,height:900}}),boot=await bootContext.newPage(),errors=[],scripts=[];await virtualAuthenticator(bootContext,boot);
  boot.on('pageerror',error=>errors.push(error.message));
  await boot.goto(baseURL+'/console?boot');await boot.getByRole('heading',{name:'Set up boot access'}).waitFor();
  await boot.getByLabel('Boot token',{exact:true}).fill(bootToken);await boot.getByRole('button',{name:'Check token',exact:true}).click();
  await boot.getByRole('heading',{name:'Claim boot access'}).waitFor();
  assert.equal(boot.url().includes(bootToken.slice(6,30)),false);assert.equal((await boot.locator('body').innerText()).includes(bootToken),false);assert.equal(await boot.getByLabel('Boot token',{exact:true}).count(),0);
- await boot.getByRole('radio',{name:/Password/}).check();await boot.getByLabel('Boot password',{exact:true}).fill(BOOT_PASSWORD);await boot.getByLabel('Repeat the password',{exact:true}).fill(BOOT_PASSWORD);
+ // Boot is passkey only (2026-10-29, provisional): no credential choice and no password field.
+ assert.equal(await boot.getByRole('radio').count(),0);assert.equal(await boot.locator('input[type=password]').count(),0);await boot.getByRole('heading',{name:'Create the boot passkey'}).waitFor();
  await screenshot(boot,'admin-boot-setup');
  await boot.getByRole('button',{name:'Claim boot',exact:true}).click();
  assert.equal(await boot.getByRole('heading',{name:'Overview'}).count(),0,'the mandatory acknowledgement blocks completion');
@@ -61,7 +61,7 @@ test('boot setup, administrator step-up, reservation, claim, onboarding and audi
  const admin=await claimThroughOnboarding(browser,adminLink,'ops-lead');admin.page.on('pageerror',error=>errors.push(error.message));
  admin.page.on('request',request=>{if(request.resourceType()==='script')scripts.push(request.url());});
  await admin.page.goto(baseURL+'/console?admin');await admin.page.getByRole('dialog',{name:'Confirm it’s you'}).waitFor();
- assert.equal(await admin.page.getByLabel('Boot password').count(),0,'administrators are offered a passkey only');
+ assert.equal(await admin.page.locator('input[type=password]').count(),0,'administrators are offered a passkey only');
  await screenshot(admin.page,'admin-step-up');
  await admin.page.getByRole('button',{name:'Confirm with passkey',exact:true}).click();await admin.page.getByRole('heading',{name:'Overview'}).waitFor();
  await admin.page.getByRole('heading',{name:/Boot was restored recently|Boot access is active/}).waitFor();
@@ -88,7 +88,7 @@ test('boot setup, administrator step-up, reservation, claim, onboarding and audi
  await ordinary.close();
  // ---- boot ends its own access ----
  await nav('Overview');await boot.getByRole('button',{name:'End boot access now…',exact:true}).click();await boot.getByRole('alertdialog',{name:'End boot access now?'}).waitFor();await boot.getByRole('button',{name:'End boot access',exact:true}).click();
- const confirmIfAsked=boot.getByRole('dialog',{name:'Confirm it’s you'});if(await confirmIfAsked.isVisible().catch(()=>false)){await boot.getByLabel('Boot password',{exact:true}).fill(BOOT_PASSWORD);await boot.getByRole('button',{name:'Confirm with password',exact:true}).click();}
+ const confirmIfAsked=boot.getByRole('dialog',{name:'Confirm it’s you'});if(await confirmIfAsked.isVisible().catch(()=>false)){await boot.getByRole('button',{name:'Confirm with passkey',exact:true}).click();}
  await boot.getByRole('heading',{name:'Boot access ended early'}).waitFor();await screenshot(boot,'admin-boot-ended');
  assert.deepEqual(errors,[]);
 });

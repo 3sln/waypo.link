@@ -83,15 +83,15 @@ test('preferences/v2 projects uniform references: minted brokered credentials, i
  assert.deepEqual((await verifyAccessToken(only.token,{keys:await keys.jwks(),issuer:ISSUER,audience:only.broker.endpoint,purposes:['invoke'],now:g.clock.now()})).claims.bindle.methods,{[MODEL]:['train']});
 });
 
-test('preferences v1 is unchanged by the brokering port; brokered occupants are withheld and listed in requiresConsent',async t=>{
+test('preferences/v1 is gone: the one contract is served without the brokering port, brokered members read unavailable and nothing is minted',async t=>{
  const f=await fixture(t),record=await f.register('https://models.example/r/fast'),id=X.brokeredResourceId(SUBJECT,record.id);
  await f.configure({theme:'dark',model:[id],store:[STORE_ID]});const token=await f.authorize({resources:{model:[id],store:[STORE_ID]}});
- const v1=await f.read(token,PREFERENCES);assert.deepEqual(v1.requiresConsent,['model']);assert.equal(v1.values.model,undefined);
- assert.deepEqual(Object.keys(v1.values.store[0]).sort(),['contracts','id','token'],'v1 keeps its exact shape');
- const port=f.s.brokering;f.s.brokering=null;const without=await f.read(token,PREFERENCES);f.s.brokering=port;
- assert.deepEqual(without,v1,'identical with and without the X8 port');
- assert.equal(f.minted.length,0,'v1 never mints');
- f.s.brokering=null;await assert.rejects(f.read(token),code('forbidden'),'v2 is not served without the brokering port');f.s.brokering=port;
+ await assert.rejects(f.read(token,'https://3sln.me/artefacts/contracts/preferences/v1'),'the dropped v1 contract is not served');
+ assert.equal(PREFERENCES,PREFERENCES_V2);
+ const port=f.s.brokering;f.s.brokering=null;const without=await f.read(token);f.s.brokering=port;
+ assert.equal(without.values.theme,'dark');assert.equal(without.values.store[0].status,'available');assert.equal(typeof without.values.store[0].token,'string');
+ assert.equal(without.values.model.length,1);assert.equal(without.values.model[0].status,'unavailable');assert.equal(without.values.model[0].token,undefined);
+ assert.equal(f.minted.length,0,'no brokered mint without the port');
 });
 
 test('AMD-C3: approved members stay in owner order, unapproved additions are omitted and reported; severance reads unavailable',async t=>{
@@ -100,7 +100,6 @@ test('AMD-C3: approved members stay in owner order, unapproved additions are omi
  await f.configure({theme:'dark',model:[a],store:[STORE_ID]});const token=await f.authorize({resources:{model:[a],store:[STORE_ID]}});
  await f.configure({theme:'dark',model:[b,a],store:[STORE_ID]});
  const mixed=await f.read(token);assert.deepEqual(mixed.requiresConsent,['model']);assert.equal(mixed.values.model.length,1);assert.equal(mixed.values.model[0].broker.resource,'https://models.example/r/fast');
- assert.equal((await f.read(token,PREFERENCES)).values.model,undefined,'v1 still withholds the whole field');
  await perform(f.x7,new B.UnassignBrokeredRecord({actor:{kind:'owner',owner:OWNER},input:{record:fast.id,grant:fast.assignments[0].grant}}));
  const severed=(await f.read(token)).values.model[0];assert.equal(severed.status,'unavailable');assert.equal(severed.token,undefined);assert.equal(severed.expires_at,undefined);
 });

@@ -32,7 +32,7 @@ It replaces these drafts for peer messaging:
 | Draft | Reused | Removed |
 | --- | --- | --- |
 | contact delivery (Parlay legacy record `apps/parlay/docs/legacy/contact-delivery.md`) | Envelope, display-string rules, verification order, replay | Bearer RPC, anonymous branches |
-| [links](../superseded/links.md) (dissolved) | — | Contact type, intake, links contract, ingress descriptor and conditional links (contacts spike CL-3, CL-4) |
+| links (dissolved; in git history: `git show bbbbdad:docs/spec/superseded/links.md`) | — | Contact type, intake, links contract, ingress descriptor and conditional links (contacts spike CL-3, CL-4) |
 | contact endpoints (Parlay legacy record `apps/parlay/docs/legacy/contact-tokens.md`) | — | Legacy `?sig=` and inbox bearers |
 | conversations v1 (Parlay legacy record `apps/parlay/docs/legacy/conversations.md`) | — | Central authority, `actor:"bearer"` |
 
@@ -119,12 +119,12 @@ Host-wide fetch rules apply to invitation redemptions, ingress POSTs, delegation
 This section reconciles with [integrations](integrations.md) §5–§6.
 
 - **Credentials.** Provider consumers reach the occupant through the brokered consumer credential (integrations §5.3).
-- **Events.** The occupant receives the SET events of integrations §6.2 at its `events_endpoint`. It interprets them as follows:
+- **Events.** The occupant receives the integration events of integrations §6.2 (COSE_Sign1 CWTs) at its `events_endpoint`. It interprets them as follows:
   - `connection-revoked` or `credential-revoked` covering the mailbox grant: the occupant has been removed or severed. It stops admitting traffic for that owner and stops renewing its delegation.
   - `resource-detached` for the mailbox: the same.
   - `preferences-updated`: storage or classifier changes.
 
-  Each SET is signed and verified as integrations §6.1 requires (review S-16).
+  Each event is signed and verified as integrations §6.1 requires (review S-16).
 - **No identity-key events.** Integrations defines no identity-key-rotation event. The occupant therefore resolves its owner's identity key through the directory, exactly as for any other principal (§3.3).
 - **Requested for later.** A proposed `identity-key-rotated` event would make this update faster. They have been requested from the integrations owner, but nothing here depends on them.
 

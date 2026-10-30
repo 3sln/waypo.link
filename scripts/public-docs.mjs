@@ -10,7 +10,6 @@ export const groupDescriptions=Object.freeze({
  'Bindle extensions':'Optional, Bindle-published extensions. A provider declares the ones it implements. Each page states whether it is a draft, proposed or implemented anywhere; several are not implemented.',
  '3sln.me reference service':'How the 3sln.me reference service implements and operates Bindle: its own sign-in, accounts, services and release gates. Not part of the Bindle specification; other providers may choose differently.',
  'Hosting':'Operator configuration for the reference service. Configuration alone does not establish working delivery or provider conformance.',
- 'Superseded (for reference)':'Kept so that older references resolve. Do not implement these.',
 });
 export const publicDocumentation=Object.freeze([
  ['Start here','docs/integration.md','Application integration'],
@@ -62,15 +61,14 @@ export const publicDocumentation=Object.freeze([
  ['Hosting','docs/deployment/email.md','Email configuration'],
  ['Hosting','docs/deployment/identity-backups.md','Identity authority and signup configuration'],
  ['Hosting','docs/deployment/billing.md','Billing configuration'],
- ['Superseded (for reference)','docs/spec/superseded/rtc-signaling.md','RTC signaling (superseded by Signaling)'],
- ['Superseded (for reference)','docs/spec/superseded/beaming.md','Beaming (superseded)'],
- ['Superseded (for reference)','docs/spec/superseded/extensions-rev2.md','Extensions revision 2 (frozen copy)'],
- ['Superseded (for reference)','docs/spec/superseded/signaling-rev2.1.md','Signaling revision 2.1 (frozen copy)'],
- ['Superseded (for reference)','docs/spec/superseded/links.md','Links (dissolved; frozen record)'],
 ].map(([group,source,title])=>Object.freeze({group,source,title})));
 // Locations that moved in the 2026-10-27 documentation split (old docs/spec/ paths,
 // some previously published and some referenced by the contract registry), and later
-// moves such as the dissolved links draft (docs/spec/extensions/ to superseded/, 2026-10-28).
+// moves. The superseded copies under docs/spec/superseded/ were retired on 2026-10-29: an
+// old location keeps a redirect only where a live successor exists (RTC signaling and
+// signaling revision 2.1 to signaling, extensions revision 2 to extensions, the dissolved
+// links draft to the Organizations link envelope annex, which keeps its section numbers);
+// beaming has no successor and its redirects were dropped. Their text is in git history.
 // The build writes a small redirect page at each old location so existing links keep working.
 export const movedDocumentation=Object.freeze({
  'docs/spec/device-login.md':'docs/3sln/accounts/sign-in-and-sessions.md',
@@ -88,8 +86,8 @@ export const movedDocumentation=Object.freeze({
  'docs/spec/app-metadata.md':'docs/spec/extensions/app-metadata.md',
  'docs/spec/message-content.md':'docs/spec/extensions/message-content.md',
  'docs/spec/intents.md':'docs/spec/extensions/intents.md',
- 'docs/spec/links.md':'docs/spec/superseded/links.md',
- 'docs/spec/extensions/links.md':'docs/spec/superseded/links.md',
+ 'docs/spec/links.md':'docs/spec/extensions/organizations-link-envelope.md',
+ 'docs/spec/extensions/links.md':'docs/spec/extensions/organizations-link-envelope.md',
  'docs/spec/events.md':'docs/spec/extensions/events.md',
  'docs/spec/integrations.md':'docs/spec/extensions/integrations.md',
  'docs/spec/incremental-authorization.md':'docs/spec/extensions/incremental-authorization.md',
@@ -100,8 +98,11 @@ export const movedDocumentation=Object.freeze({
  'docs/spec/organizations.md':'docs/spec/extensions/organizations.md',
  'docs/spec/account-lifecycle.md':'docs/3sln/accounts/account-lifecycle.md',
  'docs/spec/activity.md':'docs/3sln/services/activity.md',
- 'docs/spec/rtc-signaling.md':'docs/spec/superseded/rtc-signaling.md',
- 'docs/spec/beaming.md':'docs/spec/superseded/beaming.md',
+ 'docs/spec/rtc-signaling.md':'docs/spec/extensions/signaling.md',
+ 'docs/spec/superseded/rtc-signaling.md':'docs/spec/extensions/signaling.md',
+ 'docs/spec/superseded/signaling-rev2.1.md':'docs/spec/extensions/signaling.md',
+ 'docs/spec/superseded/extensions-rev2.md':'docs/spec/extensions.md',
+ 'docs/spec/superseded/links.md':'docs/spec/extensions/organizations-link-envelope.md',
 });
 const sources=new Set(publicDocumentation.map(page=>page.source));
 // Directories whose every Markdown file must be published, and whose files

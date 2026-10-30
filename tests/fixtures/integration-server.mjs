@@ -1,9 +1,10 @@
 import {verifyProof} from '../../packages/federation/dpop.mjs';
 import {RPC_MEDIA_TYPE,decodeRPC,rpcResponse} from '../../packages/core/rpc-wire.mjs';
 import {verifyAccessToken} from '../../packages/federation/signing.mjs';
-import {verifySecurityEventToken} from '../../packages/runtime/integration-events.mjs';
+import {verifyIntegrationEvent,INTEGRATION_EVENT_MEDIA_TYPE,IntegrationEventFault,integrationEventRejection,ctiId} from '../../packages/core/cose.mjs';
 // EXT-X9a test double, not a reference verifier or a production integration.
-// Opaque fixture tokens stand in for verified JWTs; X9b supplies real JWS/DPoP,
+// Opaque fixture tokens stand in for verified JWTs and COSE events (an event stub is the UTF-8 of its token, posted as
+// application/cwt); with `keys`, events are verified by verifyIntegrationEvent. X9b supplies real JWS/DPoP,
 // introspection and provider conformance. No issuer/key URL is ever fetched here.
 import {createServer} from 'node:http';
 import {AppAction,AppQuery,createAppEngine,perform,read} from '../../packages/app/engine.mjs';
@@ -14,6 +15,8 @@ export const CONTRACT='https://spec.bindle.example/contracts/example-records/v1'
 export const EVENTS=Object.freeze(Object.fromEntries(['preferences-updated','credential-revoked','connection-revoked','connection-resumed','resource-detached'].map(name=>[name,'https://spec.bindle.example/events/'+name+'/v1'])));
 export const ENDPOINTS=Object.freeze({events:INTEGRATION+'/bindle/events',discovery:INTEGRATION+'/bindle/resources',rpc:INTEGRATION+'/bindle/rpc'});
 const clone=value=>structuredClone(value),key=(iss,id)=>JSON.stringify([iss,id]);
+// Dedupe key: the canonical text of a real 16-byte cti, or a stub's label.
+const ctiKey=cti=>cti instanceof Uint8Array&&cti.length===16?ctiId(cti):typeof cti==='string'&&cti?'stub:'+cti:null;
 const reject=(code,status=400)=>{throw Object.assign(new Error(code),{code,status});};
 const json=(value,status=200)=>Response.json(value,{status});
 
@@ -52,7 +55,7 @@ export function createIntegrationServer({issuer=ISSUER,subject=SUBJECT,integrati
  const issue=(kind,claims)=>{if(tokens.size>=maxRecords)reject('fixture_capacity',503);const token='fixture-'+kind+'-'+(++serial);tokens.set(token,{kind,claims:clone(claims)});return token;};
  const verify=async(token,kind,audience,now)=>{
   room(verifications);verifications.push({kind,audience});
-  const stub=tokens.get(token),real=keys?kind==='event'?(await verifySecurityEventToken(token,{keys:await keys(),issuer,subject,audience,connection:({iss,connection})=>known.has(key(iss,connection)),now})).claims:(await verifyAccessToken(token,{keys:await keys(),issuer,audience,now,connection:({iss,connection})=>known.has(key(iss,connection))})).claims:null,claims=clone(keys?real:verifyToken?await verifyToken(token,{kind,audience}):stub?.kind===kind?stub.claims:null);
+  const stub=tokens.get(token instanceof Uint8Array?new TextDecoder().decode(token):token),real=keys?kind==='event'?(await verifyIntegrationEvent(token,{contentType:INTEGRATION_EVENT_MEDIA_TYPE,keys:await keys(),issuer,subject,audience,connection:({iss,connection})=>known.has(key(iss,connection)),now})).claims:(await verifyAccessToken(token,{keys:await keys(),issuer,audience,now,connection:({iss,connection})=>known.has(key(iss,connection))})).claims:null,claims=clone(keys?real:verifyToken?await verifyToken(token,{kind,audience}):stub?.kind===kind?stub.claims:null);
   if(!claims||claims.aud!==audience)reject('invalid_token',401);
   const event=kind==='event'?Object.entries(claims.events??{}):null;
   if(event&&event.length!==1)reject('invalid_event');
@@ -61,7 +64,7 @@ export function createIntegrationServer({issuer=ISSUER,subject=SUBJECT,integrati
   if(!Number.isSafeInteger(binding?.generation)||binding.generation<1||!event&&binding.v!==1)reject('invalid_token',401);
   const seconds=Math.floor(now/1000);
   if(!Number.isFinite(claims.iat)||claims.iat>seconds+30)reject('invalid_token',401);
-  if(event){if(claims.iat<seconds-600||typeof claims.jti!=='string'||!claims.jti||!Number.isSafeInteger(binding.seq)||binding.seq<1)reject('invalid_event');}
+  if(event){if(claims.iat<seconds-600||!ctiKey(claims.cti)||!Number.isSafeInteger(binding.seq)||binding.seq<1)reject('invalid_event');}
   else{
    const lifetime=binding.purpose==='invoke'?300:60;
    if(!Number.isFinite(claims.exp)||claims.exp<=claims.iat||claims.exp-claims.iat>lifetime||claims.exp<=seconds-30||binding.generation<connection.floor||binding.generation>connection.highest)reject('invalid_token',401);
@@ -72,7 +75,7 @@ export function createIntegrationServer({issuer=ISSUER,subject=SUBJECT,integrati
  const provider={
   async receive({token},now){
    const {claims,binding,connection,event}=await verify(token,'event',endpoints.events,now);
-   if(connection.seen.has(claims.jti))return {duplicate:true};
+   const id=ctiKey(claims.cti);if(connection.seen.has(id))return {duplicate:true};
    room(events);if(connection.seen.size>=maxRecords)reject('fixture_capacity',503);
    const [[type]]=event;
    if(type===EVENTS['preferences-updated']){
@@ -88,7 +91,7 @@ export function createIntegrationServer({issuer=ISSUER,subject=SUBJECT,integrati
     const grants=new Set([...connection.revoked.keys(),...binding.grants]);if(grants.size>maxRecords)reject('fixture_capacity',503);
     for(const grant of binding.grants)connection.revoked.set(grant,Math.max(connection.revoked.get(grant)??0,binding.until));
    }
-   connection.seen.add(claims.jti);events.push({iss:claims.iss,jti:claims.jti,type,...clone(binding)});return {duplicate:false};
+   connection.seen.add(id);events.push({iss:claims.iss,cti:id,type,...clone(binding)});return {duplicate:false};
   },
   async discover({token,query},now){
    const {claims,binding}=await verify(token,'access',endpoints.discovery,now);
@@ -127,21 +130,22 @@ export function createIntegrationServer({issuer=ISSUER,subject=SUBJECT,integrati
   if(!operation)return json({error:'not_found'},404);
   if(request.method!=='POST')return new Response(null,{status:405,headers:{Allow:'POST'}});
   // Brokered RPC is Bindle CBOR (integrations §5; owner-approved 2026-10-28): the RPC endpoint reads and writes
-  // application/vnd.bindle.rpc+cbor only, every body it generates included. Discovery stays JSON; events stay SET JWT.
+  // application/vnd.bindle.rpc+cbor only, every body it generates included. Discovery stays JSON; events are COSE_Sign1
+  // CWTs (application/cwt, CBOR phase 5), refused with a 400 (413/415) and a CBOR {err, description} body.
   const event=operation===ReceiveIntegrationEvent,rpc=operation===InvokeIntegrationResource,type=request.headers.get('content-type')?.split(';')[0].trim(),reply=rpc?(value,status=200)=>rpcResponse(value,status):json;
-  if(type!==(event?'application/secevent+jwt':rpc?RPC_MEDIA_TYPE:'application/json'))return reply({error:'unsupported_media_type'},415);
+  if(type!==(event?INTEGRATION_EVENT_MEDIA_TYPE:rpc?RPC_MEDIA_TYPE:'application/json'))return reply({error:'unsupported_media_type'},415);
   try{
-   const bytes=new Uint8Array(await request.arrayBuffer());if(bytes.byteLength>65536)reject('request_too_large',413);const body=event?new TextDecoder().decode(bytes):null;
+   const bytes=new Uint8Array(await request.arrayBuffer());if(bytes.byteLength>65536)reject('request_too_large',413);const body=event?bytes:null;
    let document;if(rpc)try{document=decodeRPC(bytes);}catch{reject('invalid_request');}else if(!event)try{document=JSON.parse(new TextDecoder().decode(bytes));}catch{reject('invalid_json');}
    const token=event?body:request.headers.get('authorization')?.match(/^(?:Bearer|DPoP) (\S+)$/)?.[1];
    const params={input:{token,...event?{}:operation===IntegrationDiscovery?{query:document}:{envelope:document,proof:request.headers.get('DPoP'),scheme:request.headers.get('Authorization')?.split(' ')[0]}}};
    const result=operation===IntegrationDiscovery?await read(engine,new operation(params)):await perform(engine,new operation(params));
    return event?new Response(null,{status:202}):reply(result);
-  }catch(error){return reply({error:error.code??'fixture_error'},error.status??500);}
+  }catch(error){if(event&&error instanceof IntegrationEventFault)return new Response(integrationEventRejection(error),{status:error.status,headers:{'Content-Type':'application/cbor'}});return reply({error:error.code??'fixture_error'},error.status??500);}
  };
  return {
   engine,provider,clock,audit,endpoints:{...endpoints,invalidation:endpoints.events},fetch:handle,
-  issueAccessToken:claims=>issue('access',claims),issueEventToken:claims=>issue('event',claims),
+  issueAccessToken:claims=>issue('access',claims),issueEventToken:claims=>new TextEncoder().encode(issue('event',claims)),
   setResources:resources=>{items=clone(resources);},snapshot:()=>read(engine,new IntegrationSnapshot()),
   async listen(){
    if(closed)throw new Error('Integration fixture is closed');if(server)return origin;

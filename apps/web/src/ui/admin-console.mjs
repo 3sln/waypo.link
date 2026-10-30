@@ -141,7 +141,7 @@ function stepUpBody(state,modal){
  return {title:'Confirm it’s you',body:h('div',h('p',boot?'Privileged actions need a boot confirmation within the last few minutes. The action you started continues after you confirm.':'Privileged actions, including loading this console, need a passkey confirmation within the last few minutes. The action you started continues after you confirm.').props({id:'admin-dialog-desc'}).classes('muted'),
   modal.error?h('p',errorText(modal.error)).attrs({role:'alert'}).classes('alert','error'):null,
   methods.passkey?h('div',button(state,[icon('shield'),'Confirm with passkey'],'step-up-confirm',{method:'passkey'},'button primary').attrs({'data-autofocus':''}),button(state,'Cancel','close-modal',{},'button secondary',false)).classes('buttons','step-up-actions'):null,
-  boot&&methods.password?form(state,[input('password','Boot password','password',{required:true,autocomplete:'current-password',maxLength:512,...methods.passkey?{}:{'data-autofocus':''}})],'step-up-confirm','Confirm with password',{detail:{method:'password'}}):null,
+  boot&&!methods.passkey?h('p','No passkey is registered for boot. Restore it with a new token.').classes('alert','warning-note'):null,
   !boot&&!methods.passkey?h('div',h('p','Administrators confirm with a passkey, and this account has none. Add a passkey under Account & security, then return.').classes('alert','warning-note'),h('a','Open Account & security').props({href:'/console',target:'_blank',rel:'noopener'}).attrs({'data-autofocus':''}).classes('button','secondary')):null,
   methods.passkey?null:h('div',button(state,'Cancel','close-modal',{},'button secondary',false)).classes('buttons','step-up-actions'))};
 }

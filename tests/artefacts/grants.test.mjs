@@ -30,7 +30,7 @@ test('ART-5 flag off preserves legacy pins and refuses version request members',
 test('ART-5 v1 grants remain visible after owner configures v2, without receiving v2 fields',async t=>{
  const h=await harness(t),[first]=await h.pin(1);await h.configure(1,{enabled:true});await h.grant(first);await h.configure(2,{enabled:false,extra:true});
  const preference=(await read(h.engine,new GrantPreferenceConsumers({authority}))).preferences[0];assert.deepEqual(preference.affectedApps[0].fields,['enabled']);
- await h.service.store.transaction(async tx=>{const grant=await tx.get('federation/grant/first'),out=await h.service.readPreferences(tx,{subject},[grant],{fragment:ID},'unused');assert.deepEqual(out.values,{enabled:false});assert.equal(grant.version,1);});
+ await h.service.store.transaction(async tx=>{const grant=await tx.get('federation/grant/first'),out=await h.service.projectV2(tx,{subject,clientId:grant.clientId,grants:[grant],fragment:ID,issue:false});assert.deepEqual(out.values,{enabled:false});assert.equal(grant.version,1);});
 });
 test('ART-5 existing digest grants bridge only to identical version-one bodies',async t=>{
  const h=await harness(t,{enabled:false});await h.configure(null,{enabled:true});const legacy=await h.service.schema(ID);await h.grant(legacy);h.config.ARTEFACT_VERSIONS_ENABLED='true';await h.configure(2,{enabled:false,extra:true});

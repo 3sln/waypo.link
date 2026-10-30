@@ -1476,7 +1476,7 @@ Source for every item below: "2026-10-24 — Break-glass and ownership outbox sc
 
 ### RTC signaling
 
-Source for every item below: "2026-10-26 — RTC signaling extension design", the [RTC signaling spec](../spec/superseded/rtc-signaling.md) and [design](../architecture/rtc-signaling.md) (revision 1, §9 and §18). The design was reviewed by a forked adversarial review that found 7 High, 11 Medium and 6 Low issues, all applied. (At the design's writing nothing was implemented; the slices added since are listed in the sub-sections after AMD-R6, and are local only.) Every item is provisional, with a recommendation but no sign-off. Planned flags are `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED` (class a, default off) and `RTC_TURN_ENABLED` (class b). The design lists release gates, among them sign-off of RTC-1 to RTC-17 and AMD-X1 and AMD-R1 to R6, an independent security review, a clean-room second provider and real-device WebRTC tests.
+Source for every item below: "2026-10-26 — RTC signaling extension design", the RTC signaling spec (in git history: `git show bbbbdad:docs/spec/superseded/rtc-signaling.md`) and [design](../architecture/rtc-signaling.md) (revision 1, §9 and §18). The design was reviewed by a forked adversarial review that found 7 High, 11 Medium and 6 Low issues, all applied. (At the design's writing nothing was implemented; the slices added since are listed in the sub-sections after AMD-R6, and are local only.) Every item is provisional, with a recommendation but no sign-off. Planned flags are `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED` (class a, default off) and `RTC_TURN_ENABLED` (class b). The design lists release gates, among them sign-off of RTC-1 to RTC-17 and AMD-X1 and AMD-R1 to R6, an independent security review, a clean-room second provider and real-device WebRTC tests.
 
 **RTC-1. Shape on the extension system**
 - Decided: Recommended: adopt.
@@ -2787,7 +2787,7 @@ Source for every item below: "2026-10-27 — RTC wargame findings and fixes (eng
   - email sign-in: 5 per 15 minutes and 12 per 6 hours per mailbox, 5,000 per hour per region and 20,000 per hour overall;
   - per handle: 20 per 5 minutes, charged only by a failed password after Turnstile;
   - boot passkey: 10 per minute and 50 per hour per IP, 600 per 5 minutes per principal;
-  - boot password: 20 per 5 minutes per principal and 200 per hour globally, with no Turnstile on the last-resort path.
+  - boot password: removed (boot is passkey only; coordinator decision under owner delegation, 2026-10-29, provisional), so no boot password window remains.
 - Why: identity wargame findings #3 and #6–#10.
 - Source: "Identity and federation wargame fixes".
 - Safe alternative: none recorded.

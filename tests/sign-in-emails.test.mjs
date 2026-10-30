@@ -221,6 +221,18 @@ test('choosing another notice address notifies every address, including the prev
   assert.equal(h.alerts.slice(again).filter(a => a.type === 'notice-email-changed').length, 0, 'no change, no notice');
 });
 
+test('a second verified address notifies every channel; the first one does not (coordinator decision 2026-10-29)', async t => {
+  const h = harness(t), { ownerContext } = await activate(h.act);
+  const first = h.alerts.length, pushed = h.push.length;
+  await addAndVerify(h, ownerContext, A); await h.settle();
+  assert.equal(h.alerts.slice(first).filter(a => a.type === 'email-added').length, 0, 'the only verified address');
+  assert.equal(h.push.slice(pushed).filter(p => p.event === 'email-added').length, 0);
+  const mark = h.alerts.length;
+  await addAndVerify(h, ownerContext, B); await h.settle();
+  assert.deepEqual(h.alerts.slice(mark).filter(a => a.type === 'email-added').map(a => a.email).sort(), [A, B]);
+  assert.ok(h.push.slice(pushed).some(p => p.event === 'email-added'));
+});
+
 test('email sign-in links bind (address, signInSince): turning sign-in off and on again invalidates an outstanding link', async t => {
   const h = harness(t);
   const { ownerContext } = await activate(h.act);

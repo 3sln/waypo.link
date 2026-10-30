@@ -1,4 +1,4 @@
-// EXT-X6 integration event outbox (packages/runtime/integration-events.mjs): signed SETs verified by the conformance
+// EXT-X6 integration event outbox (packages/runtime/integration-events.mjs): COSE_Sign1 CWT events verified by the conformance
 // fixture (tests/fixtures/integration-server.mjs), coalescing and strictly increasing seq, retries with backoff and the
 // degraded dead letter, SSRF refusal in the egress adapters, at-least-once delivery across a crash between send and
 // ack, invalidation priority, and the alarm-driven slice on the real AccountController. Engine-harness suites dispatch
@@ -21,8 +21,9 @@ import {fakeClock} from './helpers/chaos.mjs';
 
 const F='https://integration.example/preferences/settings/v1',G='https://integration.example/preferences/layout/v1',H='https://integration.example/preferences/filters/v1';
 const SUB=`${ISSUER}/entities/${OWNER}`,SECRET=Buffer.alloc(32,7).toString('base64'),T={...EVENTS};
-const decode=token=>({header:JSON.parse(Buffer.from(token.split('.')[0],'base64url')),claims:JSON.parse(Buffer.from(token.split('.')[1],'base64url'))});
-const eventOf=token=>{const {claims}=decode(token),[[type,payload]]=Object.entries(claims.events);return {type,...payload};};
+const decode=bytes=>E.parseIntegrationEvent(bytes);
+const eventOf=bytes=>{const {type,payload}=decode(bytes);return {type,...payload};};
+const verifyOptions=(keys,clock,over={})=>({contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,subject:SUB,keys,issuer:ISSUER,audience:'https://integration.example/bindle/events',now:clock.now(),...over});
 function memory(){const map=new Map();let tail=Promise.resolve();return {transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(map.get(k)),set:async(k,v)=>{map.set(k,structuredClone(v));}}));tail=run.catch(()=>{});return run;}};}
 /** A validated X3 approval snapshot for a confidential integration on `host` with an events endpoint. */
 function snapshot(host='integration.example',{events}={}){
@@ -30,9 +31,9 @@ function snapshot(host='integration.example',{events}={}){
  const r=validateIntegrationManifest({v:1,events_endpoint:`https://${host}/bindle/events`,...events?{events}:{}},{clientId,confidential:true,redirectUris,jwksUri});assert.equal(r.status,'valid',r.reason);
  return {client:{id:clientId,name:host},snapshot:{clientId,redirectUris,authMethod:'private_key_jwt',jwksUri,thumbprints:['A'.repeat(43)],manifest:r.manifest}};
 }
-/** A second integration origin: verifies every SET with the same verifier and records it. */
+/** A second integration origin: verifies every event with the same verifier and records it. */
 function recorder(keys,clock,connection){
- const seen=[];return {seen,async fetch(url,init){const token=init.body;try{const v=await E.verifySecurityEventToken(token,{subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience:url,subject:SUB,connection:({connection:id})=>id===connection(),now:clock.now()});seen.push({type:v.type,...v.payload});return new Response(null,{status:202});}catch{return Response.json({err:'authentication_failed'},{status:401});}}};
+ const seen=[];return {seen,async fetch(url,init){try{const v=await E.verifyIntegrationEvent(init.body,{contentType:init.headers['Content-Type'],subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience:url,connection:({connection:id})=>id===connection(),now:clock.now()});seen.push({type:v.type,...v.payload});return new Response(null,{status:202});}catch(error){return new Response(E.integrationEventRejection(error),{status:error.status??500});}}};
 }
 
 async function world(t,{limits,events,crashable=false,enabled=true,onSnapshot}={}){
@@ -42,7 +43,7 @@ async function world(t,{limits,events,crashable=false,enabled=true,onSnapshot}={
  const route={mode:'up'},sent=[];let server,other;
  const egress={async send({url,body}){
   sent.push({url,body,at:clock.now()});if(route.mode==='down')throw new Error('connection refused');
-  const target=new URL(url).host==='integration.example'?server:other,response=await target.fetch(url,{method:'POST',headers:{'Content-Type':E.SET_MEDIA_TYPE},body});
+  const target=new URL(url).host==='integration.example'?server:other,response=await target.fetch(url,{method:'POST',headers:{'Content-Type':E.INTEGRATION_EVENT_MEDIA_TYPE},body});
   const bytes=new Uint8Array(await response.arrayBuffer());
   if(route.mode==='lost'){route.mode='up';throw new Error('connection reset after the receiver processed the request');}
   if(route.mode==='crash'){route.mode='up';crash.next=true;}
@@ -58,7 +59,7 @@ async function world(t,{limits,events,crashable=false,enabled=true,onSnapshot}={
  t.after(()=>x4.dispose());
  const connection=await op(C.ConnectIntegration,system,snapshot('integration.example',{events}));
  server=createIntegrationServer({clock,connections:[{iss:ISSUER,id:connection.id,sub:SUB,generation:connection.generation}],
-  verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifySecurityEventToken(token,{subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection:id})=>id===connection.id,now:clock.now()})).claims:null});
+  verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifyIntegrationEvent(token,verifyOptions(await keys.jwks(),clock,{audience,connection:({connection:id})=>id===connection.id}))).claims:null});
  t.after(()=>server.close());
  let second;other=recorder(keys,clock,()=>second?.id);
  const ev={
@@ -74,43 +75,44 @@ async function world(t,{limits,events,crashable=false,enabled=true,onSnapshot}={
  return {clock,keys,harness,x4,op,system,owner,connection,server,other,egress,route,sent,crash,setValues,ev,pump,received,state,connectSecond};
 }
 
-test('SETs are ES256 secevent+jwt with exactly the §6.1 claims, minimized snapshots and fixture-verified signatures',async t=>{
+test('events are untagged ES256 COSE_Sign1 CWTs with exactly the §6.1 claims, minimized snapshots and fixture-verified signatures',async t=>{
  const w=await world(t),resource={id:`${ISSUER}/entities/x/resources/r-1`,label:'Inbox',status:'available',contracts:['https://spec.bindle.example/contracts/c/v1'],token:'secret-brokered-token',token_type:'Bearer',expires_at:1792500000,broker:{endpoint:'https://models.example/bindle/rpc',origin:'https://models.example',resource:'https://models.example/r/abc'}};
  w.setValues(F,{store:[resource],retention:30,token:'a field the owner named token'});await w.ev.mark(F);
  const r=await w.pump();assert.equal(r.acknowledged,1);assert.equal(w.sent.length,1);
- const {header,claims}=decode(w.sent[0].body);
- assert.deepEqual(Object.keys(header).sort(),['alg','kid','typ']);assert.equal(header.alg,'ES256');assert.equal(header.typ,'secevent+jwt');assert.match(header.kid,/^event\./);
- assert.deepEqual(Object.keys(claims).sort(),['aud','events','iat','iss','jti','sub']);
+ const body=w.sent[0].body;assert.ok(body instanceof Uint8Array);assert.equal(body[0],0x84,'an untagged four-element array');
+ const parsed=decode(body),{claims}=parsed;assert.match(parsed.kid,/^event\./);assert.equal(parsed.signature.length,64);
+ assert.deepEqual(Object.keys(claims).sort(),['aud','cti','events','iat','iss','sub']);assert.ok(claims.cti instanceof Uint8Array&&claims.cti.length===16);
  assert.equal(claims.iss,ISSUER);assert.equal(claims.aud,'https://integration.example/bindle/events');assert.equal(claims.sub,SUB);assert.equal(claims.iat,Math.floor(w.clock.now()/1000));
- const event=eventOf(w.sent[0].body);assert.equal(event.type,PREFERENCES_UPDATED_EVENT);
+ const event=eventOf(body);assert.equal(event.type,PREFERENCES_UPDATED_EVENT);
  assert.deepEqual(Object.keys(event).sort(),['connection','fragment','generation','revision','seq','type','values']);
  assert.deepEqual({connection:event.connection,generation:event.generation,seq:event.seq,fragment:event.fragment},{connection:w.connection.id,generation:1,seq:1,fragment:F});
  assert.deepEqual(Object.keys(event.values.store[0]).sort(),['broker','contracts','id','label','status'],'resource references carry no token, token_type or expires_at');
- assert.equal(event.values.token,'a field the owner named token','ordinary fields are untouched');assert.equal(w.sent[0].body.includes('secret-brokered'),false);
+ assert.equal(event.values.token,'a field the owner named token','ordinary fields are untouched');assert.equal(Buffer.from(body).includes('secret-brokered'),false);
  const fixture=await w.server.snapshot();assert.equal(fixture.connections[0].preferences[F].values.retention,30);assert.equal(fixture.connections[0].preferences[F].seq,1);
- // Forgery: tampered payload, a foreign key under the real kid, and an at+jwt brokered token are all refused (401).
- const post=body=>w.server.fetch('https://integration.example/bindle/events',{method:'POST',headers:{'Content-Type':E.SET_MEDIA_TYPE},body});
- const [h,p,s]=w.sent[0].body.split('.'),forged=Buffer.from(JSON.stringify({...claims,events:{[PREFERENCES_UPDATED_EVENT]:{...event,type:undefined,seq:99,values:{retention:0}}}})).toString('base64url');
- assert.equal((await post(`${h}.${forged}.${s}`)).status,401);
- const foreign=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign']),input=`${h}.${forged}`;
- assert.equal((await post(`${input}.${Buffer.from(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},foreign.privateKey,new TextEncoder().encode(input))).toString('base64url')}`)).status,401);
+ // Forgery: a tampered payload byte, a foreign key under the real kid, and an at+jwt brokered token are all refused (400, permanent).
+ const post=(bytes,type=E.INTEGRATION_EVENT_MEDIA_TYPE)=>w.server.fetch('https://integration.example/bindle/events',{method:'POST',headers:{'Content-Type':type},body:bytes});
+ const at=Buffer.from(body).indexOf(Buffer.from('retention')),tampered=new Uint8Array(body);tampered[at]^=0x01;
+ assert.equal((await post(tampered)).status,400);
  const access=await mintAccessToken(w.keys,{subject:SUB,audience:'https://integration.example/bindle/rpc',clientId:'https://consumer.example/client.json',connection:w.connection.id,generation:1,resource:'https://integration.example/r/x',grant:'g1',methods:{'https://spec.bindle.example/contracts/c/v1':['deliver']}},{clock:()=>w.clock.now()});
- assert.equal((await post(access.token)).status,401,'an access token is never accepted as a SET');
+ assert.equal((await post(new TextEncoder().encode(access.token))).status,400,'an access token is never accepted as an event');
+ assert.equal((await post(body,'application/secevent+jwt')).status,415);
  // Replay: within the window it is acknowledged and not reprocessed; after 10 minutes it fails freshness.
- assert.equal((await post(w.sent[0].body)).status,202);assert.equal((await w.received()).length,1);
- w.clock.advance(601000);assert.equal((await post(w.sent[0].body)).status,401);
- assert.equal(p.length>0,true);
+ assert.equal((await post(body)).status,202);assert.equal((await w.received()).length,1);
+ w.clock.advance(601000);const stale=await post(body);assert.equal(stale.status,400);
 });
 
-test('the verifier checks typ and the connection before consulting any key',async t=>{
+test('the verifier checks the media type, structure and the connection before consulting any key',async t=>{
  const w=await world(t);let fetched=0;const keys=async()=>{fetched++;return w.keys.jwks();};
- const {token}=await w.keys.sign('event',{iss:ISSUER,sub:SUB,aud:'https://integration.example/bindle/events',iat:Math.floor(w.clock.now()/1000),jti:'A'.repeat(22),events:{[T['connection-revoked']]:{connection:'unknown',generation:2,seq:1,generation_floor:2,terminal:true}}});
- await assert.rejects(E.verifySecurityEventToken(token,{subject:SUB,keys,issuer:ISSUER,audience:'https://integration.example/bindle/events',connection:()=>false,now:w.clock.now()}),e=>e.reason==='connection');assert.equal(fetched,0);
- const verified=await E.verifySecurityEventToken(token,{keys,issuer:ISSUER,audience:'https://integration.example/bindle/events',subject:SUB,connection:()=>true,now:w.clock.now()});assert.equal(verified.payload.generation_floor,2);assert.equal(fetched,1);
- await assert.rejects(E.verifySecurityEventToken(token,{subject:SUB,keys,issuer:ISSUER,audience:'https://other.example/bindle/events',connection:()=>true,now:w.clock.now()}),e=>e.reason==='aud');
- await assert.rejects(E.verifySecurityEventToken(token,{keys,issuer:ISSUER,audience:'https://integration.example/bindle/events',subject:`${ISSUER}/entities/other`,connection:()=>true,now:w.clock.now()}),e=>e.reason==='sub');
- await assert.rejects(E.verifySecurityEventToken(token,{subject:SUB,keys,issuer:ISSUER,audience:'https://integration.example/bindle/events',connection:()=>true,now:w.clock.now()-31000}),e=>e.reason==='iat','iat more than 30 s ahead');
- const invoke=(await w.keys.sign('invoke',{a:1})).token;await assert.rejects(E.verifySecurityEventToken(invoke,{subject:SUB,keys,issuer:ISSUER,audience:'x',connection:()=>true,now:w.clock.now()}),e=>e.reason==='typ');
+ const {message}=await w.keys.sign('event',{iss:ISSUER,sub:SUB,aud:'https://integration.example/bindle/events',iat:Math.floor(w.clock.now()/1000),cti:new Uint8Array(16).fill(7),events:{[T['connection-revoked']]:{connection:'unknown',generation:2,seq:1,generation_floor:2,terminal:true}}});
+ await assert.rejects(E.verifyIntegrationEvent(message,verifyOptions(keys,w.clock,{connection:()=>false})),e=>e.reason==='connection');assert.equal(fetched,0);
+ await assert.rejects(E.verifyIntegrationEvent(message,verifyOptions(keys,w.clock,{contentType:'application/cbor',connection:()=>true})),e=>e.reason==='media_type'&&e.status===415);assert.equal(fetched,0);
+ const verified=await E.verifyIntegrationEvent(message,verifyOptions(keys,w.clock,{connection:()=>true}));assert.equal(verified.payload.generation_floor,2);assert.equal(fetched,1);assert.equal(verified.ctiId,Buffer.alloc(16,7).toString('base64url'));
+ await assert.rejects(E.verifyIntegrationEvent(message,verifyOptions(keys,w.clock,{audience:'https://other.example/bindle/events',connection:()=>true})),e=>e.reason==='aud'&&e.err==='invalid_audience');
+ await assert.rejects(E.verifyIntegrationEvent(message,verifyOptions(keys,w.clock,{subject:`${ISSUER}/entities/other`,connection:()=>true})),e=>e.reason==='sub');
+ assert.equal((await E.verifyIntegrationEvent(message,verifyOptions(keys,w.clock,{subject:undefined,connection:()=>({subject:SUB})}))).record.subject,SUB,'the subject may come from the connection lookup');
+ await assert.rejects(E.verifyIntegrationEvent(message,verifyOptions(keys,{now:()=>w.clock.now()-31000},{connection:()=>true})),e=>e.reason==='iat','iat more than 30 s ahead');
+ const invoke=(await w.keys.sign('invoke',{a:1})).token;await assert.rejects(E.verifyIntegrationEvent(new TextEncoder().encode(invoke),verifyOptions(keys,w.clock,{connection:()=>true})),e=>e.reason==='structure');
+ await assert.rejects(E.verifyIntegrationEvent(message,{...verifyOptions(keys,w.clock),connection:undefined}),TypeError,'the connection lookup is mandatory');
 });
 
 test('ordering and coalescing: one snapshot per fragment, strictly increasing seq, newer markers supersede in-flight ones',async t=>{
@@ -120,15 +122,15 @@ test('ordering and coalescing: one snapshot per fragment, strictly increasing se
  assert.equal((await w.pump()).acknowledged,1);let got=await w.received();assert.equal(got.length,1);assert.deepEqual([got[0].seq,got[0].values],[1,{v:3}]);
  w.setValues(F,{v:4});await w.ev.mark(F);w.setValues(G,{g:1});await w.ev.mark(G);
  await w.ev.deliver();got=await w.received();assert.deepEqual(got.map(e=>[e.fragment,e.seq]),[[F,1],[F,2],[G,3]]);
- // A failed attempt freezes jti and seq; a newer marker replaces it with a fresh jti and seq, and the old SET is never retried.
+ // A failed attempt freezes cti and seq; a newer marker replaces it with a fresh cti and seq, and the old event is never retried.
  w.route.mode='down';w.setValues(F,{v:5});await w.ev.mark(F);assert.equal((await w.ev.deliver()).retrying,1);
  const failed=(await w.ev.status()).pending[0];assert.equal(failed.seq,4);const firstAttemptAt=failed.firstAttemptAt;
  w.setValues(F,{v:6});await w.ev.mark(F);const replaced=(await w.ev.status()).pending[0];assert.equal(replaced.seq,undefined);assert.equal(replaced.firstAttemptAt,firstAttemptAt,'the retry window carries over a superseded failure');
  w.route.mode='up';assert.equal((await w.ev.deliver()).acknowledged,1);got=await w.received();assert.deepEqual([got.at(-1).seq,got.at(-1).values],[5,{v:6}]);
  assert.equal(w.sent.filter(s=>eventOf(s.body).seq===4).length,1);
- // An unchanged retry is re-signed with a fresh iat and the same jti and seq.
+ // An unchanged retry is re-signed with a fresh iat and the same cti and seq.
  w.route.mode='down';w.setValues(F,{v:7});await w.ev.mark(F);await w.ev.deliver();w.clock.advance(11000);w.route.mode='up';await w.ev.deliver();
- const [a,b]=w.sent.slice(-2).map(s=>decode(s.body).claims);assert.equal(a.jti,b.jti);assert.notEqual(a.iat,b.iat);assert.equal(eventOf(w.sent.at(-1).body).seq,6);
+ const [a,b]=w.sent.slice(-2).map(s=>decode(s.body).claims);assert.deepEqual(a.cti,b.cti);assert.notEqual(a.iat,b.iat);assert.equal(eventOf(w.sent.at(-1).body).seq,6);
  const seqs=w.sent.map(s=>eventOf(s.body).seq);assert.deepEqual([...new Set(seqs)],[...new Set(seqs)].sort((x,y)=>x-y),'seq never goes backwards');
  // Unsubscribed types are dropped, never sent.
  await w.ev.enqueue({type:'resource-detached',connection:w.connection.id,resource:'https://integration.example/r/1'});const before=w.sent.length;await w.ev.deliver();assert.equal(w.sent.length,before);
@@ -167,14 +169,14 @@ test('SSRF: endpoints must be public HTTPS names off the issuer; adapters refuse
  for(const url of ['http://integration.example/e','https://10.0.0.1/e','https://[::1]/e','https://2130706433/e','https://localhost/e','https://metadata.internal/e','https://integration.example:8443/e','https://u:p@integration.example/e','https://integration.example/e?x=1','https://integration.example/e#f','https://provider.example/e','https://api.provider.example/e','https://integration.example/./e'])
   assert.equal(E.eventEndpointURL(url,{issuer:ISSUER}),null,url);
  assert.ok(E.eventEndpointURL('https://integration.example/bindle/events',{issuer:ISSUER}));
- const body='a.b.c',calls=[];
+ const body=Uint8Array.from([0x84,0x40,0xa0,0x40,0x40]),calls=[];
  const request=(options,callback)=>{calls.push(options);const req=new EventEmitter();req.destroy=()=>{};req.end=()=>{const res=new EventEmitter();Object.assign(res,{statusCode:options.respond??302,headers:{},destroy(){}});callback(res);setImmediate(()=>{if(options.big)res.emit('data',Buffer.alloc(5000));res.emit('end');});};return req;};
  const node=address=>E.createNodeEventEgress({issuer:ISSUER,lookup:async()=>[{address,family:4}],request});
  for(const address of ['10.0.0.5','127.0.0.1','169.254.169.254','192.168.1.1','100.64.0.1'])await assert.rejects(node(address).send({url:'https://integration.example/bindle/events',body}),{code:'event_transport_unavailable'},address);
  assert.equal(calls.length,0,'nothing is sent to a private address');
  await assert.rejects(node('93.184.216.34').send({url:'https://provider.example/events',body}),{code:'event_transport_unavailable'});
  const redirected=await node('93.184.216.34').send({url:'https://integration.example/bindle/events',body});assert.equal(redirected.status,302);
- const [options]=calls;assert.equal(options.headers['Content-Type'],'application/secevent+jwt');assert.equal(options.agent,false);assert.equal(options.servername,'integration.example');
+ const [options]=calls;assert.equal(options.headers['Content-Type'],'application/cwt');assert.equal(options.headers.Accept,'application/cbor');assert.equal(options.agent,false);assert.equal(options.servername,'integration.example');
  options.lookup('integration.example',{all:true},(error,list)=>assert.deepEqual(list,[{address:'93.184.216.34',family:4}]));
  const bigRequest=(o,cb)=>request({...o,respond:202,big:true},cb);
  await assert.rejects(E.createNodeEventEgress({issuer:ISSUER,lookup:async()=>[{address:'93.184.216.34',family:4}],request:bigRequest}).send({url:'https://integration.example/bindle/events',body}),{code:'event_transport_unavailable'},'responses are bounded to 4 KiB');
@@ -183,19 +185,19 @@ test('SSRF: endpoints must be public HTTPS names off the issuer; adapters refuse
  await assert.rejects(E.createWorkerEventEgress({publicRouting:true,fetcher:dohFetcher('127.0.0.1')}).send({url:'https://integration.example/bindle/events',body}),{code:'event_transport_unavailable'});
  assert.equal(fetched.some(f=>f.init.method==='POST'),false);
  const ok=await E.createWorkerEventEgress({publicRouting:true,fetcher:dohFetcher('93.184.216.34')}).send({url:'https://integration.example/bindle/events',body});assert.equal(ok.status,202);
- const post=fetched.find(f=>f.init.method==='POST');assert.equal(post.init.redirect,'manual');assert.equal(post.init.credentials,'omit');assert.equal(post.init.headers['Content-Type'],'application/secevent+jwt');
+ const post=fetched.find(f=>f.init.method==='POST');assert.equal(post.init.redirect,'manual');assert.equal(post.init.credentials,'omit');assert.equal(post.init.headers['Content-Type'],'application/cwt');
  // Delivery: a redirect is a failure (retried, never followed) and the destination is only ever the pinned endpoint.
  const w=await world(t);w.egress.send=async input=>{calls.push(input);return {status:307,bytes:new Uint8Array()};};
  w.setValues(F,{v:1});await w.ev.mark(F);const r=await w.ev.deliver();assert.equal(r.retrying,1);assert.equal((await w.ev.status()).pending[0].lastError,'redirect');
  assert.equal(calls.at(-1).url,'https://integration.example/bindle/events');
 });
 
-test('a crash between send and ack is at-least-once; the receiver dedupes by jti and orders by seq',async t=>{
+test('a crash between send and ack is at-least-once; the receiver dedupes by cti and orders by seq',async t=>{
  const w=await world(t,{crashable:true});
  // The reply is lost after the receiver processed the SET.
  w.setValues(F,{v:1});await w.ev.mark(F);w.route.mode='lost';assert.equal((await w.ev.deliver()).retrying,1);assert.equal((await w.received()).length,1);
  w.clock.advance(10000);assert.equal((await w.ev.deliver()).acknowledged,1);
- assert.equal(w.sent.length,2);assert.equal(decode(w.sent[0].body).claims.jti,decode(w.sent[1].body).claims.jti);assert.equal((await w.received()).length,1,'the duplicate jti was acknowledged, not reprocessed');
+ assert.equal(w.sent.length,2);assert.deepEqual(decode(w.sent[0].body).claims.cti,decode(w.sent[1].body).claims.cti);assert.equal((await w.received()).length,1,'the duplicate cti was acknowledged, not reprocessed');
  // The process dies after the receiver answered 202 but before the acknowledgment commit.
  w.setValues(F,{v:2});await w.ev.mark(F);w.route.mode='crash';await assert.rejects(w.ev.deliver(),{code:'crashed'});
  const leased=(await w.ev.status()).pending[0];assert.equal(leased.attempts,1);assert.equal(leased.seq,2);
@@ -204,7 +206,7 @@ test('a crash between send and ack is at-least-once; the receiver dedupes by jti
  // A newer snapshot wins over a late replay of an older SET, which is still within the freshness window.
  w.setValues(F,{v:3});await w.ev.mark(F);await w.ev.deliver();
  const stale=w.sent.find(s=>eventOf(s.body).seq===2).body;
- assert.equal((await w.server.fetch('https://integration.example/bindle/events',{method:'POST',headers:{'Content-Type':E.SET_MEDIA_TYPE},body:stale})).status,202);
+ assert.equal((await w.server.fetch('https://integration.example/bindle/events',{method:'POST',headers:{'Content-Type':E.INTEGRATION_EVENT_MEDIA_TYPE},body:stale})).status,202);
  assert.deepEqual((await w.server.snapshot()).connections[0].preferences[F].values,{v:3});
 });
 
@@ -263,11 +265,12 @@ test('review regressions: revocations always fit, a dead backlog expires togethe
  for(let i=0;i<1000;i++){const rows=(await w.ev.status()).pending;if(!rows.length)break;w.clock.set(Math.min(...rows.map(r=>r.nextAt)));await w.ev.deliver();}
  assert.equal((await w.ev.status()).pending.length,0);assert.ok(w.clock.now()-Date.UTC(2026,9,20,12)<80*3600000+72*3600000,'one window, not one per row');
  // X6-S4: connection lookup and subject cannot be omitted.
- const {token}=await w.keys.sign('event',{iss:ISSUER,sub:SUB,aud:'https://integration.example/bindle/events',iat:Math.floor(w.clock.now()/1000),jti:'B'.repeat(22),events:{[T['connection-revoked']]:{connection:id,generation:9,seq:1,generation_floor:9,terminal:false}}});
- await assert.rejects(E.verifySecurityEventToken(token,{keys:await w.keys.jwks(),issuer:ISSUER,audience:'https://integration.example/bindle/events',now:w.clock.now()}),TypeError);
+ const {message}=await w.keys.sign('event',{iss:ISSUER,sub:SUB,aud:'https://integration.example/bindle/events',iat:Math.floor(w.clock.now()/1000),cti:new Uint8Array(16).fill(11),events:{[T['connection-revoked']]:{connection:id,generation:9,seq:1,generation_floor:9,terminal:false}}});
+ await assert.rejects(E.verifyIntegrationEvent(message,{contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,keys:await w.keys.jwks(),issuer:ISSUER,audience:'https://integration.example/bindle/events',now:w.clock.now()}),TypeError);
+ await assert.rejects(E.verifyIntegrationEvent(message,{contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,keys:await w.keys.jwks(),issuer:ISSUER,audience:'https://integration.example/bindle/events',connection:()=>true,now:w.clock.now()}),e=>e.reason==='sub','without a subject option or lookup subject, nothing verifies');
  // X6-S5: credentials nested under broker, or in contract-less references, are stripped too.
  w.route.mode='up';w.setValues(F,{store:{id:'r-1',label:'x',broker:{endpoint:'https://m.example/rpc',token:'nested-secret',expires_at:1}},token:'owner field'});await w.ev.mark(F);await w.ev.deliver();
- const body=w.sent.at(-1).body;assert.equal(Buffer.from(body.split('.')[1],'base64url').toString().includes('nested-secret'),false);assert.equal(eventOf(body).values.token,'owner field');
+ const body=w.sent.at(-1).body;assert.equal(Buffer.from(body).includes('nested-secret'),false);assert.equal(eventOf(body).values.token,'owner field');
 });
 
 test('flag off and missing ports: nothing is refused silently, nothing is sent',async t=>{
@@ -282,11 +285,11 @@ test('flag off and missing ports: nothing is refused silently, nothing is sent',
 test('alarm-driven draining on the real AccountController (shared by the Worker object and Node)',async t=>{
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory()});
  const route={mode:'down'};let server;
- const egress={async send({url,body}){if(route.mode==='down')throw new Error('down');const response=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.SET_MEDIA_TYPE},body});return {status:response.status,bytes:new Uint8Array(await response.arrayBuffer())};}};
+ const egress={async send({url,body}){if(route.mode==='down')throw new Error('down');const response=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.INTEGRATION_EVENT_MEDIA_TYPE},body});return {status:response.status,bytes:new Uint8Array(await response.arrayBuffer())};}};
  const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,INTEGRATION_EVENT_PORTS:{signer:keys,egress,snapshot:async()=>({revision:'r1',values:{enabled:true}})}};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}},a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
  const c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:snapshot()});
- server=createIntegrationServer({clock:{now:()=>Date.now()},connections:[{iss:ISSUER,id:c.id,sub:SUB,generation:c.generation}],verifyToken:async(token,{audience})=>(await E.verifySecurityEventToken(token,{subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===c.id})).claims});t.after(()=>server.close());
+ server=createIntegrationServer({clock:{now:()=>Date.now()},connections:[{iss:ISSUER,id:c.id,sub:SUB,generation:c.generation}],verifyToken:async(token,{audience})=>(await E.verifyIntegrationEvent(token,{contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===c.id})).claims});t.after(()=>server.close());
  await a.integrationEventsMark(OWNER,{connection:c.id,fragment:F});assert.ok(await db.getAlarm()<=Date.now(),'marking wakes the alarm');
  const failed=await a.integrationEventsAlarm(OWNER);assert.equal(failed.delivered.retrying,1);
  const alarm=await db.getAlarm();assert.ok(alarm>=Date.now()+500&&alarm<=Date.now()+10500,`retry alarm ${alarm-Date.now()}`);

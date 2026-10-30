@@ -1,10 +1,10 @@
 # Bindle link envelope and conditional contact links — decision note
 
-> **Superseded in part (2026-10-27).** The contact link type and conditional contact links are being withdrawn ([contacts and links rethink](contacts-and-links-rethink.md), CL-2, CR-LK1, CR-C10; provisional). The signed-object profile moved to core [keys](../spec/keys.md); the link query envelope is the [Organizations link envelope annex](../spec/extensions/organizations-link-envelope.md) since 2026-10-28, and [links](../spec/superseded/links.md) is a dissolved, frozen record (CR-LK1, provisional).
+> **Superseded in part (2026-10-27).** The contact link type and conditional contact links are being withdrawn ([contacts and links rethink](contacts-and-links-rethink.md), CL-2, CR-LK1, CR-C10; provisional). The signed-object profile moved to core [keys](../spec/keys.md); the link query envelope is the [Organizations link envelope annex](../spec/extensions/organizations-link-envelope.md) since 2026-10-28, and the dissolved links draft is in git history, `git show bbbbdad:docs/spec/superseded/links.md` (CR-LK1, provisional).
 
 Status: provisional design. No runtime or publication claim. The coordinator owns the DEVLOG entry. Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 
-Normative draft: [links](../spec/superseded/links.md). Independent review: [bindle-links-review](../release/bindle-links-review.md). Builds on [contact endpoints](../../apps/parlay/docs/legacy/contact-tokens.md), [contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md), [delivery wire decision](contact-delivery-wire.md) and [conversation/identity design](conversation-contact-design.md).
+Normative draft: links (dissolved; in git history: `git show bbbbdad:docs/spec/superseded/links.md`). Independent review: [bindle-links-review](../release/bindle-links-review.md). Builds on [contact endpoints](../../apps/parlay/docs/legacy/contact-tokens.md), [contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md), [delivery wire decision](contact-delivery-wire.md) and [conversation/identity design](conversation-contact-design.md).
 
 ## Decisions
 

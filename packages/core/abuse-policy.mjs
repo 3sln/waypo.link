@@ -7,12 +7,11 @@ export function abuseWindows({operation,ipHash,subnetHash,handleHash,regionHash,
  // Unauthenticated boot setup preparation: per-IP pseudonym windows plus a global ceiling.
  if(operation==='boot-begin')return [{key:`boot-begin:burst:${ipHash}`,windowMs:60000,limit:5},{key:`boot-begin:ip:${ipHash}`,windowMs:3600000,limit:20},{key:'boot-begin:global',windowMs:3600000,limit:200}];
  // Wargame 2026-10-23 #6, #10 (provisional): boot sign-in has one principal, so its windows also bound the principal
- // and the whole host, independent of the source address. Passkey begin and password attempts are counted apart, so
- // guessing the password never exhausts the passkey path.
+ // and the whole host, independent of the source address. Boot is passkey only (2026-10-29, provisional), so no boot
+ // password window remains.
  // Boot passkey begin (review 2026-10-23, provisional): per-address windows do the work; the principal window is a high
  // backstop (600 per 5 minutes) so a distributed flood cannot hold off the operator's begin.
  if(operation==='boot-login-begin')return [{key:`boot-login-begin:burst:${ipHash}`,windowMs:60000,limit:10},{key:`boot-login-begin:ip:${ipHash}`,windowMs:3600000,limit:50},{key:'boot-login-begin:principal',windowMs:300000,limit:600}];
- if(operation==='boot-password')return [{key:'boot-password:principal',windowMs:300000,limit:20},{key:'boot-password:global',windowMs:3600000,limit:200}];
  // ORG-12b break-glass abort links (no sign-in): a tighter per-address budget plus a per-network one, so token guessing
  // from one network stays slow (the token is 256-bit; the organization also counts failures per claim).
  // Review L1: `peek` checks without spending; the route charges (`charge`) only refused or failed outcomes, so an owner's

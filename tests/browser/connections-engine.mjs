@@ -69,3 +69,12 @@ test('R3 kept opt-in with changed files sends both flags only from its own actio
  await c.dispatch(new AppRemovalIntent({action:'removal-remaining-delete-kept-changed',removal:'removed',resource:'store',values:{confirm:true}}));assert.deepEqual(c.api.calls[0].body,{action:'delete',resource:'store',includeKept:true,includeChanged:true});
  const {remainingPanel}=await import('../../apps/web/src/ui/connections/remaining.mjs'),seen=[];remainingPanel({locale:'en'},{removalResult:row,removalRemaining:summary},{btn:()=>null,form:(fields,action)=>{seen.push(action);return null;},confirm:()=>null,plain:v=>v});assert.ok(seen.includes('removal-remaining-delete-kept-changed'));
 });
+// Found by the multi-provider simulation (tests/sim): opening "Apps & integrations" from the console navigation reloads
+// connections only, so the removal summary (clean removal availability, pending and recent removals) never loads and
+// only "Remove now" is offered. The connections reload carries the removal summary with it.
+test('a connections reload also loads the removal summary; an absent removal route is not an error',async t=>{
+ const removals={removals:[{removal:'r1',client_id:'https://calendar.example/app/client.json',connection:'connection1',state:'completed',mode:'clean'}],clean_enabled:true,clean_connections:{connection1:true}};
+ const c=await client(t,{routes:{'GET /api/apps/removal':()=>removals}});await c.act('reload');
+ const m=(await c.snapshot()).connectionsConsole;assert.equal(m.cleanRemovalEnabled,true);assert.deepEqual(m.cleanRemovalConnections,{connection1:true});assert.equal(m.removals.length,1);assert.equal(m.removalError??null,null);
+ const bare=await client(t);await bare.act('reload');const b=(await bare.snapshot()).connectionsConsole;assert.equal(b.connections.length,7);assert.equal(b.removalError??null,null);assert.equal(b.error??null,null);
+});

@@ -6,7 +6,7 @@ import {thumbprint} from '../src/dpop.mjs';
 import {EXT} from '../../core/extensions.mjs';
 
 const issuer='https://provider.example',subject=issuer+'/entities/alice',clientId='https://acme.example/cli';
-const manifest={version:'0',issuer,device_authorization_endpoint:issuer+'/device',token_endpoint:issuer+'/token',rpc_endpoint:issuer+'/rpc',revocation_endpoint:issuer+'/revoke',preferences_contract:'https://contracts.example/preferences/v1',extensions:[{spec:EXT.deviceAuthorization}],grant_types_supported:[deviceGrant,'refresh_token'],dpop_signing_alg_values_supported:['ES256']};
+const manifest={version:'0',issuer,device_authorization_endpoint:issuer+'/device',token_endpoint:issuer+'/token',rpc_endpoint:issuer+'/rpc',revocation_endpoint:issuer+'/revoke',preferences_contract:'https://contracts.example/preferences/v2',extensions:[{spec:EXT.deviceAuthorization}],grant_types_supported:[deviceGrant,'refresh_token'],dpop_signing_alg_values_supported:['ES256']};
 const authorization={device_code:'d'.repeat(43),user_code:'BCDF-GHJK',verification_uri:issuer+'/approve',expires_in:600,interval:5};
 const token=(patch={})=>({issuer,subject,client_id:clientId,audience:manifest.rpc_endpoint,access_token:'access-secret',token_type:'DPoP',expires_in:300,refresh_token:'refresh-secret',refresh_expires_in:3600,refresh_idle_expires_in:1800,grants:[],granted_fragments:[],...patch});
 const reply=(json,status=200,headers={})=>new Response(JSON.stringify(json),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store',...headers}});

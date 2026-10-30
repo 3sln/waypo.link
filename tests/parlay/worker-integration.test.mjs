@@ -11,6 +11,10 @@ import {INTEGRATION_OPERATIONS,resourceId} from '../../apps/parlay/worker/integr
 import {sealedDelegateKeys} from '../../apps/parlay/worker/delegate-keys.mjs';
 import {clientMetadata,metadataPort} from '../../apps/parlay/worker/metadata.mjs';
 import {createHTTP} from '../../apps/parlay/worker/http.mjs';
+import {LEGACY_JTI_CACHE,CTI_CACHE} from '../../apps/parlay/worker/integration.mjs';
+import {verifyIntegrationEvent,INTEGRATION_EVENT_MEDIA_TYPE} from '../../packages/sdk/src/integration-events.mjs';
+import {decode as decodeCBOR} from '../../packages/sdk/src/cbor.mjs';
+import {brokeringKeys} from '../../packages/federation/signing.mjs';
 import {fragmentOutcome} from '../../packages/core/fragments.mjs';
 import {digest,canonical} from '../../packages/core/records.mjs';
 import {validateIntegrationManifest} from '../../packages/federation/integrations.mjs';
@@ -18,7 +22,7 @@ const vectors=JSON.parse(await readFile(new URL('./vectors/vectors.json',import.
 const grant={revision:1,active:true,recipients:[],connection:'connection-1',generation:3},verified={owner,issuer:alice.principal.issuer,connection:grant.connection,generation:3,purpose:'invoke',resource,grant:'grant-1',methods:['describe'],live:true};
 function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{receive:ReceiveDomain,...providers}});t.after(()=>h.dispose());return h;}
 const RETIRED_INTAKE='https://spec.bindle.example/contracts/public-intake/v1';
-const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connection:grant.connection,jti:crypto.randomUUID(),seq:1,type,payload,...over});
+const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connection:grant.connection,cti:Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64url'),seq:1,type,payload,...over});
 
 test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the item-classification fragment pinned by digest',async()=>{
  const client=clientMetadata();assert.equal(client.token_endpoint_auth_method,'private_key_jwt');
@@ -71,7 +75,7 @@ test('BB-B8 broker Queries bind issuer, connection, generation, resource and met
  assert.throws(()=>h.run('shell.public-intake',{input:{verified,resource}}),/Unknown operation/);
 });
 
-test('BB-B8 authenticated SETs are idempotent, keep generation floors monotonic and never revive old consent',async t=>{
+test('BB-B8 authenticated events are idempotent by cti, keep generation floors monotonic and never revive old consent',async t=>{
  const h=engine(t),fragment='https://messages.example/preferences/message-storage/v1',newer=event('preferences-updated',{fragment,values:{store:'new'}},{seq:2});await h.run('shell.integration-event',{input:{event:newer}});await h.run('shell.integration-event',{input:{event:newer}});await h.run('shell.integration-event',{input:{event:event('preferences-updated',{fragment,values:null})}});
  assert.deepEqual((await h.store.get('shell:preferences/'+encodeURIComponent(fragment))).values,{store:'new'});
  await h.run('shell.integration-event',{input:{event:event('credential-revoked',{grants:['grant-1'],until:NOW+360000})}});
@@ -82,12 +86,13 @@ test('BB-B8 authenticated SETs are idempotent, keep generation floors monotonic 
  await assert.rejects(h.run('shell.integration-event',{input:{event:event('unknown',{}, {connection:'foreign'})}}),e=>e.code==='not_authorized');
 });
 
-test('BB-B8 integration HTTP never accepts a body-supplied verifier, and translates authenticated RPC/SET to dispatch',async()=>{
+test('BB-B8 integration HTTP never accepts a body-supplied verifier, and translates authenticated RPC/events to dispatch',async()=>{
  const calls=[],http=createHTTP({PARLAY_ENABLED:true,mailbox:async()=>({run:async(...args)=>{calls.push(args);return {accepted:true};}}),services:{verifyIntegration:async()=>verified,verifyEvent:async()=>event('unknown',{})}}),headers=rpcHeaders({Authorization:'Bearer broker-test'});
  const request=B.rpcRequest({resource,contract:B.MAILBOX_CONTRACT,method:'describe',args:{},tx:crypto.randomUUID()}),response=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:encodeRPC(request)}));assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),RPC_MEDIA_TYPE);assert.deepEqual(await rpcBody(response),{version:'0',tx:request.tx,result:{accepted:true}});
  // JSON is refused with 415 (CBOR body) before verification or dispatch: brokered RPC has no dual stack.
  {const before=calls.length,json=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer broker-test'},body:JSON.stringify(request)}));assert.equal(json.status,415);assert.equal((await rpcBody(json)).error,'unsupported_media_type');assert.equal(calls.length,before);}assert.equal(calls[0][1],'shell.describe');assert.deepEqual(calls[0][2].input.verified,verified);
- assert.equal((await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'signed-test-token'}))).status,202);assert.equal(calls.at(-1)[1],'shell.integration-event');
+ assert.equal((await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/cwt'},body:Uint8Array.of(0x84)}))).status,202);assert.equal(calls.at(-1)[1],'shell.integration-event');
+ {const before=calls.length,set=await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'a.b.c'}));assert.equal(set.status,415,'SET JWT delivery is gone (clean break)');assert.equal(calls.length,before);}
  // The retired public-intake contract is refused in the RPC error envelope before verification or any mailbox dispatch.
  const before=calls.length,retired=await http(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:encodeRPC(B.rpcRequest({resource,contract:RETIRED_INTAKE,method:'deliver',args:{message:{parts:[]},provenance:'a.b.c'},tx:crypto.randomUUID()}))}));
  assert.equal(retired.status,200);assert.deepEqual(await rpcBody(retired),{version:'0',error:{code:'unsupported_contract'}});assert.equal(calls.length,before);
@@ -127,6 +132,29 @@ test('AU-S5 seeded terminal expiry and reconnect race keeps a new generation or 
  });
 });
 
-test('AU-S5 unknown subject SET responds 202 without waking a mailbox or consulting archive ports',async()=>{
- let opened=0;const http=createHTTP({PARLAY_ENABLED:true,services:{verifyEvent:async()=>({unknown:true})},mailbox:async()=>{opened++;throw new Error('must not fetch');}}),response=await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'verified-by-test-port'}));assert.equal(response.status,202);assert.equal(opened,0);
+test('AU-S5 unknown subject event responds 202 without waking a mailbox or consulting archive ports',async()=>{
+ let opened=0;const http=createHTTP({PARLAY_ENABLED:true,services:{verifyEvent:async()=>({unknown:true})},mailbox:async()=>{opened++;throw new Error('must not fetch');}}),response=await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/cwt'},body:'verified-by-test-port'}));assert.equal(response.status,202);assert.equal(opened,0);
+});
+
+// CBOR phase 5: Parlay's receiver with a verifyEvent port over the SDK verifier and real brokering keys.
+test('Parlay /bindle/events verifies COSE events through the SDK helper: 202 once per cti, 400 with a CBOR body for a refused event',async t=>{
+ const issuer=alice.principal.issuer,audience='https://messages.example/bindle/events',store=new Map();let tail=Promise.resolve(),opened=0;
+ const metadata={transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(store.get(k)),set:async(k,v)=>{store.set(k,structuredClone(v));}}));tail=run.catch(()=>{});return run;}};
+ const keys=brokeringKeys({issuer,secret:Buffer.alloc(32,3).toString('base64'),metadata}),h=engine(t),fragment='https://messages.example/preferences/message-storage/v1';
+ const verifyEvent=async({contentType,bytes})=>{const v=await verifyIntegrationEvent(bytes,{contentType,keys:await keys.jwks(),issuer,audience,subject:owner,connection:({connection})=>connection===grant.connection});return {owner,issuer:v.claims.iss,connection:v.payload.connection,generation:v.payload.generation,seq:v.payload.seq,cti:v.ctiId,type:v.type.split('/').at(-2),payload:v.payload};};
+ const http=createHTTP({PARLAY_ENABLED:true,services:{verifyEvent},mailbox:async()=>{opened++;return {run:(o,name,params)=>h.run(name,params)};}});
+ const sign=async(over={},cti=new Uint8Array(16).fill(1))=>(await keys.sign('event',{iss:issuer,sub:owner,aud:audience,iat:Math.floor(Date.now()/1000),cti,events:{'https://spec.bindle.example/events/preferences-updated/v1':{connection:grant.connection,generation:3,seq:5,fragment,revision:'r1',values:{store:'cbor'},...over}}})).message;
+ const post=(body,type=INTEGRATION_EVENT_MEDIA_TYPE)=>http(new Request(audience,{method:'POST',headers:{'Content-Type':type},body}));
+ await h.store.put(LEGACY_JTI_CACHE,['old-jti-1','old-jti-2']);
+ const message=await sign();assert.equal((await post(message)).status,202);
+ assert.deepEqual((await h.store.get('shell:preferences/'+encodeURIComponent(fragment))).values,{store:'cbor'});
+ assert.equal(await h.store.get(LEGACY_JTI_CACHE),undefined,'the SET-era jti cache is reset by the first event');assert.deepEqual(await h.store.get(CTI_CACHE),[Buffer.alloc(16,1).toString('base64url')]);
+ // Retry of the same event (new iat, same cti, newer values): acknowledged, not reprocessed.
+ assert.equal((await post(await sign({values:{store:'retry'}}))).status,202);assert.deepEqual((await h.store.get('shell:preferences/'+encodeURIComponent(fragment))).values,{store:'cbor'});
+ assert.deepEqual(await h.store.get(CTI_CACHE),[Buffer.alloc(16,1).toString('base64url')]);
+ // A tampered event is a permanent 400 with a CBOR {err, description} body, and no mailbox is opened for it.
+ const before=opened,tampered=new Uint8Array(message);tampered[tampered.length-1]^=1;const refused=await post(tampered);
+ assert.equal(refused.status,400);assert.equal(refused.headers.get('Content-Type'),'application/cbor');assert.equal(decodeCBOR(new Uint8Array(await refused.arrayBuffer())).err,'authentication_failed');assert.equal(opened,before);
+ assert.equal((await post(message,'application/cbor')).status,415);
+ assert.equal((await post(new Uint8Array(65537))).status,413);
 });

@@ -67,7 +67,7 @@ const engines=[chromium,firefox,webkit];
 for(const engine of engines)test(`${engine.name()}: popup sign-in completes over BroadcastChannel; nothing about accounts reaches the app before consent`,async t=>{
   const f=await fixture(t,engine);if(!f)return;const {page,context,provider,requests,errors}=f;
   await page.goto(app+'/popup');await page.waitForFunction(()=>window.sdkReady&&customElements.get('bindle-session')&&document.querySelector('bindle-session').capabilities);
-  await page.getByLabel('Your Bindle identity').fill('alex');
+  await page.getByLabel('Your handle').fill('alex');
   const popupPromise=context.waitForEvent('page');
   await page.getByRole('button',{name:'Continue',exact:true}).click();
   const popup=await popupPromise;
@@ -78,7 +78,7 @@ for(const engine of engines)test(`${engine.name()}: popup sign-in completes over
   assert.match(before.text,/A sign-in window from 3sln\.example opened\./);
   assert.equal(await popup.evaluate(()=>window.opener),null,'COOP severs the opener');
   await popup.getByRole('button',{name:'Continue as Alex'}).click();
-  await page.getByRole('button',{name:/^Account: Signed in · 3sln\.example$/}).waitFor({timeout:10000});
+  await page.getByRole('button',{name:/^Account: 3sln\.example$/}).waitFor({timeout:10000});
   const after=await page.evaluate(()=>window.events.filter(event=>event.type==='bindle-flow-end').map(event=>event.detail));
   assert.deepEqual(after,[{intent:'login',outcome:'completed'}]);
   if(!popup.isClosed()){assert.equal(await popup.evaluate(()=>location.search),'','callback parameters scrubbed');assert.equal((await popup.evaluate(()=>window.callbackResult)).mode,'relay');}
@@ -92,7 +92,7 @@ for(const engine of engines)test(`${engine.name()}: blocked popup falls back to 
   const f=await fixture(t,engine);if(!f)return;const {page,provider,errors}=f;
   await page.addInitScript(()=>{window.open=()=>null;});
   await page.goto(app+'/');await page.waitForFunction(()=>window.sdkReady&&customElements.get('bindle-session')&&document.querySelector('bindle-session').capabilities);
-  await page.getByLabel('Your Bindle identity').fill('alex');await page.getByRole('button',{name:'Continue',exact:true}).click();
+  await page.getByLabel('Your handle').fill('alex');await page.getByRole('button',{name:'Continue',exact:true}).click();
   await page.waitForURL(providerOrigin+'/oauth/authorize?**');
   assert.equal([...provider.entries.values()][0].presentation,'redirect');
   await page.getByRole('button',{name:'Continue as Alex'}).click();
@@ -114,11 +114,11 @@ test('chromium: keyboard menu, accessible names, theme token normalization, and 
   for(const scheme of ['light','dark']){
     await page.emulateMedia({colorScheme:scheme});
     const background=await page.evaluate(()=>getComputedStyle(document.querySelector('bindle-sign-in').shadowRoot.querySelector('.identity')).backgroundColor);
-    assert.equal(background,scheme==='light'?'rgb(255, 255, 255)':'rgb(23, 25, 29)');
+    assert.equal(background,scheme==='light'?'rgb(255, 255, 255)':'rgb(27, 29, 34)'); // THEME_DEFAULTS surface (#ffffff / #1b1d22)
     await page.screenshot({path:resolve(artifacts,`embed-elements-sign-in-${scheme}.png`)});
   }
   await page.emulateMedia({colorScheme:'light'});
-  await page.getByLabel('Your Bindle identity').fill('alex');
+  await page.getByLabel('Your handle').fill('alex');
   const popupPromise=context.waitForEvent('page');await page.keyboard.press('Enter');
   const popup=await popupPromise;await popup.getByRole('button',{name:'Continue as Alex'}).click();
   const badge=page.getByRole('button',{name:/^Account: /});await badge.waitFor({timeout:10000});
@@ -128,7 +128,9 @@ test('chromium: keyboard menu, accessible names, theme token normalization, and 
   const list=page.getByRole('list',{name:'Account actions'});await list.waitFor();
   assert.equal(await page.getByRole('menu').count(),0);assert.equal(await page.getByRole('menuitem').count(),0);
   assert.equal(await page.evaluate(()=>document.querySelector('bindle-account').shadowRoot.querySelector('dialog.panel').matches(':popover-open')),true);
-  for(const name of ['Use another account',"Confirm it's you",'Sign out of this app','Sign out of 3sln.example…'])await list.getByRole('button',{name}).waitFor();
+  // Grouped actions (ui-elements-audit V6): account actions in one list, the sign-out actions in their own.
+  for(const name of ['Use another account',"Confirm it's you"])await list.getByRole('button',{name}).waitFor();
+  for(const name of ['Sign out of this app','Sign out of 3sln.example…'])await page.getByRole('list',{name:'Sign out'}).getByRole('button',{name}).waitFor();
   assert.equal(await list.getByRole('link',{name:'Manage at 3sln.example'}).getAttribute('href'),await page.evaluate(()=>document.querySelector('bindle-session').capabilities.manageUrl));
   await page.screenshot({path:resolve(artifacts,'embed-elements-menu-light.png')});
   await page.keyboard.press('Escape');

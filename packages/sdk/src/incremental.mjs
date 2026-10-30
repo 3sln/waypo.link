@@ -4,7 +4,7 @@ import {Engine,Provider,Action,Query} from '../../../vendor/ngin/index.js';
 import {createSession} from './flows.mjs';
 import {issuerURL,notImplemented} from './capabilities.mjs';
 import {boundedJSON,deepFreeze,validateAccessResponse} from './tokens.mjs';
-import {createKey,createProof} from './dpop.mjs';
+import {createProof,indexedDBKeyStore} from './dpop.mjs';
 
 const intents=['grant-more','configure'],outcomes=['granted','partial','declined','unsupported','unavailable'];
 const coded=code=>Object.assign(new Error(code),{code}),object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -30,11 +30,22 @@ function records(state,io){
 }
 function discard(state,io,key,record){
  consume(state,io,key);
- if(record?.dpopJkt){io.client.dpopKeys.delete(record.dpopJkt);io.client.keyStore?.delete(`${io.client.storageKey}:${record.dpopJkt}`)?.catch?.(()=>{});}
+ if(record?.dpopJkt)release(state,io,record.dpopJkt);
+}
+// A grant-more exchange is bound to the connected session's own DPoP key (§4.4), so releasing a transaction's key
+// drops a parked copy only when no other transaction needs it, and the in-memory key only when no session holds it.
+function release(state,io,jkt){
+ const c=io.client;
+ if([...records(state,io).values()].some(record=>record.dpopJkt===jkt)||[...(c.memoryPending?.values?.()??[])].some(record=>record.dpopJkt===jkt))return;
+ c.keyStore?.delete(`${c.storageKey}:${jkt}`)?.catch?.(()=>{});
+ if([c.session,...(c.sessions?.values?.()??[])].some(session=>session?.dpopJkt===jkt))return;
+ c.dpopKeys.delete(jkt);
 }
 // The authorization-entry extension's options (descriptor-validated, issuer-origin endpoint) from a fresh declaration.
 function declaration(client,issuer){
- const manifest=client.capabilities.manifest(issuer),base=client.capabilitiesFor(issuer),entry=client.capabilities.declaration(issuer)?.authorizationEntry;
+ // Stale reads are deliberate: callers discover first, and a provider answering `Cache-Control: no-cache` (lifetime 0)
+ // would otherwise leave no usable declaration even immediately after a successful fetch.
+ const manifest=client.capabilities.manifest(issuer,{stale:true}),base=client.capabilitiesFor(issuer),entry=client.capabilities.declaration(issuer,{stale:true})?.authorizationEntry;
  if(!manifest||!base?.entry||!object(entry))return null;
  return {manifest,base,entry};
 }
@@ -101,9 +112,13 @@ export class BeginIncrementalAuthorization extends IncrementalAction {
   const declared=declaration(io.client,session.issuer),clientId=io.client.clientIdFor(session.issuer);
   if(!declared?.entry.intents.includes(intent))throw coded('unsupported-provider');if(!clientId)throw coded('unregistered-client');
   const stateKey=random(io.crypto),verifier=intent==='grant-more'?random(io.crypto):undefined,challenge=verifier?encode(new Uint8Array(await io.crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier)))):undefined;
-  // Redirect keys must survive the navigation. An absent persistent keystore
-  // deliberately leaves that exchange unbound, as the ordinary SDK flow does.
-  const key=intent==='grant-more'&&declared.base.dpop&&(presentation==='popup'||io.client.keyStore)?await createKey(io.crypto):null;
+  // The exchange is bound to the connected session's own DPoP key, never a fresh one: the provider issues the new
+  // session into the same proof binding, so a grant cannot move to another key (§4.4). An unbound session stays
+  // unbound. A redirect parks the session key in keyStore so the returning document can prove possession.
+  const key=intent==='grant-more'&&session.dpopJkt?await io.client.dpopKey(session.dpopJkt):null;
+  // The key holder opens lazily, as BindleClient does for a redirect sign-in (an island or popup sign-in never opened it).
+  if(key&&presentation==='redirect'&&io.client.keyStore===undefined){io.client.keyStore=indexedDBKeyStore();io.client.keyStore?.sweep?.().catch?.(()=>{});}
+  if(intent==='grant-more'&&session.dpopJkt&&(!key||presentation==='redirect'&&!io.client.keyStore))throw coded('dpop-key-unavailable');
   const body={clientId,redirectUri:io.client.redirectUri,state:stateKey,intent,subjectConstraint:session.subject,presentation,...input,...challenge?{challenge,challengeMethod:'S256'}:{},...key?{dpopJkt:key.jkt}:{},...uiLocales?.length?{uiLocales}:{},...['light','dark'].includes(colorScheme)?{colorScheme}:{}};
   // IA-4: preparation creates only local PKCE/state. The frame creates the entry after its own activation.
   let json;if(this.input.prepareOnly!==true){
@@ -113,11 +128,11 @@ export class BeginIncrementalAuthorization extends IncrementalAction {
   }
   const record={...body,...verifier?{verifier}:{},issuer:session.issuer,tokenEndpoint:declared.manifest.token_endpoint,rpcEndpoint:declared.manifest.rpc_endpoint,preferencesContract:declared.manifest.preferences_contract,revocationEndpoint:declared.manifest.revocation_endpoint,expiresAt:io.clock()+600000,previousGrants:state.grants.get(grantKey(io.client))??session.granted_fragments??[],sessionDeadline:session.refreshExpiresAt??session.expiresAt,authTime:session.auth_time,loginGeneration};
   try{
-   if(key){io.client.dpopKeys.set(key.jkt,key);if(presentation==='redirect')await io.client.keyStore.put(`${io.client.storageKey}:${key.jkt}`,key);}
-   active();
    const previous=[...records(state,io)].sort((a,b)=>a[1].expiresAt-b[1].expiresAt);
    for(const [id,prior]of previous)if(prior.expiresAt<=io.clock()||prior.issuer===record.issuer&&prior.subjectConstraint===record.subjectConstraint)discard(state,io,id,prior);
    const live=[...records(state,io)];for(const [id,prior]of live.slice(0,Math.max(0,live.length-7)))discard(state,io,id,prior);
+   if(key&&presentation==='redirect')await io.client.keyStore.put(`${io.client.storageKey}:${key.jkt}`,key);
+   active();
    if(presentation==='redirect'){try{io.client.storage.setItem(recordKey(io,stateKey),JSON.stringify(record));}catch{throw coded('storage-unavailable');}}
   }catch(error){discard(state,io,stateKey,record);throw error;}
   state.pending.set(stateKey,record);state.result=null;
@@ -136,7 +151,7 @@ export class CompleteIncrementalAuthorization extends IncrementalAction {
   const allowed=new Set([...expected.searchParams.keys(),'state','iss',record.intent==='configure'?'result':'code']);
   if([...callback.searchParams.keys()].some(name=>!allowed.has(name)||callback.searchParams.getAll(name).length!==1)||[...expected.searchParams].some(([name,value])=>callback.searchParams.get(name)!==value))throw coded('invalid-callback');
   const result=callback.searchParams.get('result'),code=callback.searchParams.get('code');
-  if(record.intent==='configure'?!['configured','unchanged'].includes(result):! /^[A-Za-z0-9_-]{16,2048}$/.test(code??''))throw coded('invalid-callback');
+  if(record.intent==='configure'?!['configured','unchanged'].includes(result):! /^[A-Za-z0-9_.-]{16,2048}$/.test(code??''))throw coded('invalid-callback');
   if(state.pending.has(key)&&(record.loginGeneration!==io.client.loginGeneration||!same(io.client.session,record))){discard(state,io,key,record);throw coded('canceled');}
   consume(state,io,key);state.result=null;
   if(globalThis.location?.origin===callback.origin&&globalThis.location?.pathname===callback.pathname)io.client.history?.replaceState?.(null,'',expected.pathname+expected.search);
@@ -164,13 +179,17 @@ export class CompleteIncrementalAuthorization extends IncrementalAction {
    active();const fragments=grantResults(record.requests,token,record.previousGrants);let issuedSession;
    if(token.access_token!==undefined){
     try{issuedSession=validateAccessResponse(token,{...record,clock:io.clock,requestStartedAt:startedAt});}catch{throw coded('invalid_token_response');}
-    if(!fragments.some(item=>['granted','partial'].includes(item.outcome))||issuedSession.subject!==record.subjectConstraint||issuedSession.expiresAt>record.sessionDeadline||issuedSession.refreshExpiresAt>record.sessionDeadline||record.authTime!==undefined&&(!Number.isSafeInteger(token.auth_time)||token.auth_time>record.authTime))throw coded('invalid_token_response');
+    // The issued session may not outlive the connected one. Its refresh deadline slides with every rotation (auth.md:
+    // never a deadline that only moves earlier), so a renewal between begin and completion (a persisted session restored
+    // after the redirect, W11) moves the bound to that held session's deadline, plus one minute for transit and rounding.
+    const held=io.client.heldSession?.(record.issuer,record.subjectConstraint),deadline=Math.max(record.sessionDeadline,held?.refreshExpiresAt??held?.expiresAt??0)+(held?60000:0);
+    if(!fragments.some(item=>['granted','partial'].includes(item.outcome))||issuedSession.subject!==record.subjectConstraint||issuedSession.expiresAt>deadline||issuedSession.refreshExpiresAt>deadline||record.authTime!==undefined&&(!Number.isSafeInteger(token.auth_time)||token.auth_time>record.authTime))throw coded('invalid_token_response');
    }else if(token.refresh_token!==undefined||fragments.some(item=>item.outcome==='partial'))throw coded('invalid_token_response');
    const current=new Map(record.previousGrants.map(grant=>[grant.fragment,grant]));for(const item of fragments)if(['granted','partial'].includes(item.outcome))current.set(item.fragment,{...item.granted,fragment:item.fragment});
    state.grants.clear();state.grants.set(grantKey(io.client),[...current.values()]);
    return state.result=deepFreeze({outcome:'completed',fragments,...issuedSession?{issuedSession}:{}});
   }catch(error){if(token?.access_token)await io.client.revokeSession({...token,issuer:record.issuer,client_id:record.clientId,revocationEndpoint:record.revocationEndpoint}).catch(()=>false);throw error;}
-  finally{if(dpopKey&&!state.result?.issuedSession)io.client.dpopKeys.delete(record.dpopJkt);}
+  finally{if(dpopKey&&!state.result?.issuedSession)release(state,io,record.dpopJkt);}
  }
 }
 export class CancelIncrementalAuthorization extends IncrementalAction {
@@ -204,7 +223,8 @@ export function createIncrementalClient({client,enabled=false,...options}={}){
  // The ordinary controller owns windows, activation, relay validation and expiry.
  // Only entry creation and completion differ; bind the original client's methods.
  const adapter=new Proxy(client,{get(target,key){if(Object.hasOwn(overrides,key))return overrides[key];const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;},set(target,key,value){if(['islandPolicy','userAgent'].includes(key)){overrides[key]=value;return true;}return Reflect.set(target,key,value,target);}});
- const transport=createSession({...options,client:adapter,transports:[],islands:'off'});
+ // The app's own controller restores persisted sessions (W11); this transport never does.
+ const transport=createSession({...options,client:adapter,transports:[],islands:'off',restore:false});
  async function finish(run){
   if(enabled!==true)return {outcome:'unavailable',code:'incremental-disabled'};
   if(busy)return {outcome:'unavailable',code:'authorization-in-progress'};

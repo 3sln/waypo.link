@@ -144,7 +144,7 @@ export class CapabilityStore {
   }
   // Fresh declarations only; `stale:true` also returns an expired one (for synchronous UI decisions).
   declaration(issuer,{stale=false}={}){const entry=this.#declarations.get(issuer);return entry&&(stale||entry.expiresAt>this.clock())?entry.declaration:null;}
-  manifest(issuer){const entry=this.#declarations.get(issuer);return entry&&entry.expiresAt>this.clock()?entry.manifest:null;}
+  manifest(issuer,{stale=false}={}){const entry=this.#declarations.get(issuer);return entry&&(stale||entry.expiresAt>this.clock())?entry.manifest:null;}
   degraded(issuer){return new Set(this.#degraded.get(issuer)??[]);}
   degrade(issuer,key){
     const set=this.#degraded.get(issuer)??new Set();if(set.has(key))return;

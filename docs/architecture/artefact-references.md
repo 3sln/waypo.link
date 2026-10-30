@@ -42,7 +42,7 @@ So the integrity primitive exists (whole-document digest, pin-on-first-use, reje
 
 ## 2. Lines and versions (ART-D1)
 
-The URL keeps meaning "this line of compatible meaning". `preferences/v1` and `preferences/v2` stay separate lines because v2 changed the shape of resource values. Inside a line, versions 1, 2, 3 … each add something.
+The URL keeps meaning "this line of compatible meaning". After release, `preferences/v1` and `preferences/v2` would have stayed separate lines because v2 changed the shape of resource values (before release, v1 was simply dropped, 2026-10-29). Inside a line, versions 1, 2, 3 … each add something.
 
 This keeps everything that currently binds to a URL working: exact-URL matching (extensions §9.2), suppression matching (incremental authorization §9.1, which matches the URL, so additive versions cannot be used to reset a suppression), registry identifiers, owner values per fragment.
 

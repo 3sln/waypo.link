@@ -34,6 +34,8 @@ export async function authorizeWithFedCM({intent,params,client,navigator,capabil
   }
   let token;try{token=typeof credential?.token==='string'?JSON.parse(credential.token):null;}catch{token=null;}
   if(!token||typeof token!=='object'||Object.keys(token).sort().join()!=='code,iss,state,v'||token.v!==1){client.cancelLogin(begun.state);return {outcome:'network-error',code:'invalid-callback'};}
-  try{await client.completeCode(token,{signal,presentation:'fedcm'});return {outcome:'completed'};}
+  // The account was picked in browser UI unless the browser reports an automatic reauthentication; only a picked
+  // account may become a persisted session (auth.md; account-chooser-island §5.4).
+  try{await client.completeCode(token,{signal,presentation:'fedcm',interactive:credential?.isAutoSelected!==true});return {outcome:'completed'};}
   catch(error){return error?.code==='canceled'?{outcome:'canceled'}:{outcome:'network-error',code:error?.code==='invalid-callback'?'invalid-callback':'network-error'};}
 }

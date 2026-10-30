@@ -2,7 +2,7 @@
 
 > **Superseded (2026-10-27).** `packages/runtime/contact-preview.mjs` was deleted when peer messaging left the core, and contact links are being withdrawn from Bindle ([contacts and links rethink](contacts-and-links-rethink.md), CR-C10, provisional). Core must not hard-code intent kinds such as `send-message`. The "implemented locally" status below is historical.
 
-Status: implemented locally on the Worker and Node adapters (links integration, 2026-10-14); not deployed or production-verified. Interop rules live in [links §6.4](../spec/superseded/links.md#64-contact-intents-and-link-previews) and the `intents.v1` feature in [protocol §2](../spec/protocol.md#2-discovery-and-login); this note covers only how 3sln.me renders and hands off. Reviewer ___ / date ___ / outcome ___.
+Status: implemented locally on the Worker and Node adapters (links integration, 2026-10-14); not deployed or production-verified. Interop rules lived in links §6.4 (withdrawn; in git history: `git show bbbbdad:docs/spec/superseded/links.md`) and the `intents.v1` feature in [protocol §2](../spec/protocol.md#2-discovery-and-login); this note covers only how 3sln.me renders and hands off. Reviewer ___ / date ___ / outcome ___.
 
 ## Public contact page
 

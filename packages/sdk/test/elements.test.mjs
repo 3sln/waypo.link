@@ -54,7 +54,7 @@ test('sign-in through the elements exposes nothing about provider accounts befor
   assert.equal(events.find(event=>event.type==='bindle-session-change').detail,null);
   const signIn=document.querySelector('bindle-sign-in');
   assert.equal(signIn.shadowRoot.querySelector('#suffix').textContent,'@3sln.example');
-  assert.equal(signIn.shadowRoot.querySelector('label').textContent,'Your Bindle identity');
+  assert.equal(signIn.shadowRoot.querySelector('label').textContent,'Your handle');
   submit(signIn,'alex');
   assert.equal(driver.opened.length,1,'window opens synchronously inside the submit');
   assert.match(signIn.shadowRoot.querySelector('[role=status]').textContent,/3sln\.example/);
@@ -72,9 +72,9 @@ test('sign-in through the elements exposes nothing about provider accounts befor
   assert.deepEqual(events.find(event=>event.type==='bindle-account-change').detail,{previous:null,session:session.session,cause:'sign-in'});
   const account=shadow('bindle-account'),trigger=account.querySelector('.trigger');
   assert.equal(account.querySelectorAll('[role=status]').length,1);
-  assert.equal(trigger.getAttribute('aria-label'),'Account: Signed in · 3sln.example');
+  assert.equal(trigger.getAttribute('aria-label'),'Account: 3sln.example','without a granted name the trigger names the provider host');
   assert.ok(!account.textContent.includes('Alex Example'),'no profile shown without a profile grant');
-  assert.equal(account.querySelectorAll('.avatar.monogram .cell').length,25,'no granted name: subject monogram');
+  assert.equal(trigger.querySelectorAll('.avatar.monogram .cell').length,25,'no granted name: subject monogram');
   assert.equal(signIn.state.last.outcome,'completed');
   uninstall();
 });
@@ -89,7 +89,8 @@ test('profile button: one dialog container without role=menu, Escape returns foc
   assert.equal(root.querySelector('[role=list]').getAttribute('aria-label'),'Account actions');
   assert.ok(root.activeElement&&panel.contains(root.activeElement),'keyboard opening focuses inside the panel');
   // The standard provider in this mock declares every intent: all requested actions render, Manage uses the issuer root.
-  assert.deepEqual(buttons(root),['Use another account','Use a different provider',"Confirm it's you",'Sign out of this app','Sign out of 3sln.example…','Manage at 3sln.example']);
+  // Grouped (ui-elements-audit V6): account actions with Manage, then the session group with the provider-wide action last.
+  assert.deepEqual(buttons(root),['Use another account','Use a different provider',"Confirm it's you",'Manage at 3sln.example','Sign out of this app','Sign out of 3sln.example…']);
   const manage=[...root.querySelectorAll('a.item')].at(-1);assert.equal(manage.getAttribute('href'),'https://3sln.example/');assert.equal(manage.getAttribute('rel'),'noopener noreferrer');
   key(root.activeElement,'Escape');
   assert.equal(trigger.getAttribute('aria-expanded'),'false');assert.equal(root.activeElement,trigger);
@@ -110,16 +111,16 @@ test('minimal provider: required handle, no unsupported actions, "Use another ac
   const {session,events,driver,uninstall}=await mount(page(),{provider});
   const signInRoot=shadow('bindle-sign-in');
   assert.equal(signInRoot.querySelector('.continue'),null,'no identity-optional button');assert.equal(signInRoot.querySelector('input').hasAttribute('required'),true);
-  submit(document.querySelector('bindle-sign-in'),'');assert.equal(signInRoot.querySelector('[role=alert]').textContent,'Enter your Bindle identity.');
+  submit(document.querySelector('bindle-sign-in'),'');assert.equal(signInRoot.querySelector('[role=alert]').textContent,'Enter your handle.');
   // No popup is declared, so a submission redirects (not exercised here); complete via the callback instead.
   await session.controller.completeCallback(provider.authorize((await session.client.beginAuthorization({identity:'alex'})).authorizationUrl));
   await until(()=>session.session);
   const root=shadow('bindle-account');root.querySelector('.trigger').click();
-  assert.deepEqual(buttons(root),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example'],'reauth and provider sign-out are omitted even when requested');
+  assert.deepEqual(buttons(root),['Use another account','Use a different provider','Manage at 3sln.example','Sign out of this app'],'reauth and provider sign-out are omitted even when requested');
   [...root.querySelectorAll('button.item')].find(item=>item.textContent==='Use another account').click();
   assert.ok(root.querySelector('form.handle'),'inline handle field');assert.equal(driver.opened.length,0);
   root.querySelector('form.handle').dispatchEvent(new window.Event('submit',{cancelable:true}));
-  assert.equal(root.querySelector('form.handle [role=alert]').textContent,'Enter your Bindle identity.');
+  assert.equal(root.querySelector('form.handle [role=alert]').textContent,'Enter your handle.');
   assert.equal(events.filter(event=>event.type==='bindle-flow-start').length,0);
   uninstall();
 });
@@ -132,7 +133,7 @@ test('standard provider: "Continue with host", select-account switch, failure ke
   continueButton.click();await until(()=>session.session);
   assert.equal([...provider.entries.values()][0].loginHint,undefined);
   const first=session.session,root=shadow('bindle-account');root.querySelector('.trigger').click();
-  assert.deepEqual(buttons(root),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example']);
+  assert.deepEqual(buttons(root),['Use another account','Use a different provider','Manage at 3sln.example','Sign out of this app']);
   choice={decision:'deny'};[...root.querySelectorAll('button.item')].find(item=>item.textContent==='Use another account').click();
   await until(()=>events.some(event=>event.type==='bindle-account-change-failed'));
   assert.deepEqual(events.find(event=>event.type==='bindle-account-change-failed').detail,{code:'canceled'});assert.equal(session.session,first);
@@ -205,7 +206,7 @@ test('invalid input is reported inline and never opens a window',async()=>{
   assert.equal(driver.opened.length,0);
   const input=signIn.shadowRoot.querySelector('input');assert.equal(input.getAttribute('aria-invalid'),'true');
   assert.equal(signIn.shadowRoot.querySelector('[role=alert]').textContent,'Enter a handle like alex@provider.example.');
-  signIn.setAttribute('identity-required','');submit(signIn,'  ');assert.equal(signIn.shadowRoot.querySelector('[role=alert]').textContent,'Enter your Bindle identity.');assert.equal(driver.opened.length,0);
+  signIn.setAttribute('identity-required','');submit(signIn,'  ');assert.equal(signIn.shadowRoot.querySelector('[role=alert]').textContent,'Enter your handle.');assert.equal(driver.opened.length,0);
   uninstall();
 });
 
@@ -213,7 +214,7 @@ test('granted profile: initials avatar and label; Spanish locale and dark theme 
   const provider=createMockProvider({issuer:'https://3sln.example',profile:true});
   const {uninstall}=await mount(page(undefined,'lang="es" theme="dark"'),{provider});
   const element=document.querySelector('bindle-sign-in');
-  assert.equal(element.shadowRoot.querySelector('label').textContent,'Tu identidad Bindle');
+  assert.equal(element.shadowRoot.querySelector('label').textContent,'Tu identificador');
   const signInRoot=element.shadowRoot.querySelector('.root');assert.ok(signInRoot.classList.contains('dark'));assert.equal(signInRoot.style.getPropertyValue('color-scheme'),'dark');
   await signIn();
   const root=shadow('bindle-account');
@@ -289,3 +290,29 @@ test('<bindle-sign-in default-host> sends the user to the provider it names, com
   uninstall();
 });
 
+
+test('W11: while persisted sessions are read the elements show loading states, then the real state; persist reaches the client',async()=>{
+  document.body.innerHTML='';
+  const {memorySessionBackend}=await import('../src/testing.mjs');
+  const provider=createMockProvider({issuer:'https://3sln.example'}),store=memorySessionBackend().handle();let release;const held=new Promise(resolve=>release=resolve);
+  const slow={...store,list:async scope=>{await held;return store.list(scope);}};
+  const template=document.createElement('template');
+  template.innerHTML=`<bindle-session client-id="${clientId}" redirect-uri="${redirectUri}"><bindle-gate><main>Content</main></bindle-gate><bindle-account signed-out="panel"></bindle-account><bindle-sign-in></bindle-sign-in></bindle-session>`;
+  const element=template.content.querySelector('bindle-session');
+  element.client=new BindleClient({clientId,redirectUri,fetcher:(input,init)=>provider.fetch(input,init),storage:memoryStorage(),history:{replaceState(){}},defaultHost:'3sln.example',sessionStore:slow});
+  document.body.append(template.content);
+  const signIn=document.querySelector('bindle-sign-in'),gate=document.querySelector('bindle-gate'),account=document.querySelector('bindle-account');
+  await until(()=>signIn.shadowRoot?.querySelector('.restoring'),{message:'restoring sign-in'});
+  assert.equal(element.state,'restoring');assert.equal(element.loaded,false);
+  assert.match(signIn.shadowRoot.querySelector('.restoring').textContent,/Restoring your session/);assert.equal(signIn.shadowRoot.querySelector('form'),null,'no signed-out form while restoring');
+  assert.equal(gate.getAttribute('state'),'loading');
+  await until(()=>account.shadowRoot?.querySelector('[part~=restoring]'),{message:'restoring account control'});
+  assert.equal(account.shadowRoot.querySelector('[part~=restoring]').getAttribute('aria-busy'),'true');
+  release();await element.ready;
+  await until(()=>!signIn.shadowRoot.querySelector('.restoring'),{message:'sign-in leaves restoring'});
+  assert.equal(element.state,'signed-out');assert.equal(element.persistence,'device');
+  await until(()=>gate.getAttribute('state')==='signed-out',{message:'gate signed out'});
+  assert.ok(signIn.shadowRoot.querySelector('form'));
+  element.setAttribute('persist','off');assert.equal(element.client.persist,'off');assert.equal(element.persistence,'off');
+  store.close();
+});

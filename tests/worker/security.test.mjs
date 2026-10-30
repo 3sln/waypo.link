@@ -6,17 +6,14 @@ import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { mkdtemp, rm, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { argon2id } from 'hash-wasm';
 import { softAuthenticator, registerPending, signupBody } from '../helpers/soft-passkey.mjs';
 
 // Actual workerd + SQLite Durable Objects + R2. These test-only subclasses
 // expose inspection/seeding; they are never bundled into the deployed Worker.
 const harness = `
 import worker, { IdentityDirectory, AccountObject, AbuseGuard } from './apps/worker/index.mjs';
-import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
 export class TestDirectory extends IdentityDirectory {
   async rows(){return [...await this.ctx.storage.list()];}
-  async passwordVector(password, encoded){const hasher=createWorkerArgon2Hasher();return {match:await hasher.verify(password,encoded),wrong:await hasher.verify(password+'wrong',encoded)};}
 }
 export class TestAccount extends AccountObject {
   async seed(owner, records){await this.warm(owner);for(const [key,value]of records)await this.ctx.storage.put(key,value);}
@@ -49,7 +46,7 @@ test.before(async () => {
       RECOVERY_SIGNING_KEY:recoverySigningKey, KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key' },
     durableObjects: { IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true } },
     r2Buckets: ['BLOBS', 'ARCHIVES'], serviceBindings: { ASSETS: async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } }) } }));
-  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);
+  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});
   accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');
 });
 test.after(async () => { await mf?.dispose(); if (temporary) await rm(temporary, { recursive: true, force: true }); });
@@ -133,11 +130,4 @@ test('actual Durable Object abuse rate limits reserve a fixed number under paral
   const object = abuse.get(abuse.idFromName(`parallel-${crypto.randomUUID()}`));
   const results = await Promise.all(Array.from({ length: 12 }, () => object.consume({ windowMs: 60000, limit: 3 })));
   assert.equal(results.filter(Boolean).length, 3); assert.equal(new Map(await object.rows()).get('window').count, 3);
-});
-
-test('static Worker Argon2 matches the unmodified maintained Node KDF with fixed parameters', async () => {
-  const password = 'worker and node interoperability test';
-  const encoded = await argon2id({ password, salt: new Uint8Array(32).fill(9), parallelism: 1, iterations: 2, memorySize: 19456, hashLength: 32, outputType: 'encoded' });
-  const verification = await directory.passwordVector(password, encoded);
-  assert.equal(verification.match, true); assert.equal(verification.wrong, false);
 });

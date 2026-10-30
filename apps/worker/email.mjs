@@ -45,6 +45,9 @@ const SECURITY_ALERTS = Object.freeze({
   'email-sign-in-cancelled': ['{brand} sign-in request cancelled', 'A request to sign in to your account by email was cancelled from the email link. Nothing changed. If you did not ask to sign in, someone may know your address; no action is needed.'],
   // Choosing another notice address (review 2026-10-29 M3): sent to every address, including the previous and the new one.
   'notice-email-changed': ['{brand} notice email changed', 'Your account now sends its ordinary notices to a different email address. Security notices still go to every verified address. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
+  // A second or later verified address (coordinator decision under owner delegation 2026-10-29, provisional): sent to
+  // every verified address, including the new one, and every push channel.
+  'email-added': ['{brand} email address added', 'A new email address was verified on your account. It now receives security notices. Not you? Sign in from a device you already use, remove the address and secure your account, or recover it with your recovery file.'],
   // DX-6: sent to the removed address. No other account detail is included.
   'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.'],
   // DX-1 export notices (§1.4): sent on creation and on the first download from each session or CLI grant.

@@ -22,7 +22,7 @@ An **event bus** is an append-only, ordered, bounded log of small typed records 
 
 | Concept | Existing mechanism | Consequence |
 | --- | --- | --- |
-| What a kind of bus means: its purpose, payload schema, retention and ordering, who may publish and read | A **bus manifest**: a [slot manifest](../superseded/extensions-rev2.md#2-slot-manifests) with selection `exclusive` and a critical `slot.bus` member (§2) | Public, immutable and digest-pinned, with the same fetch, bound and versioning rules as every fragment |
+| What a kind of bus means: its purpose, payload schema, retention and ordering, who may publish and read | A **bus manifest**: a [preference fragment](../protocol.md#3-fragments-and-preference-values) whose `slot` member fixes selection `exclusive` and carries a critical `slot.bus` member (§2) | Public, immutable and digest-pinned, with the same fetch, bound and versioning rules as every fragment |
 | One entity's bus of that kind | The slot's single **occupant**: an entity-owned resource implementing the [`event-bus/v1` contract](#4-the-event-bus-contract) | It lives in the owner's resource pool. The owner chooses it, and can remove or replace it. |
 | Who hosts the bus | The occupant's hosting: provider built-in (§3.1) or a [brokered](integrations.md#5-brokered-resources) integration resource (§3.2) | "Who hosts" is an owner choice, with no new mechanism |
 | Read, write or readwrite access | An ordinary fragment grant on the bus manifest, with exact methods (§5) | It shows up in every grant listing, revocation path and token check that already exists |
@@ -32,13 +32,13 @@ An **event bus** is an append-only, ordered, bounded log of small typed records 
 
 - *A new `bus` primitive with its own grants.* Rejected. It would duplicate grant storage, revocation, consent and "who has access" listings, and every provider would have to implement a second authorization model.
 - *A bus as a plain contract with no manifest.* Rejected. A contract fixes methods, but buses differ in payload schema, purpose and retention. Pinning those per bus kind needs a public immutable document, and the fragment/slot document is the existing one.
-- *A bus as an ordinary non-slot fragment.* Rejected. Hosting choice, the owner-only occupant assignment, the no-preselection rule, replacement review and provider consumers would all have to be re-specified. Slots already specify them.
+- *A bus as an ordinary non-slot fragment.* Rejected. Hosting choice, the owner-only occupant assignment, the no-preselection rule, replacement review and provider consumers would all have to be re-specified. The slot model of extensions revision 2 specified them; this document restates what buses need (§2.4, §3, §5).
 
 A bus therefore adds **one contract, one slot member and one event type**. It adds no authorization primitive, no token type, no RPC transport and no new endpoint kind. A provider without this feature sees an ordinary fragment with a resource field (§12).
 
 ## 2. Bus manifests
 
-A bus manifest is a slot manifest ([extensions §2](../superseded/extensions-rev2.md#2-slot-manifests)) that meets these conditions:
+A bus manifest is a [preference fragment](../protocol.md#3-fragments-and-preference-values) with one additional top-level member, `slot` (§2.4). Every fragment rule applies unchanged: an HTTPS identifier and immutable content at that URL, a canonical JSON SHA-256 digest pinned at first approval, a bounded declarative schema, no values or secrets, and untrusted plain-text metadata. The manifest carries no endpoint, credential, executable content or authorization rule, and its serialized form is at most 16 KiB. It meets these conditions:
 
 - `slot.selection` is `exclusive`, so `fields[slot.field].cardinality` is `{"min":0,"max":1}`;
 - `fields[slot.field].contracts` is exactly `["https://spec.bindle.example/contracts/event-bus/v1"]`;
@@ -103,7 +103,7 @@ The manifest MUST NOT contain fields other than the bus field. Owner settings fo
 
 There is no ordering member: every bus is totally ordered (§6.1). There is no delivery member: every bus supports pull, and push is a host capability (§7). Neither choice is a per-manifest decision in v1.
 
-**Validation.** A `slot.bus` that fails any rule makes the slot **invalid**. Under [extensions §2.2](../superseded/extensions-rev2.md#22-validation-and-unrecognized-slots), the document is then processed as an ordinary fragment without slot semantics. A provider that recognizes `slot` but not `bus` treats the slot as unrecognized, because `bus` is in `crit`. Either way, no provider applies only part of the bus semantics.
+**Validation.** A `slot.bus` that fails any rule makes the slot **invalid**. Under §2.4, the document is then processed as an ordinary fragment without slot semantics. A provider that recognizes `slot` but not `bus` treats the slot as unrecognized, because `bus` is in `crit`. Either way, no provider applies only part of the bus semantics.
 
 ### 2.2 Bus schema subset
 
@@ -119,28 +119,81 @@ Nesting depth is at most 6. Across the whole schema there are at most 128 proper
 
 ### 2.3 Versioning
 
-A bus manifest is immutable at its URL. Any change to `payload`, `types`, `publishers`, `readers`, `history`, `categories` or `retention` requires a new URL, which is a **new bus**. The new manifest MAY name its predecessor in `slot.supersedes`. Under [extensions §7](../superseded/extensions-rev2.md#7-versioning-change-and-disappearance), a provider MAY offer the owner a migration step that assigns a new bus. It never copies records or grants. Producers that need a transition period publish to both buses under separate grants.
+A bus manifest is immutable at its URL. Any change, including to `payload`, `types`, `publishers`, `readers`, `history`, `categories` or `retention`, requires a new URL, which is a **new bus**. Consumers request exact URLs. Existing values, grants and provider-feature enablements stay bound to the manifest they were approved under.
+
+The new manifest MAY name its predecessor in `slot.supersedes` (§2.4). That is a hint for discovery and migration only. A provider MAY offer the owner a one-step migration that assigns a new bus, but only when both manifests are on the same origin and an existing consumer of the old bus requests the new one. The migration never copies records or grants, and the new bus needs each consumer's consent. Producers that need a transition period publish to both buses under separate grants.
 
 So the "payload schema version" is the manifest URL. Records carry no schema version member, and a consumer reading one bus never meets two payload shapes.
 
+**Disappearance and change at a pinned URL.** If a bus manifest URL starts failing (404, 410, network or TLS failure), or serves content that does not match the pinned digest, the provider:
+
+- keeps serving existing values under the pinned copy, and keeps existing grants valid;
+- MAY refuse new requests for that manifest until the pinned copy validates by digest;
+- MUST NOT drop an existing occupant because the publisher is unavailable.
+
+A publisher cannot revoke or alter a bus manifest after publication. It can only publish a successor.
+
+**Blocking.** A provider MAY mark a bus manifest deprecated or blocked under its own policy, for example after a published security issue. Blocking stops new grants and provider-feature enablements, and reports the bus occupant as `unavailable` to current consumers. It MUST be visible to the owner.
+
+### 2.4 The `slot` member, validation and unrecognized manifests
+
+The `slot` member of a bus manifest has these members:
+
+| Member | Required | Meaning for a bus |
+| --- | --- | --- |
+| `v` | yes | `1`. |
+| `crit` | yes | Names of `slot` members that a processor MUST understand. For a bus it contains `"bus"`. A processor that does not understand a listed member treats the manifest as unrecognized. Unlisted unknown members are ignored. |
+| `field` | yes | The name of the single `resource` field in `fields`, the bus field. Its `contracts` (exact URLs) are the occupant requirement, and its `cardinality` is `{"min":0,"max":1}`. |
+| `selection` | yes | `exclusive`. A consumer invokes the single occupant. With no occupant, the bus is unconfigured. |
+| `consumers` | yes | A nonempty subset of `application` (applications may request grants on the bus) and `provider` (provider features may consume it, §5). |
+| `supersedes` | no | Absent or `null`, or the identifier of an earlier bus manifest on the **same origin** as `id`. Informational only (§2.3). |
+| `bus` | yes | §2.1. |
+
+**Valid.** The `slot` member is valid only if all of these hold:
+
+- `field` names a `resource` field with `cardinality` `{"min":0,"max":1}`, and the conditions at the top of §2 hold;
+- `selection` is `exclusive`, and `failover` is absent;
+- `consumers` is a nonempty subset of the two known values;
+- `supersedes`, if non-null, is an HTTPS URL on the origin of `id` that differs from `id`;
+- `crit` lists `"bus"`, and `slot.bus` is valid (§2.1, §2.2).
+
+**Unrecognized.** The `slot` member is unrecognized when `v` is unknown, or a `crit` member is not understood.
+
+**Handling.** A provider declaring `extensions.v1` processes an invalid or unrecognized bus manifest as an **ordinary fragment without slot or bus semantics**: no built-in occupant, no provider consumers, no declaration-driven candidates, and an "unrecognized role" disclosure next to the fragment. A provider not declaring `extensions.v1` processes every bus manifest as an ordinary fragment, ignoring `slot` (§12). In every case the requesting application still applies the `exclusive` policy itself, so its behaviour does not depend on the provider's support. A provider MUST NOT apply part of the slot or bus semantics.
+
+A provider that recognizes a bus manifest MUST refuse an application's request for it when `consumers` excludes `application`. Providers without support cannot enforce this (§12).
+
+An invalid or unsupported **optional** bus request is reported `unsupported` for that fragment only, and the rest of the authorization continues. A required one fails authorization with `unsupported_fragment`.
+
+**Fetching and pinning.** A bus manifest is fetched under the fragment rules (protocol §3): HTTPS, bounded size and time, no cookies or redirects, server-side SSRF screening, under per-issuer and global budgets. A provider pins a bus manifest **once per URL for the whole provider**, at the first approval or enablement that uses it. Later approvals, enablements and requests carrying a `digest` MUST match the pin. A changed document at a pinned URL is handled under §2.3.
+
 ## 3. Hosting
 
-The owner chooses the single occupant under the ordinary slot rules ([extensions §5.1](../superseded/extensions-rev2.md#51-assigning-occupants)):
+The owner chooses the single occupant. Only the owner, through the provider's authenticated owner interface, assigns it; this is ordinary preference configuration of the bus field (protocol §3). An integration's occupant declaration, a discovery result or an application suggestion is a candidate, never an assignment. A provider:
 
-- only the owner assigns it;
-- no candidate is preselected, including the built-in;
-- candidates are ordered neutrally;
-- replacing it shows every affected consumer.
+- MUST NOT assign a built-in occupant (§3.1) without an owner action;
+- MUST NOT preselect any candidate, including the built-in;
+- MUST order candidates neutrally, for example by name, without favouring the built-in;
+- MUST NOT let an application or integration assign, replace or remove the occupant.
+
+Before saving, the provider MUST disclose:
+
+- the bus title and the host of the manifest `id`. `publisher` is shown only when it is same-origin with `id`, and always as unverified;
+- the occupant's verified origin. For a brokered occupant, this is the integration origin that will receive invocations directly;
+- a built-in marker on the built-in occupant, which integrations cannot set or imitate. Integration-supplied labels are always shown together with the integration origin;
+- every current consumer: each approved application by verified origin, and each enabled provider feature (§5).
+
+Replacing the occupant presents each affected consumer separately, with none preselected, and shows the current occupant's origin beside the new one. Unchecked consumers stay unapproved for the new occupant ([extensions §3.4](../extensions.md#34-policy-is-not-authority)). Replacing the occupant of a bus that has an enabled provider consumer requires recent owner authentication, and is never offered inside an authorization flow initiated by an application or integration.
 
 ### 3.1 Provider-hosted buses
 
-A provider that declares `events.v1` with `hosting: true` (§13) offers a **generic built-in occupant** for every valid, recognized bus manifest, without a per-manifest `extensions` declaration. This is the one generalization of the built-in rule ([extensions §4.2](../superseded/extensions-rev2.md#42-what-declarations-mean)), and it is needed because a provider cannot list every bus manifest that will ever exist. The provider creates the bus resource in the owner's pool only on an owner action, and only once per (entity, bus manifest). It is an issuer-hosted resource, so:
+A provider that declares `events.v1` with `hosting: true` (§13) offers a **generic built-in occupant** for every valid, recognized bus manifest, without a per-manifest `extensions` declaration. This generalizes the per-manifest built-in occupant declaration, and it is needed because a provider cannot list every bus manifest that will ever exist. The built-in occupant is otherwise an ordinary resource in the owner's pool, like the default storage resource: it is assigned only when the owner assigns it (§3), it gets no preference in order or default, and its consumers are authorized like any other. Cost and data-processing location are disclosed under protocol §3. If the provider stops declaring `hosting: true`, its hosted buses become `unavailable` and stay assigned until the owner removes them. The provider creates the bus resource in the owner's pool only on an owner action, and only once per (entity, bus manifest). It is an issuer-hosted resource, so:
 
 - revocation is immediate (protocol §4);
 - RPC goes to the issuer endpoint with ordinary tokens;
 - push delivery (§7.2) is available.
 
-A provider MAY limit the number of hosted buses per entity (§9), and MAY block bus manifests under [extensions §7](../extensions.md#7-versioning-change-and-disappearance) policy.
+A provider MAY limit the number of hosted buses per entity (§9), and MAY block bus manifests under its own policy (§2.3).
 
 ### 3.2 Integration-hosted buses
 
@@ -218,7 +271,7 @@ Rules:
 - The owner may approve a subset, for example read but not write. The outcome is then `partial`, with the exact approved methods ([incremental authorization §6](incremental-authorization.md#6-outcomes)).
 - Grants bind the pinned manifest digest. A bus grant never covers another bus manifest URL, not even a successor.
 - **Owner-only operations are not contract methods.** Purging every record, deleting the bus, changing effective retention and reading subscription health are host owner-interface actions. No app grant reaches them.
-- A provider feature that reads or publishes (`provider` in `readers` or `publishers`) does so only through an explicit owner enablement under [extensions §5.3](../superseded/extensions-rev2.md#53-provider-consumers), and appears in the bus's access list.
+- A provider feature that reads or publishes (`provider` in `readers` or `publishers`) MUST be declared by the provider, and is enabled only by an explicit owner action that discloses the bus and its current occupant. It acts with no authority beyond the owner's current assignment and the methods enabled, and appears in the bus's access list. For a brokered occupant, it obtains credentials under the ordinary minting rules ([integrations §5.3](integrations.md#53-consumer-credentials)), with its issuer URL as `client_id` and its feature identifier as `bindle.feature`. Each enablement has its own grant identifier. Disabling the feature, or removing the occupant, stops new invocations immediately and revokes those credentials. Its `tx` values are UUIDs.
 
 ## 6. Records, ordering and visibility
 
@@ -348,7 +401,7 @@ Long-polls are the main residual cost. A client that re-polls immediately keeps 
 | Schema bombs and regex denial of service | The bounded subset forbids `pattern` and `$ref` and caps depth and size (§2.2). |
 | Cost amplification through fan-out, long-polling or polling | Coalesced and fair-shared doorbells, wait caps with a daily wait budget, empty-read charging, a separate event allowance with a per-publisher share, per-bus byte caps, and metered introspection (§3.2, §9). |
 | A malicious manifest that pretends to be harmless | Effects text is publisher-attributed and never provider-verified unless reviewed. `categories` can only raise risk. The provider derives a risk floor from the contract metadata ([incremental authorization §8](incremental-authorization.md#8-describable-effects-and-risk-interop)). |
-| A look-alike bus manifest | Exact URL matching. The manifest host is always displayed (extensions §9). |
+| A look-alike bus manifest | Exact URL matching. The manifest host is always displayed (§3, §10.2). |
 | A replayed doorbell SET | integrations §6.1 `jti` and `iat` handling. A replay causes at most one harmless pull. |
 | An integration host fabricates records | It cannot be prevented, so it is disclosed. Only the owner can choose an integration host. |
 | Data persists after disconnect | Readers' copies are not recalled (disclosed). Purge and delete stay owner actions, and the provider-hosted bus is deleted with the account. |
@@ -386,7 +439,7 @@ These disclosures MUST be visible without expanding a collapsed section. A discl
 | Situation | Behaviour |
 | --- | --- |
 | The provider lacks `extensions.v1` | The manifest is an ordinary fragment with one resource field requiring `event-bus/v1` (AMD-C1). It works if the provider has some occupant implementing the contract, but without slot or bus semantics, a reader floor or built-in hosting. Apps MUST NOT assume a reader floor unless `events.v1` is declared. |
-| The provider has `extensions.v1` but lacks `events.v1` | The slot is unrecognized because of `crit` (extensions §2.2), and is processed as an ordinary fragment. |
+| The provider has `extensions.v1` but lacks `events.v1` | The slot is unrecognized because of `crit` (§2.4), and is processed as an ordinary fragment. |
 | The provider lacks `brokered-resources.v1` | Only provider-hosted buses exist. |
 | The integration lacks `events_endpoint` | Pull only. |
 
@@ -404,7 +457,7 @@ These disclosures MUST be visible without expanding a collapsed section. A discl
 | --- | --- | --- |
 | AMD-C12 | protocol §2 feature table | Add `events.v1` (§13). |
 | AMD-C13 | contracts | Publish `event-bus/v1` with the §4 methods, `x-methods` metadata and descriptor limits. |
-| AMD-C14 | extensions §4.2 | A provider declaring `events.v1` with `hosting: true` offers a generic built-in occupant for every recognized bus slot, without a per-slot declaration. It is created only by owner action and never preselected. |
+| AMD-C14 | extensions §4.2 (revision 2; §3.1 states the rule here) | A provider declaring `events.v1` with `hosting: true` offers a generic built-in occupant for every recognized bus slot, without a per-slot declaration. It is created only by owner action and never preselected. |
 | AMD-C15 | integrations §5.3, §6.2 | Add `bus-advanced/v1` (§7.2). It is sent only to connections whose pinned `events` list it. Adding it to `events` is a staged manifest change (integrations §2.3). Add the brokered token claim `bindle.bus` (§3.2). |
 
 ## 15. Conformance tests

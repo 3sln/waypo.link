@@ -6,7 +6,7 @@ import {readDeclaration,computeCapabilities,checkFloor,CapabilityStore,COMPONENT
 import {componentsDeclaration} from '../src/testing.mjs';
 
 const issuer='https://idp.example';
-const floor={version:'0',issuer,authorization_endpoint:`${issuer}/authorize`,token_endpoint:`${issuer}/token`,rpc_endpoint:`${issuer}/rpc`,jwks_uri:`${issuer}/jwks`,authorization_request_endpoint:`${issuer}/requests`,preferences_contract:'https://contracts.example/preferences/v1',login_presentation:['redirect']};
+const floor={version:'0',issuer,authorization_endpoint:`${issuer}/authorize`,token_endpoint:`${issuer}/token`,rpc_endpoint:`${issuer}/rpc`,jwks_uri:`${issuer}/jwks`,authorization_request_endpoint:`${issuer}/requests`,preferences_contract:'https://contracts.example/preferences/v2',login_presentation:['redirect']};
 const ext=(spec,options)=>options?{spec,options}:{spec};
 const entry=(intents=['login','select-account','reauthenticate','end-session'],endpoint=`${issuer}/entries`)=>ext(EXT.authorizationEntry,{endpoint,intents});
 const fedcm=ext(EXT.fedcm,{config_url:`${issuer}/fedcm.json`});
@@ -142,4 +142,15 @@ test('declarations are cached for the HTTP freshness lifetime, capped at one hou
   store.remember(declaration,freshness(headers('max-age=60')));
   assert.ok(store.declaration(issuer));now=61000;assert.equal(store.declaration(issuer),null);assert.ok(store.declaration(issuer,{stale:true}));
   assert.ok(Object.isFrozen(declaration)&&Object.isFrozen(declaration.extensions));
+});
+
+// Found by the multi-provider simulation (tests/sim): a provider answering `Cache-Control: no-cache` gives a declaration
+// lifetime of 0; callers that have just discovered may still read the manifest as stale.
+test('manifest reads support stale access for zero-lifetime declarations',async()=>{
+ const {CapabilityStore}=await import('../src/capabilities.mjs');
+ let now=1000;const store=new CapabilityStore({clock:()=>now}),manifest={issuer:'https://provider.example'};
+ store.remember({issuer:'https://provider.example'},0,manifest);
+ assert.equal(store.manifest('https://provider.example'),null);
+ assert.deepEqual(store.manifest('https://provider.example',{stale:true}),manifest);
+ assert.ok(store.declaration('https://provider.example',{stale:true}));
 });

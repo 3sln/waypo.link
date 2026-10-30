@@ -99,7 +99,7 @@ Setup inside a `grant-more` flow MUST NOT:
 
 - replace the occupant of an `exclusive` slot that has an enabled provider consumer ([extensions §3.4](../extensions.md#34-policy-is-not-authority)). The provider sends the owner to settings instead;
 - change values that other apps currently receive unless the shared-edit disclosure is shown and confirmed (protocol §4). Choosing a resource for an empty field is not such a change;
-- offer, as an occupant candidate (a bus host, or any slot occupant), any resource whose origin shares a registrable domain with the requesting client. This follows [extensions §9.3](../superseded/extensions-rev2.md#9-trust-and-security-requirements): a claim is never offered inside the claimant's own flow. The owner can still choose such a host from Settings;
+- offer, as an occupant candidate (a bus host, or any slot occupant), any resource whose origin shares a registrable domain with the requesting client. This follows [extensions §8](../extensions.md#8-security-requirements), item 3: a claim is never offered inside the claimant's own flow. The owner can still choose such a host from Settings;
 - offer replacement of an existing occupant of any slot or bus. Replacement starts a new, empty bus and revokes other consumers, so it belongs in Settings;
 - create a provider resource, such as a built-in bus, before the owner approves. The provider creates resources chosen during setup only when Allow commits. On decline or cancel, nothing is created.
 
@@ -116,6 +116,8 @@ Existing approved access is never reduced, even if the owner unchecks an "alread
 ### 4.4 Code exchange
 
 Every decision, including decline, "not now" and the suppression notice's return, ends in an ordinary authorization code for the redirect, popup or island delivery, because the code carries outcomes. The exchange follows the wire profile, with PKCE, `state`, `iss` and DPoP when `dpopJkt` was given.
+
+**Key binding.** A `grant-more` entry's `dpopJkt` MUST be the proof key of the app's existing session for this connection, and MUST be absent when that session is not DPoP-bound. The app reuses that key for the exchange; it never generates a fresh one. When access was added, the provider issues the new session only if `dpopJkt` equals the key of the connection's newest live session (absent equals absent) and refuses any other value with `invalid_dpop_proof`, so a grant can never move a connection to a new key or downgrade a bound session to bearer. A redirect presentation parks the session's key in the app's key store for the return, exactly as a redirect sign-in parks its key. (Clarified 2026-10-29 after the multi-provider simulation found the SDK using a fresh key; provisional, unsigned.)
 
 **Tokens are issued only when access was added.**
 

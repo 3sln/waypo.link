@@ -15,7 +15,7 @@ const before=contract({type:'string'}),after=contract({'x-type':'bytes','maxLeng
 const digestOf=body=>versionDigest(versionRecord({id:C,kind:'rpc-contract'},{version:1,prev:null,body}));
 const config=(store,body)=>{const c={ARTEFACT_VERSIONS_ENABLED:'true',FEDERATION_CONTRACTS:{[C]:body,[C+'/envelope']:{bindle_artefact:1,id:C,kind:'rpc-contract',versions:[{version:1,prev:null,body}]}}};c.ARTEFACTS=configuredArtefacts({config:c,store,clock:fakeClock()});return c;};
 
-test('the reset names a fresh artefact store on both adapters',()=>{assert.equal(ARTEFACT_STORE,'bindle-artefacts-v2');assert.equal(ARTEFACT_STORE_FILE,'artefacts-v2.sqlite');});
+test('the reset names a fresh artefact store on both adapters',()=>{assert.equal(ARTEFACT_STORE,'bindle-artefacts-v4');assert.equal(ARTEFACT_STORE_FILE,'artefacts-v4.sqlite');});
 
 test('an in-place rewrite is refused by a store that saw the old record; a fresh store fails old pins closed and serves the new one',async t=>{
  const old=new SqliteMetadata(':memory:'),fresh=new SqliteMetadata(':memory:');t.after(()=>{old.close();fresh.close();});

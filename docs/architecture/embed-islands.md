@@ -28,19 +28,19 @@ From DEVLOG.md, 2026-10-14:
 | ID | Decision | Section |
 | --- | --- | --- |
 | EI-1 | One static shell document per `client_id` at `https://embed.3sln.me/?client=<id>` (superseded 2026-10-28: was `/embed?client=<id>`; the origin root serves only the island document). The fragment is exactly the part name (`#avatar`), so CSS `:target` paints the skeleton before any script runs. | §3 |
-| EI-2 | Part allowlist v1: `avatar`, `account-switcher`, `sign-in`. Each client registration may restrict its parts further. Unknown part: inert blank document, no messages. | §3.2 |
+| EI-2 | Part allowlist v1: `avatar`, `account-switcher`, `sign-in`, and `request` (added 2026-10-28/29 for incremental authorization, behind its default-off flag; [incremental-authorization §7.2](../spec/extensions/incremental-authorization.md#72-islands-the-request-part-components-profile), [components-v1 §6](../profiles/components-v1.md#6-parts-v1)). Each client registration may restrict its parts further. Unknown part: inert blank document, no messages. | §3.2 |
 | EI-3 | The nonce, locale and color scheme for pre-handshake rendering travel in the iframe `name` attribute (`window.name`), which the shell reads and clears on boot. They never travel in the URL. This replaces adaptive §6.1's `#n=<nonce>`. | §3.4, §4.1 |
 | EI-4 | Caching: shell `no-cache` + ETag (per-client `frame-ancestors`); hashed immutable assets; an optional partitioned service worker that serves assets cache-first and the shell network-first. Account data and avatar bytes are never cached. | §3.3 |
 | EI-5 | One `MessageChannel` per island. Inbound messages are an allowlist of validated presentation inputs (locale, color scheme, part props; theme tokens superseded 2026-10-28: no `theme_tokens` option, the element sends none) plus the public flow inputs and the current subject inherited from adaptive §6.2. Nothing inbound starts an action. | §4 |
 | EI-6 | Outbound messages are part-specific (table in §4.4). `#avatar` emits only `ready`. | §4.4 |
 | EI-7 | Leader election with Web Locks (`bindle-embed:<client_id>`), fan-out over a partitioned `BroadcastChannel`, monotonic leadership terms stored in IndexedDB, heartbeats, and a visible-follower `steal` for frozen leaders. Any part can lead. Key *use* is not exclusive; only the embed session and data stream are. | §5 |
-| EI-8 | `#avatar` fills `min(100vw,100vh)`, centered. Bytes come from `/embed/api/avatar` on the embed origin, fetch-only, re-encoded raster, rendered from a blob URL after `decode()`. Without a binding for the app's current subject, the island renders that subject's monogram, which is visually the same as the element fallback, so its appearance is not an availability oracle. | §6 |
+| EI-8 | `#avatar` fills `min(100vw,100vh)`, centered. Bytes come from `/embed/api/avatar` on the embed origin, fetch-only, re-encoded raster, rendered from a blob URL after `decode()`. The island paints transparent and draws only the bound picture of the app's current subject; without a binding it draws nothing, and the element's own standard avatar (granted picture, initials, subject monogram) shows underneath (ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned; formerly: the island rendered the subject's monogram). | §6 |
 | EI-9 | `<bindle-account>` becomes the composed profile button. Its container is one `<dialog>` in the element's shadow root, shown as an anchored `popover="auto"` on wide viewports and with `showModal()` as a sheet on small ones. The switcher iframe is never re-parented. | §8, §9 |
 | EI-10 | Each element translates validated island messages into its own events (`bubbles:true`, `composed:true`), dispatched in a microtask after the source message or event. Late listeners read a frozen `state` snapshot that is updated before dispatch. There is no replay and no cross-element guarantee. | §10 |
 | EI-11 | Degradation splits two ways. Conditions the element can see (no profile, handshake timeout, sandbox or credentialless attribute, flow `unavailable`) replace the island with element-rendered app-granted UI. Conditions only the island can see (no credential, evicted or blocked storage) are rendered neutrally *inside* the island and never reported. | §11 |
 | EI-12 | Inbound `forget` (app sign-out) is kept as the single *state-reducing* inbound message, optionally scoped to one subject. It can only remove this client's local bindings in this partition, which the app's own revocation would kill anyway. Open question Q2. | §4.3 |
 | EI-13 | All state-dependent island work (IndexedDB, key use, restores, stream, avatar fetch and decode) runs in a dedicated module `Worker` per island. The island DOM is constant in shape for every state, and `ready` precedes any storage access (review EIR-3). | §3.4, §5, §13.2 |
-| EI-14 | Islands are **opt-in** in the current SDK major (`islands="off"` default), because island mode changes phase-1 ARIA, keyboard and slot behaviour. They become `auto` only in a semver-major release with a migration note (EIR-11). | §12.1 |
+| EI-14 | `islands` defaults to **`auto`** while the SDK is pre-1.0 (Q3; ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned; formerly opt-in with `islands="off"` as the default until a semver-major release, EIR-11). Island mode changes phase-1 ARIA, keyboard and slot behaviour (§22); `islands="off"` keeps phase-1 behaviour. | §12.1 |
 
 ## 3. Island shell
 
@@ -177,7 +177,7 @@ Followers accept `snapshot` and `heartbeat` only with `term` ≥ the highest ter
 ### 5.3 Lifecycle
 
 1. After `ready`, each island calls `locks.request(name, {mode:'exclusive'}, callback)`. The holder runs `callback`: it increments the term in IndexedDB, broadcasts `term`, restores bindings serially (padded to ≥300 ms each, adaptive §6.3), opens the stream and broadcasts `snapshot`. The leader keeps leading even with zero bindings (so lock, bus and connections look the same in every state). The callback's promise resolves only on `pagehide` or teardown. Before resolving it broadcasts `resign` and calls `POST /embed/api/session/end` with `fetch(…, {keepalive:true})`.
-2. Followers broadcast `hello` and render the last snapshot they receive. Until one arrives, they show the static UI (the monogram for `avatar`).
+2. Followers broadcast `hello` and render the last snapshot they receive. Until one arrives, they show the static UI (for `avatar`, a transparent tile; ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned).
 3. **Failover.** When the leader's document unloads or crashes, the browser releases the lock and the next queued island becomes leader. It restores with its own key proof (sessions are never transferred over the bus) and broadcasts a new term. Followers keep displaying the previous snapshot until it expires (`issuedAt` + 600 s), then fall back to the static UI.
 4. **bfcache (EIR-4).** On every `pagehide`, in every state and for leaders and followers alike, the worker runs the same teardown: abort the stream with its `AbortController`, close the bus, release or abandon the lock request, close IndexedDB, and send `session/end` with `keepalive`. On `pageshow` with `persisted`, it resumes from step 1. bfcache eligibility, and `notRestoredReasons`, are then identical for 0 and 8 bindings (verified in I7).
 5. **Frozen or throttled leader.** The leader sends a heartbeat every 15 s. A follower whose document is visible and which has missed 3 heartbeats requests the lock with `{steal: true}`. The old holder's lock promise rejects with `AbortError`. When it thaws, it stops streaming and posting at once, and its messages carry a stale term that followers drop. Only visible followers steal, so two hidden tabs never fight. A steal is rate-limited to once per 60 s per instance.
@@ -229,12 +229,16 @@ GET https://embed.3sln.me/embed/api/avatar?b=<binding>&s=<bucket>
 ### 6.3 No observable signals
 
 - The bytes arrive by `fetch()` after `load` and after `ready`, so the parent's single `load` event is never delayed or changed.
-- Each island creates `URL.createObjectURL(blob)` and assigns it to an `<img>` off-screen. It awaits `img.decode()` (decoded off the main thread in Chromium; *needs evidence elsewhere*), then swaps the decoded image in during one animation frame. Every state performs one such swap (the monogram is also rendered as a constant-size raster from the worker), so the main-thread cost is identical. On any failure (fetch, decode, empty `Blob`), it silently keeps the current picture (the monogram). Nothing is posted, sized, focused or navigated.
+- Each island creates `URL.createObjectURL(blob)` and assigns it to an `<img>` off-screen. It awaits `img.decode()` (decoded off the main thread in Chromium; *needs evidence elsewhere*), then swaps the decoded image in during one animation frame. Every state performs one such swap (the transparent tile drawn without a bound picture is also a constant-size raster from the worker), so the main-thread cost is identical. On any failure (fetch, decode, empty `Blob`, re-encode), it silently keeps the current picture (the transparent tile, so the element's own avatar stays visible; ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned). Nothing is posted, sized, focused or navigated.
 - Generated badges and uploaded pictures use the same bucket sizes, so the visual box never changes.
 
 ### 6.4 Without a binding
 
-When the island holds no binding for the app's current `subject` (never signed in through an island in this browser, evicted storage, revoked binding, `subject` null, or no snapshot yet), it renders the deterministic monogram of `subject` (`monogramPattern` from `packages/sdk/src/elements/monogram.mjs`, shared through the embed protocol module). It uses the same palette as the element's `<bindle-monogram>`. The embedder therefore cannot tell from appearance alone, through user-permissioned capture, whether the island holds a binding, and the user still sees a consistent picture. With `subject` null, it renders a neutral placeholder.
+> Provisional (ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned; audit V2): this section previously rendered the subject's monogram without a binding. It now follows [components-v1 §6](../profiles/components-v1.md#6-parts-v1).
+
+When the island holds no binding for the app's current `subject` (never signed in through an island in this browser, evicted storage, revoked binding), holds a binding without a picture, or has `subject` null, no snapshot yet or a failed re-encode, the `avatar` island renders a transparent tile: the worker still produces one constant-size raster, so the one-swap-per-state property of §6.3 is unchanged, but nothing is drawn. The element always renders its own standard avatar (granted picture, else initials, else the subject monogram) underneath the island, so that avatar shows through, and enabling islands never replaces initials with a different fallback. A bound picture simply covers it.
+
+This is no availability oracle beyond what was already accepted: the only visible difference between states is a bound picture, as before (a bound picture also differed from the monogram under the earlier rule). The `account-switcher` card keeps its own neutral state (§11).
 
 ### 6.5 Sizes
 
@@ -414,7 +418,7 @@ Without the Popover API, the panel is `position:fixed` with a high `z-index`, ap
 | Embedder adds `sandbox` or `credentialless`, or changes `src`/`name`/`allow` | Element (`MutationObserver`) | Tear down; fallback | `'fallback'` |
 | Sandboxed anyway (for example, the whole app runs in a sandboxed frame) | Island (adaptive §10.1) | Island renders the static UI plus "Open example.org" (noopener tab). Flow controls post `flow{ended, unavailable}` | generic `unavailable` on use only |
 | Opener unavailable (popup blocked, app `COOP: same-origin`) | Island | `flow{ended, popup-blocked\|unavailable}`; the element shows its notice with **Continue at example.org** (app-opened popup, app credentials only) and **Continue in this tab** | `bindle-sign-in-end` / `bindle-flow-end` outcome |
-| No embed credential for the current subject, evicted storage (ITP 7-day, cleared site data), revoked binding | Island only | `avatar`: subject monogram (§6.4). `account-switcher`: "Show my account at example.org" in the card, plus any other bindings it holds. Nothing reported. | Nothing |
+| No embed credential for the current subject, evicted storage (ITP 7-day, cleared site data), revoked binding | Island only | `avatar`: transparent, so the element's own avatar shows (§6.4; ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned). `account-switcher`: "Show my account at example.org" in the card, plus any other bindings it holds. Nothing reported. | Nothing |
 | Storage blocked or ephemeral (`credentialless`, private mode) | Island | In-memory key; bindings last for the page life (adaptive §6.1) | Nothing |
 | Web Locks or BroadcastChannel missing | Island | Each island is its own leader (§5.4) | Nothing |
 | JavaScript disabled or element undefined | — | Light-DOM fallback content (phase 1 §9.2) | — |
@@ -427,11 +431,11 @@ Without the Popover API, the panel is `position:fixed` with a high `z-index`, ap
 
 | Element | Addition | Notes |
 | --- | --- | --- |
-| `<bindle-session>` | `islands="auto\|off"` (default **`off`** in the current major, EI-14) | `auto` mounts islands only when the issuer's manifest advertises the 3sln islands profile. |
-| | `embed-origin="https://embed.3sln.me"` | Optional early-mount hint that skips discovery latency. It is verified against the manifest when discovery completes, and on mismatch every island is torn down. The embedder already controls its own page, so the hint grants nothing it could not do itself. |
+| `<bindle-session>` | `islands="auto\|off"` (default **`auto`**, EI-14; ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned) | `auto` mounts islands only when the issuer's manifest advertises the 3sln islands profile. |
+| | `embed-origin="https://embed.3sln.me"` (designed, not implemented; audit G11) | Optional early-mount hint that skips discovery latency. It is verified against the manifest when discovery completes, and on mismatch every island is torn down. The embedder already controls its own page, so the hint grants nothing it could not do itself. |
 | `<bindle-account>` | `trigger="avatar-label\|avatar"`, `sheet="auto\|always\|never"`, `sheet-breakpoint`, `placement="auto\|bottom-sheet\|start-sheet\|end-sheet"`, `density="regular\|compact"`; `state` | `actions` is unchanged (`switch`/`manage` map into the island when live) |
-| `<bindle-sign-in>` | `island="auto\|off"`; `state` | When the default provider advertises the profile, the island button is the primary control and the handle form moves behind "Use a different provider". After discovery of another provider that advertises the profile, a provider-specific sign-in island appears, which needs a second click inside it. |
-| `<bindle-avatar>` (new) | `size`, `--bindle-avatar-size` | Shows the app's current subject: island when live, otherwise `<bindle-monogram>` |
+| `<bindle-sign-in>` | `island="auto\|off"` (designed, not implemented; audit G11); `state` | When the default provider advertises the profile, the island button is the primary control and the handle form moves behind "Use a different provider". After discovery of another provider that advertises the profile, a provider-specific sign-in island appears, which needs a second click inside it. |
+| `<bindle-avatar>` (new) | `size`, `--bindle-avatar-size` | Shows the app's current subject: always the standard avatar chain (granted picture, initials, subject monogram), with the transparent avatar island layered over it when live, covering it only with a bound picture (ui-elements-audit W3, coordinator decision under owner delegation 2026-10-29, unsigned) |
 
 ### 12.2 Signed-out state
 
@@ -574,17 +578,17 @@ Evidence before completion: `npm test`; DOM tests showing no state-dependent mes
 
 - **Q1** Should the `<bindle-account>` trigger default stay avatar + label (phase-1 compatible) or become avatar-only?
 - **Q2** Is inbound `forget` acceptable as the one state-reducing exception to "the embedder never commands", or should app sign-out rely only on server revocation plus `session{null}`?
-- **Q3** Islands ship opt-in (`islands="off"` default) until a semver-major release, because island mode replaces phase-1 `role=menu` with a disclosure dialog and moves `switch`/`manage` into the island. Accept, or switch the default now while still pre-1.0?
+- **Q3** Islands ship opt-in (`islands="off"` default) until a semver-major release, because island mode replaces phase-1 `role=menu` with a disclosure dialog and moves `switch`/`manage` into the island. Accept, or switch the default now while still pre-1.0? **Answered (provisional):** default `auto` pre-1.0, matching `packages/sdk/src/elements/session.mjs`; coordinator decision under owner delegation 2026-10-29, unsigned (ui-elements-audit W3).
 - **Q4** Is a default sheet breakpoint of 600 px acceptable?
 
 ## 22. Breaking changes to phase-1 elements (island mode only)
 
-Fallback and `islands="off"` keep phase-1 behaviour exactly. In island mode:
+Fallback and `islands="off"` keep phase-1 behaviour exactly. Islands are on by default (`auto`, EI-14), so these changes apply wherever the provider declares the parts. In island mode:
 
 1. `<bindle-account>`: `aria-haspopup` changes from `menu` to `dialog`, `aria-controls` from `menu` to `panel`, and `role=menu` with roving menuitems becomes a list of buttons and links in Tab order. Tab no longer closes the panel; focus leaving it does.
 2. `::part(menu)` names the actions list inside a top-layer `<dialog>`; embedder CSS that positioned the old absolutely positioned menu no longer applies (use `::part(panel)`).
 3. The `switch` and `manage` actions render inside the switcher island, and embedder CSS cannot reach them.
-4. `<bindle-sign-in>` shows the island button first and moves the handle form behind "Use a different provider" (`island="off"` opts out).
+4. `<bindle-sign-in>` shows the island button first and moves the handle form behind "Use a different provider" (`island="off"` would opt out per element; designed, not implemented, audit G11; today `islands="off"` on `<bindle-session>` opts out).
 5. The 60 s teardown of embeddable-elements §8.3 is dropped, and `show-provider-accounts` (designed, never implemented) is replaced by `islands`.
 6. Additive only: new events (§10.2), `reason` on `bindle-menu-toggle`, `source` on flow events, `state` on non-session elements, `<bindle-avatar>`, and new parts and attributes. `<bindle-session>.state` stays a string.
 

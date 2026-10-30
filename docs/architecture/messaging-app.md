@@ -101,7 +101,7 @@ Today one provider-custodied P-256 identity key per account signs everything. It
 - conversation v1 payloads;
 - admission receipts (provisionally).
 
-See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-domain table in [links §7.2](../spec/superseded/links.md). As an app, Parlay must produce author proofs attributable to the user's identity without ever holding that key.
+See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-domain table in [keys §4](../spec/keys.md#4-signature-domains) (formerly links §7.2). As an app, Parlay must produce author proofs attributable to the user's identity without ever holding that key.
 
 ### 4.2 Options
 
@@ -127,7 +127,7 @@ See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-dom
 2. **Purposes are published profile URIs.** Parlay defines `…/parlay/v1/purposes/author`, `…/purposes/receipt` and `…/purposes/archive`.
    - They are certified **only to the current messaging-ingress occupant**. Certifying a new key revokes the previous one, so two apps never sign concurrently for one principal (reviews P-3, S-12). A provider can also revoke every delegation of a breached `client_id`.
    - The provider certifies only purposes its own policy recognizes, and only after an explicit owner consent screen ("Let Parlay sign messages and delivery receipts as you").
-   - Profiles verified against the identity key never accept a delegate key: link metas, audience responses, delegation certificates and conversation v1. A stolen delegate key therefore cannot forge them. The `typ` header separates JWS profiles, and domain prefixes separate the rest (added to the [links §7.2](../spec/superseded/links.md) table).
+   - Profiles verified against the identity key never accept a delegate key: link metas, audience responses, delegation certificates and conversation v1. A stolen delegate key therefore cannot forge them. The `typ` header separates JWS profiles, and domain prefixes separate the rest (added to the signature-domain table, now [keys §4](../spec/keys.md#4-signature-domains), formerly links §7.2).
 3. **Renewal and revocation.**
    - The app renews at half the lifetime, and the provider renews only while the connection is live.
    - Disconnect, uninstall, occupant replacement, suspension or "revoke messaging key" stops renewal immediately and marks the `jkt` revoked at the status endpoint. The status response carries only `active`/`revoked` and a coarse hour.

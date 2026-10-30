@@ -18,7 +18,7 @@ const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{st
 const hash=async value=>Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))).toString('base64url');
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
 async function dispatch(engine,action){const feed=engine.dispatch(action);let result;feed.addEventListener('result',event=>{result=event.detail;});await feed.next('complete');return result;}
-async function harness({enabled=true,presentation='popup',blocked=false,declare=['grant-more','configure'],dpop=false,token:tokenOverride,entryResponse,tokenResponse,readPreferences,...options}={}){
+async function harness({enabled=true,presentation='popup',blocked=false,declare=['grant-more','configure'],dpop=false,loginDpop=false,token:tokenOverride,entryResponse,tokenResponse,readPreferences,...options}={}){
  const provider=createMockProvider({issuer,clients:[{clientId,redirectUris:[redirectUri]}],supportedIntents:['login','reauthenticate',...declare],extensionKeys:['reason','target','suggestion'],dpop}),calls=[],codes=new Map(),state={token:tokenOverride,choice:'configured',preferences:{revision:2,values:{day:'monday'}}};
  const fetcher=async(input,init)=>{
   const req=input instanceof Request?input:new Request(input,init),path=new URL(req.url).pathname,body=req.method==='POST'?await req.clone().text():null;calls.push({path,body,headers:req.headers,credentials:req.credentials});
@@ -39,7 +39,7 @@ async function harness({enabled=true,presentation='popup',blocked=false,declare=
   return provider.fetch(req);
  };
  const client=new BindleClient({clientId,redirectUri,defaultHost:'provider.example',fetcher,storage:memoryStorage(),history:{replaceState(){}},...options.clientOptions});
- await client.discoverHost('provider.example');const login=await client.beginAuthorization({intent:'login',dpop:false});await client.completeLogin(provider.authorize(login.authorizationUrl));
+ await client.discoverHost('provider.example');const login=await client.beginAuthorization({intent:'login',dpop:loginDpop,...loginDpop?{presentation:'popup'}:{}});await client.completeLogin(provider.authorize(login.authorizationUrl));
  client.session={...client.session,granted_fragments:[{grant:'old',fragment,digest,fields:['day','calendar'],methods:{calendar:{[contract]:['read']}}}]};client.sessions.set(`${issuer} ${client.session.subject}`,client.session);
  client.readPreferences=async(...args)=>readPreferences?readPreferences(...args):state.preferences;
  const assigned=[],win={navigator:{language:'en',userActivation:{isActive:true}},location:{href:'https://app.example/',assign:url=>assigned.push(url)},matchMedia:()=>({matches:false})};
@@ -156,15 +156,15 @@ test('incremental code and ngin stay outside the static first-render element bun
  assert.equal([...inputs].some(path=>path.startsWith('vendor/ngin/')),false);
  assert(Object.keys(result.metafile.inputs).some(path=>path.endsWith('/incremental.mjs')),'standard registration retains the opt-in lazy engine');
 });
-test('DPoP outcome-only exchange retries one nonce challenge and releases its unused key',async()=>{
+test('DPoP outcome-only exchange retries one nonce challenge and keeps the session key',async()=>{
  const proofs=[];let tries=0;
- const h=await harness({dpop:true,tokenResponse:async({req,record})=>{
+ const h=await harness({dpop:true,loginDpop:true,tokenResponse:async({req,record})=>{
   const [header,payload,signature]=req.headers.get('DPoP').split('.'),jwk=JSON.parse(Buffer.from(header,'base64url')),proof=JSON.parse(Buffer.from(payload,'base64url'));proofs.push(proof);
   assert.equal(proof.htu,issuer+'/oauth/token');assert.equal(proof.htm,'POST');assert.equal(proof.ath,undefined);assert.ok(record.dpopJkt);
   const key=await crypto.subtle.importKey('jwk',jwk.jwk,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);assert.equal(await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,Buffer.from(signature,'base64url'),new TextEncoder().encode(header+'.'+payload)),true);
   return ++tries===1?json({error:'use_dpop_nonce'},400,{'DPoP-Nonce':'server-nonce'}):json({fragment_outcomes:[{fragment,outcome:'declined'}]});
  }});
- const result=await h.helper.grantMore(request);assert.equal(result.fragments[0].outcome,'declined');assert.equal(proofs.length,2);assert.equal(proofs[1].nonce,'server-nonce');assert.notEqual(proofs[0].jti,proofs[1].jti);assert.equal(h.client.dpopKeys.size,0);
+ const result=await h.helper.grantMore(request);assert.equal(result.fragments[0].outcome,'declined');assert.equal(proofs.length,2);assert.equal(proofs[1].nonce,'server-nonce');assert.notEqual(proofs[0].jti,proofs[1].jti);assert.deepEqual([...h.client.dpopKeys.keys()],[h.client.session.dpopJkt]);
 });
 test('new token responses validate subject, lifetime and outcomes and leave session ownership explicit',async()=>{
  for(const patch of [null,{subject:issuer+'/people/wrong'},{expires_in:3600},{fragment_outcomes:[{fragment,outcome:'declined'}]}]){
@@ -200,4 +200,50 @@ test('ART-5 SDK carries version/digest request pins and refuses incomplete or in
  const h=await harness(),versioned={requests:request.requests.map(r=>({...r,version:2}))};await h.helper.grantMore(versioned);assert.equal(JSON.parse(h.calls[0].body).requests[0].version,2);
  for(const version of [0,-1,1.5,'2',Number.MAX_SAFE_INTEGER+1]){const bad=await harness(),result=await bad.helper.grantMore({requests:request.requests.map(r=>({...r,version}))});assert.equal(result.code,'invalid_request');assert.equal(bad.calls.length,0);}
  const missing=await harness(),result=await missing.helper.configure({target:{fragment,version:2}});assert.equal(result.code,'invalid_request');assert.equal(missing.calls.length,0);
+});
+// Found by the multi-provider simulation (tests/sim): 3sln.me issues `owner.secret` codes, and serves its manifest with
+// `Cache-Control: no-cache` (declaration lifetime 0). Both must still complete a redirect grant-more.
+test('provider-shaped dotted codes complete a redirect grant-more',async()=>{
+ const h=await harness({presentation:'redirect'});assert.equal((await h.helper.grantMore(request)).outcome,'redirecting');
+ const plain=h.authorize(h.assigned[0]),url=new URL(plain),code=url.searchParams.get('code'),dotted=`${crypto.randomUUID()}.${code}`;
+ url.searchParams.set('code',dotted);
+ const returned=createIncrementalClient({client:h.client,enabled:true,window:h.win,presentation:'redirect'});cleanups.push(()=>returned.dispose());
+ const original=h.client.fetcher;h.client.fetcher=async(input,init)=>{if(new URL(typeof input==='string'?input:input.url).pathname==='/oauth/token'&&init?.body){const form=new URLSearchParams(String(init.body));if(form.get('code')===dotted){form.set('code',code);init={...init,body:form};}}return original(input,init);};
+ const result=await returned.completeCallback(url.href);assert.equal(result.outcome,'completed');assert.equal(result.fragments[0].outcome,'granted');
+});
+
+// Found by the multi-provider simulation (tests/sim, notes.reminders.redirect-exchange): the provider binds an
+// incremental session to the existing family's key (incremental-authorization §4.4; packages/federation/
+// incremental-ports.mjs "an incremental entry cannot downgrade a bound family"), so the SDK must bind the grant-more
+// exchange to the connected session's DPoP key, never a fresh one, and must not drop that key afterwards.
+const memoryKeyStore=()=>{const map=new Map();return {map,put:async(k,v)=>{map.set(k,v);},get:async k=>map.get(k)??null,delete:async k=>{map.delete(k);}};};
+async function proofJkt(req){const {thumbprint}=await import('../src/dpop.mjs');const header=JSON.parse(Buffer.from(req.headers.get('DPoP').split('.')[0],'base64url'));return thumbprint(header.jwk);}
+test('grant-more binds the exchange to the connected session DPoP key and keeps it after the exchange',async()=>{
+ const seen=[];
+ const h=await harness({dpop:true,loginDpop:true,tokenResponse:async({req,record})=>{seen.push({record:record.dpopJkt,proof:await proofJkt(req)});return json({fragment_outcomes:[{fragment,outcome:'granted',granted:full}]});}});
+ const sessionJkt=h.client.session.dpopJkt;assert.match(sessionJkt??'',/^[A-Za-z0-9_-]{43}$/);
+ const result=await h.helper.grantMore(request);assert.equal(result.outcome,'completed',JSON.stringify(result));
+ assert.equal(JSON.parse(h.calls.find(c=>c.path==='/api/oauth/entries').body).dpopJkt,sessionJkt);
+ assert.deepEqual(seen,[{record:sessionJkt,proof:sessionJkt}]);
+ assert.equal(h.client.dpopKeys.has(sessionJkt),true,'the session keeps its proof key');
+ // A second request (and a cancellation that discards it) still leaves the session key in place.
+ await h.helper.grantMore(request);await h.helper.cancel();assert.equal(h.client.dpopKeys.has(sessionJkt),true);
+});
+test('grant-more from an unbound session sends no dpopJkt and no proof',async()=>{
+ let header='unset';
+ const h=await harness({dpop:true,tokenResponse:async({req})=>{header=req.headers.get('DPoP');return json({fragment_outcomes:[{fragment,outcome:'declined'}]});}});
+ assert.equal(h.client.session.dpopJkt,undefined);
+ assert.equal((await h.helper.grantMore(request)).outcome,'completed');
+ assert.equal(JSON.parse(h.calls.find(c=>c.path==='/api/oauth/entries').body).dpopJkt,undefined);assert.equal(header,null);
+});
+test('a redirect grant-more parks the session key and completes in a new document bound to it',async()=>{
+ const keyStore=memoryKeyStore(),seen=[];
+ const h=await harness({dpop:true,loginDpop:true,presentation:'redirect',clientOptions:{keyStore},tokenResponse:async({req,record})=>{seen.push({record:record.dpopJkt,proof:await proofJkt(req)});return json({fragment_outcomes:[{fragment,outcome:'granted',granted:full}]});}});
+ const sessionJkt=h.client.session.dpopJkt;assert.ok(sessionJkt);
+ assert.equal((await h.helper.grantMore(request)).outcome,'redirecting');assert.equal(keyStore.map.has(`${h.client.storageKey}:${sessionJkt}`),true);
+ const callback=h.authorize(h.assigned[0]);
+ const client=new BindleClient({clientId,redirectUri,fetcher:h.client.fetcher,storage:h.client.storage,keyStore});await client.discoverHost('provider.example');
+ const returned=createIncrementalClient({client,enabled:true,window:h.win});cleanups.push(()=>returned.dispose());
+ const result=await returned.completeCallback(callback);assert.equal(result.outcome,'completed',JSON.stringify(result));
+ assert.deepEqual(seen,[{record:sessionJkt,proof:sessionJkt}]);assert.equal(keyStore.map.size,0,'the parked copy is consumed');
 });

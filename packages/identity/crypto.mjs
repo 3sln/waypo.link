@@ -20,21 +20,3 @@ export class IdentityCrypto {
   async hash(purpose, value) { return encode(new Uint8Array(await this.crypto.subtle.digest('SHA-256', encoder.encode(`${purpose}\0${value}`)))); }
 }
 
-// Kept separate from the portable service so runtimes may supply another
-// reviewed password implementation without changing the account lifecycle.
-export async function createArgon2Hasher(crypto = globalThis.crypto) {
-  const { argon2id, argon2Verify } = await import('hash-wasm');
-  return {
-    dummyHash: '$argon2id$v=19$m=19456,t=2,p=1$R0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0c$9tLroxbSbCfoHVkG03K2Gm/gZgJJysqgzviXx72h6xU',
-    async hash(password) {
-      return argon2id({ password, salt: crypto.getRandomValues(new Uint8Array(32)),
-        parallelism: 1, iterations: 2, memorySize: 19456, hashLength: 32, outputType: 'encoded' });
-    },
-    async verify(password, encoded) {
-      // Only our fixed parameters are accepted; corrupt records cannot request
-      // unbounded allocation or work from the WASM implementation.
-      if (typeof encoded !== 'string' || !/^\$argon2id\$v=19\$m=19456,t=2,p=1\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/.test(encoded)) return false;
-      try { return await argon2Verify({ password, hash: encoded }); } catch { return false; }
-    },
-  };
-}

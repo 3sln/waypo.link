@@ -32,7 +32,7 @@ export function accountSwitcherPart({model,t,host,arming,worker,send,swap,nextTi
       const me=current(),rows=others(),live=[...rows,'more'],more=live.length-1;if(focusIndex>more)focusIndex=0;
       const list=[...Array.from({length:ROWS},(_,i)=>row(rows[i]??null,i,live)),
         h('li',h('button',t('More at {host}',{host})).classes('row','more','control').attrs(defined({type:'button','data-row':'more',tabindex:focusIndex===more?'0':'-1'})).on(arming.guard(provider))).attrs(defined({role:'listitem'}))];
-      const action=(name,label,run,extra={})=>actions().includes(name)?h('button',label).classes('action','control',name==='remove'&&'danger').attrs(defined({type:'button',...extra})).on(arming.guard(run)):null;
+      const action=(name,label,run,extra={})=>actions().includes(name)?h('button',h('span',label).classes('action-label')).classes('action','control',name==='remove'&&'danger').attrs(defined({type:'button',...extra})).on(arming.guard(run)):null;
       return h('div',
         h('header',h('p',t('Your accounts at {host}',{host})).classes('trust','host'),h('p',t("This app can't see this list.")).classes('trust','note')).classes('head'),
         h('button',h('img').classes('tile','large').attrs(defined({alt:'',src:model.tiles[0]??null})),
@@ -40,7 +40,7 @@ export function accountSwitcherPart({model,t,host,arming,worker,send,swap,nextTi
           .classes('card','control').attrs(defined({type:'button','aria-current':me?'true':null,'data-first':''})).on(arming.guard(provider)),
         h('ul',...list).classes('list').attrs(defined({role:'list','aria-label':t('Accounts')})).on({keydown:onListKey}),
         model.confirm
-          ?h('div',h('p',t('Remove this account from this site?')).classes('trust','warn'),h('div',h('button',t('Remove')).classes('action','control','danger').attrs(defined({type:'button'})).on(arming.guard(remove)),h('button',t('Cancel')).classes('action','control').attrs(defined({type:'button'})).on(arming.guard(()=>{model.confirm=false;refresh();}))).classes('confirm-buttons')).classes('actions','confirm')
+          ?h('div',h('p',t('Remove this account from this site?')).classes('trust','warn'),h('div',h('button',h('span',t('Remove')).classes('action-label')).classes('action','control','danger').attrs(defined({type:'button'})).on(arming.guard(remove)),h('button',h('span',t('Cancel')).classes('action-label')).classes('action','control').attrs(defined({type:'button'})).on(arming.guard(()=>{model.confirm=false;refresh();}))).classes('confirm-buttons')).classes('actions','confirm')
           :h('div',action('use-another',t('Use another account'),()=>startFlow()),action('manage',t('Manage at {host}',{host}),provider),action('remove',t('Remove from this site'),()=>{model.confirm=true;refresh();},{'aria-disabled':me?null:'true'})).classes('actions'),
       ).classes('switcher',model.props.density==='compact'?'compact':'regular');
     },

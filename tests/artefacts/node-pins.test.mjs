@@ -14,3 +14,19 @@ test('Node adapter shares durable version pins across owner shards and process r
  await server.close();delete config.FEDERATION_SCHEMAS[ID+'/envelope'];config.FEDERATION_SCHEMAS[ID]={...body,title:'Unavailable origin copy'};
  server=await createNodeServer({directory,config});assert.deepEqual(await server.resources.federationShard(owners[1]).service.schema(reference),pin);
 });
+// Found by the multi-provider simulation (tests/sim): with ARTEFACT_VERSIONS_ENABLED, an entry-based sign-in requesting
+// an operator-preloaded (unversioned, legacy) fragment failed `schema_changed` at the owner shard. The entry store's
+// pin adapter returned the artefact reference digest (`sha256-…`) while the owner shard's pin (packages/federation/
+// schema.mjs pinVersioned) reports a legacy digest in its stored bare form, so the two never compared equal.
+test('entry store and owner shard agree on an operator-preloaded legacy fragment pin with versions on',async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'art4-entry-pins-')),LEGACY='https://node-pins.example/legacy-sync',body={id:LEGACY,title:'Sync',description:'Where notes sync.',publisher:'https://node-pins.example',fields:{enabled:{title:'Enabled',type:'boolean',cardinality:{min:0,max:1}}}};
+ const config={ARTEFACT_VERSIONS_ENABLED:'true',FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true',APP_ORIGIN:'https://provider.example',FEDERATION_SCHEMAS:{[LEGACY]:body}};
+ const server=await createNodeServer({directory,config});t.after(async()=>{await server.close();await rm(directory,{recursive:true,force:true});});
+ const request={fragment:LEGACY,required:false,purpose:'Sync your notes.',fields:['enabled']};
+ const entryPin=await server.resources.federationEntries.pinSchema({...request});
+ const [ownerPin]=await server.resources.federationShard(owners[0]).service.pinRequests([{...request}]);
+ assert.equal(entryPin.digest,ownerPin.digest,'the digest the entry records is the one the owner shard pins');
+ // The request the entry hands the owner shard (carrying the reference digest) pins to the same digest again.
+ const carried={...request,digest:entryPin.reference?.digest??entryPin.digest};const [again]=await server.resources.federationShard(owners[1]).service.pinRequests([carried]);
+ assert.equal(again.digest,entryPin.digest);
+});

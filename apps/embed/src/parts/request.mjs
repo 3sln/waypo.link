@@ -3,6 +3,7 @@
 // prepare-request through validatePrepareRequest, not the legacy prepare validator (2 KiB other-message limit).
 import {Engine,Provider,Action,Query} from '../../../../vendor/ngin/index.js';
 import {h,defined} from './dom.mjs';
+import {icon} from '../../../../packages/sdk/src/elements/icons.mjs';
 import {openPopup,FLOW_TIMEOUT_MS,POLL_MS,MAX_HELLOS,validateHello} from '../bridge.mjs';
 import {validatePrepareRequest,REQUEST_KINDS,requestText} from '../../../../packages/sdk/src/elements/request-protocol.mjs';
 const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)===Object.prototype&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
@@ -75,6 +76,6 @@ export function requestPart({model,send,worker,issuer,host,arming,win=globalThis
  const leaving=()=>model.requestAbort?.abort();win.addEventListener('pagehide',leaving);
  return Object.freeze({engine,apply:message=>engine.dispatch(new ApplyIslandRequest(message)),start(){},update(){},dispose(){win.removeEventListener('pagehide',leaving);leaving();return engine.dispose();},view(){
   const text=requestText(locale()),kind=REQUEST_KINDS.includes(model.props.kind)?model.props.kind:'grant-more',label=kind==='configure'?text.settings:text.access;
-  return h('button',h('span',label),h('span',` · ${host}`)).classes('control','signin',model.props.variant==='outline'?'outline':'filled').attrs(defined({type:'button',disabled:!enabled||!model.subject||!model.requestPrepare||!!model.flow?'':undefined,'aria-busy':model.flow?'true':'false'})).on(hooks);
+  return h('button',icon(model.flow?'spinner':kind==='configure'?'sliders':'lock'),h('span',h('span',label),h('span',` · ${host}`)).classes('label')).classes('control','signin',model.props.variant==='outline'?'outline':'filled').attrs(defined({type:'button',disabled:!enabled||!model.subject||!model.requestPrepare||!!model.flow?'':undefined,'aria-busy':model.flow?'true':'false'})).on(hooks);
  }});
 }

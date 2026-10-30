@@ -7,12 +7,13 @@ import {BindleAccountElement} from './account.mjs';
 import {BindleAvatarElement} from './avatar.mjs';
 import {BindleMonogramElement} from './monogram.mjs';
 import {BindleRequestElement} from './request.mjs';
+import {BindleGateElement,gateState} from './gate.mjs';
 
-export {BindleSessionElement,BindleSignInElement,BindleAccountElement,BindleAvatarElement,BindleMonogramElement,BindleRequestElement};
+export {BindleSessionElement,BindleSignInElement,BindleAccountElement,BindleAvatarElement,BindleMonogramElement,BindleRequestElement,BindleGateElement,gateState};
 // Theme token probing is a separate entry: elements/theme-probe.mjs.
 export {monogramPattern} from './monogram.mjs';
 
-const elements=[['session',BindleSessionElement],['sign-in',BindleSignInElement],['account',BindleAccountElement],['avatar',BindleAvatarElement],['monogram',BindleMonogramElement],['request',BindleRequestElement]];
+const elements=[['session',BindleSessionElement],['sign-in',BindleSignInElement],['account',BindleAccountElement],['avatar',BindleAvatarElement],['monogram',BindleMonogramElement],['request',BindleRequestElement],['gate',BindleGateElement]];
 // Skips names that are already defined, so two copies on one page are harmless
 // (the first wins). A custom prefix defines fresh subclasses.
 export function defineBindleElements({prefix='bindle',registry:elementRegistry=globalThis.customElements}={}){

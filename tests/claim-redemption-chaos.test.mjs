@@ -16,13 +16,13 @@ function fixture(random){
  const config={APP_ORIGIN:origin,ONBOARDING_KEY:key,BOOT_ACCESS_HOURS:'24',SIGNUP_MAX_ADMISSIONS:50,SIGNUP_FREE_MAX_ADMISSIONS:10};
  const repository=new ShardedIdentityRepository({shard,layout:IDENTITY_LAYOUT,clock:clock.now}),storage=new AdminStorage(db());
  const store=scheduler.wrap(remoteAdminStore(async(method,args)=>structuredClone(await storage.invoke(method,structuredClone(args)))),'admin');
- const guard=new FixedWindowGuard({metadata:db()}),passwordHasher={hash:async x=>'hash:'+x,verify:async(x,h)=>h==='hash:'+x},rateLimiter={check:async()=>true},webauthn={registrationOptions:async()=>({challenge:'reg'}),authenticationOptions:async()=>({challenge:'auth'})};
+ const guard=new FixedWindowGuard({metadata:db()}),rateLimiter={check:async()=>true},webauthn={registrationOptions:async()=>({challenge:'reg'}),authenticationOptions:async()=>({challenge:'auth'})},bootWebauthn={...webauthn,verifyRegistration:async({response})=>{if(response?.id!=='boot-passkey'||response?.ok!==true)throw Error('bad');return {id:response.id,publicKey:'pk',counter:0};},verifyAuthentication:async({response})=>{if(response?.id!=='boot-passkey'||response?.ok!==true)throw Error('bad');return {counter:1,backedUp:false};}};
  let admin;
  const onboarding=onboardingPort({config,repository,authority:{consumeSignup:(_,input)=>guard.consumeSignup(input)},clock:clock.now,runtimeName:(name,digest)=>admin.runtimeName(name,digest),redeemName:(name,digest)=>admin.redeemName(name,digest)});
  const identity=new IdentityService({repository,onboarding,clock:clock.now,reservedHandle:name=>admin.isReserved(name),config:{...config,origin,rpID:'admin.example',termsVersion:'v1'},turnstile:{verify:async()=>true},rateLimiter,webauthn});
- admin=new AdminService({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock:clock.now,config});
+ admin=new AdminService({store,identity,onboarding,webauthn:bootWebauthn,rateLimiter,clock:clock.now,config});
  const ctx=(extra={})=>({origin,remoteIP:'192.0.2.9',...extra});
- async function boot(){const token=mintBootToken(origin,{now:clock.now()});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);await admin.bootStart({bootToken:token},ctx({setupBinding:'boot-browser'}));const result=await admin.bootComplete({bootToken:token,method:'password',password:'long boot operator password',acknowledgeExpiry:true},ctx({setupBinding:'boot-browser'}));return ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken});}
+ async function boot(){const token=mintBootToken(origin,{now:clock.now()});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);await admin.bootStart({bootToken:token},ctx({setupBinding:'boot-browser'}));const result=await admin.bootComplete({bootToken:token,method:'passkey',response:{id:'boot-passkey',ok:true},acknowledgeExpiry:true},ctx({setupBinding:'boot-browser'}));return ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken});}
  return {repository,storage,identity,admin,scheduler,ctx,boot,close:()=>stores.forEach(s=>s.close())};
 }
 

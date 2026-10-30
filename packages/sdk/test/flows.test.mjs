@@ -89,7 +89,7 @@ test('reauthentication requires the same subject and a fresh auth_time, and fail
   await session.signIn({identity:'alex'});const original=session.client.session;
   choice={decision:'approve',account:provider.accounts[1]};assert.deepEqual(await session.reauthenticate({maxAge:60}),{outcome:'canceled'});assert.equal(session.client.session,original);
   choice={decision:'approve',authTime:Date.now()-120000};assert.deepEqual(await session.reauthenticate({maxAge:60}),{outcome:'canceled'});assert.equal(session.client.session,original);
-  choice={decision:'approve'};assert.deepEqual(await session.reauthenticate({maxAge:60}),{outcome:'completed'});
+  choice={decision:'approve'};const confirmed=await session.reauthenticate({maxAge:60});assert.deepEqual(confirmed,{outcome:'completed',authTime:session.client.session.auth_time*1000},'a confirmed step-up reports the auth time (G6b)');
   assert.notEqual(session.client.session,original);assert.equal(session.client.session.subject,original.subject);assert.ok(Number.isSafeInteger(session.client.session.auth_time));
   const entry=[...provider.entries.values()].at(-1);assert.equal(entry.subjectConstraint,original.subject);assert.equal(entry.maxAge,60);
 });

@@ -4,8 +4,9 @@
 import {h} from '../../../../vendor/dodo/index.js';
 import {css,reconcileShadow} from '../../../../vendor/dodo/style.js';
 import {createSdkLocalization} from '../../../i18n/sdk-catalogue.mjs';
+import {icon,iconCss} from './icons.mjs';
 
-export {h,reconcileShadow};
+export {h,reconcileShadow,icon};
 export const ElementBase=globalThis.HTMLElement??class {};
 export const sessionContext='bindle-session';
 // Internal entry point that records which element started a flow, so only that
@@ -105,31 +106,52 @@ export function requestSession(element,callback){
   if(!answered&&globalThis.customElements)sessionDefined().then(()=>queueMicrotask(()=>{if(!answered&&element.isConnected)ask();}));
 }
 
-// Neutral defaults (no 3sln palette) meeting the §8.5 contrast rules in both schemes.
-// Embedders override with the public --bindle-* custom properties or ::part().
-const light='--_surface:var(--bindle-surface,#ffffff);--_raised:var(--bindle-surface-raised,#f4f5f7);--_text:var(--bindle-text,#1b1d21);--_muted:var(--bindle-text-muted,#545a63);--_accent:var(--bindle-accent,#2f5bd3);--_on-accent:var(--bindle-on-accent,#ffffff);--_border:var(--bindle-border,#7c838d);--_focus:var(--bindle-focus,#2f5bd3);--_danger:var(--bindle-danger,#b42318);--_mono-l:38%;';
-const dark='--_surface:var(--bindle-surface,#17191d);--_raised:var(--bindle-surface-raised,#22252b);--_text:var(--bindle-text,#eef0f3);--_muted:var(--bindle-text-muted,#b2b8c1);--_accent:var(--bindle-accent,#8fb0ff);--_on-accent:var(--bindle-on-accent,#0e1424);--_border:var(--bindle-border,#80878f);--_focus:var(--bindle-focus,#8fb0ff);--_danger:var(--bindle-danger,#ff9a8f);--_mono-l:72%;';
+// Neutral defaults (no 3sln palette) meeting the §8.5 contrast rules in both schemes. They equal the island defaults
+// (islands-protocol THEME_DEFAULTS, apps/embed/styles/shell.css) so a composition reads as one component whatever
+// mounts (ui-elements-audit §4.3, provisional). WCAG ratios, light / dark: text on surface 17.8 / 14.5, muted 6.1 /
+// 7.7 (5.7 / 6.8 on raised), accent 6.1 / 6.8, on-accent on accent 6.1 / 7.6, control border 3.4 / 4.5 (3.1 / 4.0
+// on raised), focus 6.1 / 8.8, danger 6.6 / 7.4. `--_line` is decorative (dividers, panel edge) and carries no
+// information. Embedders override with the public --bindle-* custom properties or ::part().
+const light='--_surface:var(--bindle-surface,#ffffff);--_raised:var(--bindle-surface-raised,#f6f7f9);--_text:var(--bindle-text,#16181d);--_muted:var(--bindle-text-muted,#5b6270);--_accent:var(--bindle-accent,#2b59d1);--_on-accent:var(--bindle-on-accent,#ffffff);--_border:var(--bindle-border,#868d98);--_line:var(--bindle-divider,#e3e6eb);--_focus:var(--bindle-focus,#2b59d1);--_danger:var(--bindle-danger,#b42318);--_shadow:0 1px 2px rgb(16 24 40 / .06),0 10px 28px -4px rgb(16 24 40 / .16);--_mono-l:38%;';
+const dark='--_surface:var(--bindle-surface,#1b1d22);--_raised:var(--bindle-surface-raised,#24272e);--_text:var(--bindle-text,#eceef2);--_muted:var(--bindle-text-muted,#a9b0bb);--_accent:var(--bindle-accent,#7aa2ff);--_on-accent:var(--bindle-on-accent,#0b1020);--_border:var(--bindle-border,#7d8590);--_line:var(--bindle-divider,#343840);--_focus:var(--bindle-focus,#9dbaff);--_danger:var(--bindle-danger,#ff8a7a);--_shadow:0 1px 2px rgb(0 0 0 / .4),0 14px 36px -6px rgb(0 0 0 / .55);--_mono-l:72%;';
+// One button spec for elements and islands (§4.2): 500 weight, 8 px icon gap, 16 px icons, 44 px minimum target,
+// 80 ms tints for hover (6 %) and press (12 %) without movement, a 2 px focus ring 2 px outside the control,
+// disabled as muted text on the raised surface (no opacity), busy keeps the label and shows a spinner.
 export const baseStyles=view=>css.in(view)`
 :host{display:block;font:inherit;font-size:calc(1em * var(--bindle-font-scale,1));${light}}
 :host([hidden]){display:none}
 /* Text that sits on the embedder's own background inherits the embedder's color. */
-.root{color:var(--bindle-text,inherit)}
+.root{color:var(--bindle-text,inherit);--_radius:calc(var(--bindle-radius,8) * 1px);--_ease:cubic-bezier(.2,0,0,1);--_system:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .root.dark{${dark}}
 @media (prefers-color-scheme:dark){.root.auto{${dark}}}
-.root{--_radius:calc(var(--bindle-radius,8) * 1px)}
 .visually-hidden{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-button,.button{font:inherit;min-block-size:44px;min-inline-size:44px;padding-block:.55em;padding-inline:1em;border-radius:var(--_radius);border:1px solid var(--_border);background:var(--_surface);color:var(--_text);cursor:pointer}
+${iconCss}
+button,.button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;margin:0;font:inherit;font-weight:500;line-height:1.25;text-align:center;min-block-size:44px;min-inline-size:44px;padding-block:.55em;padding-inline:1em;border-radius:var(--_radius);border:1px solid var(--_border);background:var(--_surface);color:var(--_text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background-color 80ms linear,border-color 80ms linear,color 80ms linear}
+button:hover{background:color-mix(in srgb,var(--_text) 6%,var(--_surface))}
+button:active{background:color-mix(in srgb,var(--_text) 12%,var(--_surface))}
 button.primary{background:var(--_accent);color:var(--_on-accent);border-color:var(--_accent)}
-button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--_focus);outline-offset:2px}
-button:disabled{cursor:default;opacity:.7}
-.notice{margin-block-start:.75em;padding:.75em;border:1px solid var(--_border);border-radius:var(--_radius);background:var(--_raised);color:var(--_text)}
-.notice p{margin:0 0 .5em}
-.notice .actions{display:flex;flex-wrap:wrap;gap:.5em}
+button.primary:hover{background:color-mix(in srgb,var(--_accent) 90%,var(--_text));border-color:color-mix(in srgb,var(--_accent) 90%,var(--_text))}
+button.primary:active{background:color-mix(in srgb,var(--_accent) 82%,var(--_text))}
+button.tonal{background:color-mix(in srgb,var(--_accent) 10%,var(--_surface));color:var(--_text);border-color:color-mix(in srgb,var(--_accent) 80%,var(--_surface))}
+button.tonal .icon{color:var(--_accent)}
+button.tonal:hover{background:color-mix(in srgb,var(--_accent) 16%,var(--_surface))}
+button.tonal:active{background:color-mix(in srgb,var(--_accent) 22%,var(--_surface))}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--_focus);outline-offset:2px}
+button:disabled:not([aria-busy=true]){cursor:not-allowed;background:var(--_raised);color:var(--_muted);border-color:var(--_line)}
+button:disabled:not([aria-busy=true]) .icon{color:inherit}
+button[aria-busy=true]{cursor:progress}
+.notice{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:.6em;align-items:start;margin-block-start:.75em;padding:.75em .85em;border:1px solid var(--_line);border-radius:var(--_radius);background:var(--_raised);color:var(--_text)}
+.notice > .icon{margin-block-start:.1em;color:var(--_muted)}
+.notice.alert > .icon{color:var(--_danger)}
+.notice p{margin:0;grid-column:2}
+.notice .actions{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:.5em;margin-block-start:.65em}
+.notice .actions button{flex:1 1 auto}
 .status{color:var(--bindle-text-muted,color-mix(in srgb,currentColor 78%,transparent));margin:.5em 0 0;overflow-wrap:anywhere}
-.error{color:var(--_danger);margin:.5em 0 0;overflow-wrap:anywhere}
+.error{display:flex;gap:.4em;align-items:flex-start;color:var(--_danger);margin:.5em 0 0;overflow-wrap:anywhere}
+.error .icon{margin-block-start:.15em}
 .error:empty,.status:empty{display:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-@media (forced-colors:active){button,.button,.notice{border-color:ButtonText;background:ButtonFace;color:ButtonText}button.primary{background:Highlight;color:HighlightText}.error{color:Mark}button:focus-visible,a:focus-visible,input:focus-visible{outline-color:Highlight}}
+@media (forced-colors:active){button,.button,.notice{border-color:ButtonText;background:ButtonFace;color:ButtonText}button.primary{forced-color-adjust:none;background:ButtonText;color:ButtonFace;border-color:ButtonText}button.primary:focus-visible{outline-color:Highlight}button:disabled:not([aria-busy=true]){color:GrayText;border-color:GrayText}.error{color:Mark}button:focus-visible,a:focus-visible,input:focus-visible{outline-color:Highlight}}
 `;
 
 // Flow notices rendered only by the element that started the flow (§6.3).
@@ -137,11 +159,11 @@ export function flowNotice(flow,t,session){
   if(!flow||!session)return null;
   const host=flow.host;
   const action=(label,run,primary)=>h('button',label).props({type:'button'}).classes(primary&&'primary').on({click:run});
-  if(flow.phase==='blocked')return h('div',
+  if(flow.phase==='blocked')return h('div',icon('alert'),
     h('p',t('Your browser blocked the sign-in window.')),
     h('div',action(t('Try again'),()=>session.retry(),true),action(t('Continue in this tab'),()=>session.continueInTab())).classes('actions'),
-  ).classes('notice').attrs({role:'alert',part:'notice'});
-  if(flow.phase==='waiting'&&flow.presentation==='popup')return h('div',
+  ).classes('notice','alert').attrs({role:'alert',part:'notice'});
+  if(flow.phase==='waiting'&&flow.presentation==='popup')return h('div',icon('spinner'),
     h('p',host?t('Waiting for {host}…',{host}):t('Waiting for your provider…')),
     h('div',
       flow.lingering&&action(t('Show window'),()=>session.showWindow()),
@@ -167,7 +189,7 @@ export function failureText(result,t){
     case 'discovery-unavailable':return t("We couldn't reach this provider. Check the address and try again.");
     case 'unsupported-provider':return t("This provider isn't supported.");
     case 'no-provider':return result.fallback?t('No Bindle provider was found. Email sign-in requires a configured email service; your app can offer that separately.'):t('No Bindle provider was found at this address.');
-    case 'identity-required':return t('Enter your Bindle identity.');
+    case 'identity-required':return t('Enter your handle.');
     case 'unregistered-client':return result.host?t("This app isn't connected to {host}.",{host:result.host}):t("This app isn't connected to this provider.");
     case 'not-configured':return t('Bindle sign-in is not configured.');
     default:return t('Sign-in could not be completed. Try again.');

@@ -84,9 +84,11 @@ const subjectOf=(value,issuer)=>value===null?null:httpsURL(value,{origin:issuer}
 export const COLOR_TOKENS=freeze(['surface','surface-raised','text','text-muted','accent','on-accent','border','focus','danger']);
 export const THEME_TOKENS=freeze([...COLOR_TOKENS,'radius']);
 export const CONTRAST_PAIRS=freeze([['text','surface',4.5],['text-muted','surface',4.5],['text','surface-raised',4.5],['text-muted','surface-raised',4.5],['on-accent','accent',4.5],['danger','surface',4.5],['danger','surface-raised',4.5],['accent','surface',4.5],['accent','surface-raised',4.5],['focus','surface',3],['focus','surface-raised',3],['border','surface',3],['border','surface-raised',3]]);
+// Provider defaults, identical to the element defaults (elements/shared.mjs) and the island shell (apps/embed/styles/
+// shell.css); ui-elements-audit §4.3 (provisional). `border` is the control boundary; decorative dividers are not a token.
 export const THEME_DEFAULTS=freeze({
-  light:{surface:'#ffffff','surface-raised':'#f4f5f7',text:'#1b1d21','text-muted':'#545a63',accent:'#2f5bd3','on-accent':'#ffffff',border:'#7c838d',focus:'#2f5bd3',danger:'#b42318',radius:8},
-  dark:{surface:'#17191d','surface-raised':'#22252b',text:'#eef0f3','text-muted':'#b2b8c1',accent:'#8fb0ff','on-accent':'#0e1424',border:'#80878f',focus:'#8fb0ff',danger:'#ff9a8f',radius:8},
+  light:{surface:'#ffffff','surface-raised':'#f6f7f9',text:'#16181d','text-muted':'#5b6270',accent:'#2b59d1','on-accent':'#ffffff',border:'#868d98',focus:'#2b59d1',danger:'#b42318',radius:8},
+  dark:{surface:'#1b1d22','surface-raised':'#24272e',text:'#eceef2','text-muted':'#a9b0bb',accent:'#7aa2ff','on-accent':'#0b1020',border:'#7d8590',focus:'#9dbaff',danger:'#ff8a7a',radius:8},
 });
 const channel=value=>{const c=value/255;return c<=0.04045?c/12.92:((c+0.055)/1.055)**2.4;};
 const luminance=hex=>{const n=Number.parseInt(hex.slice(1),16);return 0.2126*channel(n>>16&255)+0.7152*channel(n>>8&255)+0.0722*channel(n&255);};

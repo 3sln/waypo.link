@@ -1,8 +1,8 @@
 // Password removal (owner approval 2026-10-28, "drop passwords"; sign-in and intents spike §6.3): no user-account
 // password path remains in product code. This scans the shipped sources for the removed routes, operations, stored
-// fields, request shapes and form inputs. The operator boot principal keeps its own password until the owner answers
-// spike N5, so the admin service and the boot console views are the only allowed holders; the password retirement reset
-// and the legacy-session refusal name the old fields on purpose.
+// fields, request shapes and form inputs. The operator boot principal is passkey only too (coordinator decision under owner
+// delegation, 2026-10-29, provisional; spike N5), so no file is exempt; the password retirement reset and the
+// legacy-session refusal name the old fields on purpose.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
@@ -10,8 +10,6 @@ import { join, relative } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SCANNED = ['packages', 'apps/web/src', 'apps/worker', 'apps/node', 'apps/server', 'apps/parlay'];
-// The operator boot principal (N5 open) and the code that deliberately recognises or erases legacy password state.
-const BOOT = new Set(['packages/identity/admin.mjs', 'packages/identity/crypto.mjs', 'apps/worker/password.mjs', 'apps/web/src/ui/admin-access.mjs', 'apps/web/src/bl/admin-access.mjs', 'apps/web/src/ui/admin-console.mjs', 'apps/web/src/bl/admin-console.mjs', 'apps/web/src/admin-entry.mjs', 'packages/core/abuse-policy.mjs']);
 // password-authority.mjs recognises legacy password state so every check refuses it (review 2026-10-29 L1).
 const LEGACY = new Set(['packages/identity/password-retirement.mjs', 'packages/identity/password-authority.mjs', 'packages/identity/service.mjs', 'packages/runtime/export-contributors.mjs']);
 async function* files(dir) {
@@ -28,13 +26,14 @@ const RULES = [
   ['password request shape', /method\s*:\s*['"]password['"]|method\s*===\s*['"]password['"]/],
   ['password form inputs', /(?:current|new)-password/],
   ['stored password fields', /\bpassword(?:Hash|SetAt)\b/],
+  // Boot passkey only (2026-10-29, provisional): no password hasher or boot password window is composed anywhere.
+  ['password hasher', /\bpasswordHasher\b|\bcreate(?:Worker)?Argon2Hasher\b|boot-password['"]/],
 ];
 
 test('no user-account password path remains in product code', async () => {
   const hits = [];
   for (const base of SCANNED) for await (const path of files(join(ROOT, base))) {
     const name = relative(ROOT, path), text = await readFile(path, 'utf8');
-    if (BOOT.has(name)) continue;
     for (const [rule, pattern] of RULES) {
       for (const [index, line] of text.split('\n').entries()) {
         if (!pattern.test(line)) continue;

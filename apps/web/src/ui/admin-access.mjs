@@ -9,11 +9,8 @@ export const ERRORS={
  boot_token_consumed:'This boot token was already used or its setup window closed. Mint a new token and redeploy its digest.',
  setup_binding_required:'Continue setup in the browser that started it.',
  acknowledgement_required:'Tick the acknowledgement to confirm you understand when boot access ends.',
- invalid_password:'Use a password of 15–128 characters.',
- password_mismatch:'The two passwords do not match.',
- password_required:'Enter the boot password.',
- invalid_passkey:'Passkey verification failed. Try again or choose a password.',
- invalid_method:'Choose a passkey or a password.',
+ invalid_passkey:'Passkey verification failed. Try again.',
+ invalid_method:'Boot uses a passkey.',
  boot_unavailable:'Boot setup is not configured on this deployment.',
  boot_expired:'Boot access has expired.',
  boot_unclaimed:'Boot has not been claimed yet.',
@@ -55,7 +52,7 @@ export const ERRORS={
  badge_boot_only:'Only boot can assign this badge.',
  invalid_state:'The account is not in a state that allows this change.',
  passkey_required:'Administrators confirm with a passkey. Add a passkey to this account under Account & security, then return.',
- passkey_unavailable:'No passkey is registered for boot. Use the password.',
+ passkey_unavailable:'No passkey is registered for boot. Restore it with a new token.',
  passkey_unsupported:'This browser does not support passkeys.',
  passkey_exists:'This authenticator already holds a passkey for this site. Use another authenticator.',
  passkey_cancelled:'The passkey request was cancelled or timed out.',
@@ -122,20 +119,18 @@ function setupView(state){
  return panel(setup.mode==='restore'?'Restore boot access':'Claim boot access',
   h('p',setup.mode==='restore'?'Boot already exists. Restoring replaces its credential and signs out every older boot session. Administrators, roles and claims stay as they are.':'This is the first claim of boot on this host.').classes('muted'),
   h('p',tx('Finish within {time}. After that the token is burned and you must redeploy.',{time:String(duration(left))})).attrs({role:'timer'}).classes('alert','warning-note'),
-  h('h2','Choose the boot credential').props({id:'boot-credential-heading',tabIndex:-1}),
-  h('div',...[['passkey','Passkey','Recommended. Bound to this device or security key.'],['password','Password','15–128 characters. Stored only as a hash.']].map(([id,title,text])=>h('label',h('input').props({type:'radio',name:'boot-method',value:id,checked:setup.method===id}).on({change:event=>fire(event.currentTarget,'boot-method',{method:id})}),h('span',h('strong',title),h('span',text).classes('field-help'))).classes('choice-card',setup.method===id?'active':''))).attrs({role:'radiogroup','aria-label':'Boot credential'}).classes('choice-grid'),
-  form(state,[setup.method==='password'?h('div',input('password','Boot password','password',{required:true,minLength:15,maxLength:128,autocomplete:'new-password'}),input('confirm','Repeat the password','password',{required:true,minLength:15,maxLength:128,autocomplete:'new-password'})):h('p','Your browser will ask you to create a passkey for “boot”.').classes('field-help'),
+  h('h2','Create the boot passkey').props({id:'boot-credential-heading',tabIndex:-1}),
+  form(state,[h('p','Your browser will ask you to create a passkey for “boot”.').classes('field-help'),
    h('div',h('p',h('strong','There is no recovery file for boot.'),' ',tx('Boot access ends at about {time} ({window} from now). Lost access needs a new token and redeploy.',{time:formatTime(endsAt,state.locale),window:String(duration(setup.accessMs))}))).classes('expiry-callout'),
    h('label',h('input').props({type:'checkbox',name:'acknowledge',required:true}).key('acknowledge'),h('span',tx('I understand boot access ends at about {time} and that lost access needs a new token and redeploy.',{time:formatTime(endsAt,state.locale)}))).classes('checkbox-field','acknowledge-field')],
    'boot-complete',setup.mode==='restore'?'Restore boot':'Claim boot'));
 }
 function signinView(state){
  const signin=state.signin;
- return panel('Sign in as boot',h('p','Boot signs in with the credential set when it was claimed or last restored. Boot sessions last at most one hour.').classes('muted'),
+ return panel('Sign in as boot',h('p','Boot signs in with the passkey set when it was claimed or last restored. Boot sessions last at most one hour.').classes('muted'),
   !signin?h('p','Checking boot sign-in options…').attrs({role:'status'}):h('div',
    signin.passkey?h('div',button(state,[icon('shield'),'Sign in with passkey'],'boot-signin',{method:'passkey'},'button primary')).classes('form-actions'):null,
-   signin.password?form(state,[input('password','Boot password','password',{required:true,autocomplete:'current-password',maxLength:512})],'boot-signin','Sign in with password',{detail:{method:'password'},clear:true}):null,
-   !signin.passkey&&!signin.password?h('p','Boot has no usable credential. Restore it with a new token.').classes('alert','warning-note'):null));
+   !signin.passkey?h('p','Boot has no usable credential. Restore it with a new token.').classes('alert','warning-note'):null));
 }
 const redeploy=()=>h('ol',h('li','On a trusted machine, mint a token: node scripts/boot-token.mjs mint --origin <this origin> --out boot-token.json'),h('li','Deploy the printed BOOTSTRAP_TOKEN_SHA256 value.'),h('li','Within 30 minutes of minting, open /console?boot and paste or import the token file.')).classes('redeploy-steps');
 export function accessView(state){return accessScreen(state);}

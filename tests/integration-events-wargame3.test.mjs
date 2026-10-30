@@ -60,7 +60,7 @@ async function world(t,{limits,down=new Set(['evil.example'])}={}){
  const clock=fakeClock(Date.UTC(2026,9,20,12)),keys=brokeringKeys({issuer:ISSUER,secret:Buffer.alloc(32,7).toString('base64'),metadata:keyStore(),clock:()=>clock.now()});
  const seen=new Map();
  const egress={async send({url,body}){const host=new URL(url).host;if(down.has(host))return {status:500,bytes:new Uint8Array()};
-  const claims=JSON.parse(Buffer.from(body.split('.')[1],'base64url'));const [[type,payload]]=Object.entries(claims.events);(seen.get(host)??seen.set(host,[]).get(host)).push({type:type.split('/').at(-2),...payload});return {status:202,bytes:new Uint8Array()};}};
+  const claims=E.parseIntegrationEvent(body).claims;const [[type,payload]]=Object.entries(claims.events);(seen.get(host)??seen.set(host,[]).get(host)).push({type:type.split('/').at(-2),...payload});return {status:202,bytes:new Uint8Array()};}};
  const system={kind:'system',owner:OWNER},owner={kind:'owner',owner:OWNER,authTime:clock.now()};let x4;
  const op=(Operation,actor,input)=>{const o=new Operation({actor,...input===undefined?{}:{input}});return o instanceof AppQuery?read(x4,o):perform(x4,o);};
  const port=()=>({outbox:i=>op(C.ConnectionOutbox,system,i),ack:i=>op(C.AckConnectionOutbox,system,i),list:()=>op(C.ConnectionList,system),health:i=>op(C.ConnectionHealth,system,i)});

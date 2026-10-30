@@ -44,8 +44,8 @@ const clone=value=>JSON.parse(JSON.stringify(value));
 function confirmFirst(r,ctx,detail,{title,body,confirmLabel,subject}){if(detail.confirmed===true)return false;r.browser.rememberFocus();update(r,ctx,{modal:{kind:'confirm',title,body,confirmLabel,subject:subject??null,intent:{...detail,confirmed:true}}});r.browser.focus('.admin-modal [data-autofocus]');return true;}
 async function openStepUp(r,ctx,retry){
  const boot=actor(r)==='boot';let methods;
- if(boot){const result=await r.api.call('boot','/api/admin/boot/login/begin',{});r.browser.storeSecret('stepUp',result.passkey?{challengeId:result.challengeId,options:result.authenticationOptions}:null);methods={password:result.password===true,passkey:result.passkey===true};}
- else{const result=await r.api.call('admin','/api/admin/step-up/begin',{});r.browser.storeSecret('stepUp',result.passkey?{options:result.authenticationOptions}:null);methods={password:false,passkey:result.passkey===true};}
+ if(boot){const result=await r.api.call('boot','/api/admin/boot/login/begin',{});r.browser.storeSecret('stepUp',result.passkey?{challengeId:result.challengeId,options:result.authenticationOptions}:null);methods={passkey:result.passkey===true};}
+ else{const result=await r.api.call('admin','/api/admin/step-up/begin',{});r.browser.storeSecret('stepUp',result.passkey?{options:result.authenticationOptions}:null);methods={passkey:result.passkey===true};}
  if(!current(r).modal)r.browser.rememberFocus();
  update(r,ctx,{modal:{kind:'step-up',methods,retry:retry??null,error:null},error:null});r.browser.focus('.admin-modal [data-autofocus]');
 }
@@ -87,8 +87,7 @@ export class OpenEditor extends Action {
 export class StepUpConfirm extends AdminAction {
  async perform(r,ctx,detail){
   const modal=current(r).modal;if(modal?.kind!=='step-up')return;const boot=actor(r)==='boot',secret=r.browser.secret('stepUp');let body;
-  if(detail.method==='password'&&boot){const password=detail.values?.password;if(typeof password!=='string'||!password){update(r,ctx,{modal:{...modal,error:{code:'password_required'}}});return;}body={method:'password',password};}
-  else{if(!secret){update(r,ctx,{modal:{...modal,error:{code:'passkey_unavailable'}}});return;}let response;try{response=await r.browser.authenticatePasskey(secret.options);}catch(error){update(r,ctx,{modal:{...current(r).modal,error:{code:error.code??'passkey_cancelled'}}});return;}body=boot?{method:'passkey',challengeId:secret.challengeId,response}:{method:'passkey',response};}
+  {if(!secret){update(r,ctx,{modal:{...modal,error:{code:'passkey_unavailable'}}});return;}let response;try{response=await r.browser.authenticatePasskey(secret.options);}catch(error){update(r,ctx,{modal:{...current(r).modal,error:{code:error.code??'passkey_cancelled'}}});return;}body=boot?{method:'passkey',challengeId:secret.challengeId,response}:{method:'passkey',response};}
   let result;
   try{result=await r.api.call(actor(r),boot?'/api/admin/boot/step-up':'/api/admin/step-up',body);}
   catch(error){

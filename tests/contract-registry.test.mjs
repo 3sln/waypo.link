@@ -12,8 +12,8 @@ function host(out){const calls=[];const env={APP_ORIGIN:origin,ASSETS:{fetch:asy
 
 test('registry publishes exact existing JSON definitions of resource contracts and preference fragments',async t=>{
  const out=await build(t),index=JSON.parse(await readFile(join(out,'artefacts/contracts/index.json'),'utf8')),html=await readFile(join(out,'artefacts/contracts/index.html'),'utf8');
- assert.equal(index.contracts.length,7);assert.deepEqual(Object.keys(index).sort(),['contracts','description','fragments','version']);assert.deepEqual(index.fragments.map(entry=>entry.id),['https://3sln.me/artefacts/preferences/app-messages/v1']);
- assert.equal(publicContracts.length,7);assert.equal(publicFragments.length,1);assert(publicArtifacts.every(artifact=>artifact.status==='draft'));
+ assert.equal(index.contracts.length,6);assert.deepEqual(Object.keys(index).sort(),['contracts','description','fragments','version']);assert.deepEqual(index.fragments.map(entry=>entry.id),['https://3sln.me/artefacts/preferences/app-messages/v1']);
+ assert.equal(publicContracts.length,6);assert(!publicContracts.some(entry=>entry.id.endsWith('/preferences/v1')),'preferences/v1 was dropped');assert.equal(publicFragments.length,1);assert(publicArtifacts.every(artifact=>artifact.status==='draft'));
  for(const artifact of publicArtifacts){const original=await readFile(artifact.source,'utf8'),emitted=await readFile(join(out,artifact.path),'utf8');assert.equal(emitted,original);assert.equal(artifactIdentifier(artifact,JSON.parse(emitted)),artifact.id);if(artifact.kind!=='preferences-fragment')assert(JSON.parse(emitted).$schema);assert(html.includes('href="'+artifact.path+'"'));assert(index.contracts.concat(index.fragments).some(entry=>entry.schema===artifact.path&&entry.id===artifact.id));}
  await assert.rejects(access(join(out,'artefacts/contracts/obsolete/v1.json')));await assert.rejects(access(join(out,'artefacts/contracts/conversation/v2.json')));await assert.rejects(access(join(out,'artefacts/automation-v1.json')));
  assert.match(await readFile(join(out,'docs/index.html'),'utf8'),/href="\/artefacts\/contracts\/">Contract registry/);
@@ -35,9 +35,9 @@ test('canonical IDs, explicit JSON and legacy source aliases return identical ma
 test('directory links all resolve to JSON and missing/proposed contracts stay errors',async t=>{
  const out=await build(t),h=host(out);assert.equal((await h.request('/artefacts/contracts')).headers.get('Location'),'/artefacts/contracts/');
  const page=await h.request('/artefacts/contracts/');assert.equal(page.status,200);assert.match(page.headers.get('Content-Type'),/text\/html/);const html=await page.text();
- const targets=[...html.matchAll(/href="([^"#]+\.json)"/g)].map(match=>match[1]);assert.equal(targets.length,9,'the registry JSON, seven contracts and one fragment');
+ const targets=[...html.matchAll(/href="([^"#]+\.json)"/g)].map(match=>match[1]);assert.equal(targets.length,8,'the registry JSON, six contracts and one fragment');
  for(const target of targets){const response=await h.request(target,{headers:{Accept:'text/html'}});assert.equal(response.status,200);assert.match(response.headers.get('Content-Type'),/json/);await response.json();}
- for(const path of ['/artefacts/contracts/conversation/v2','/artefacts/contracts/made-up/v1.json','/docs/artefacts/automation-v1.json','/artefacts/conversation-v1.json','/artefacts/conversation-v1-body.json','/artefacts/fragments/item-classifier/v1','/artefacts/slots/item-classifier/v1','/artefacts/profiles/components/v1'])assert.equal((await h.request(path)).status,404);
+ for(const path of ['/artefacts/contracts/conversation/v2','/artefacts/contracts/made-up/v1.json','/docs/artefacts/automation-v1.json','/artefacts/conversation-v1.json','/artefacts/conversation-v1-body.json','/artefacts/fragments/item-classifier/v1','/artefacts/slots/item-classifier/v1','/artefacts/profiles/components/v1','/artefacts/contracts/preferences/v1','/artefacts/contracts/preferences/v1.json','/artefacts/preferences-v1.json'])assert.equal((await h.request(path)).status,404);
  h.env.ASSETS.fetch=async()=>new Response(null,{status:304,headers:{ETag:'"schema"'}});const unchanged=await h.request(publicContracts[0].path,{headers:{'If-None-Match':'"schema"'}});assert.equal(unchanged.status,304);assert.equal(await unchanged.text(),'');assert.equal(unchanged.headers.get('ETag'),'"schema"');
  h.env.ASSETS.fetch=async()=>new Response('missing',{status:404});assert.equal((await h.request(publicContracts[0].path)).status,404);
 });

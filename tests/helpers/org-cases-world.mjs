@@ -31,8 +31,10 @@ export async function orgCasesWorld(seed=1,{keyEncryptionKey=KEY,...options}={})
  const repository=new IdentityRepository({metadata:db(),config});
  const webauthn={registrationOptions:async()=>({challenge:'local-registration'}),authenticationOptions:async()=>({challenge:'local-'+crypto.randomUUID()}), // unique, so a challenge binding can be tested
  verifyAuthentication:async({response})=>{if(response?.id!=='passkey'||response?.ok!==true)throw Error('Invalid local assertion');return {counter:1,backedUp:false};}};
- const passwordHasher={dummyHash:'hash:dummy',hash:async value=>'hash:'+value,verify:async(value,hash)=>hash==='hash:'+value},rateLimiter={check:async()=>true};
- const identity=new IdentityService({repository,webauthn,passwordHasher,rateLimiter,clock:clock.now,turnstile:{verify:async()=>true},config:{origin:ISS,rpID:'3sln.example',termsVersion:'v1'}});
+ const rateLimiter={check:async()=>true};
+ // Boot enrols a passkey (boot is passkey only, 2026-10-29, provisional); only the admin service registers one.
+ const bootWebauthn={...webauthn,verifyRegistration:async({response})=>{if(response?.id!=='boot-passkey'||response?.ok!==true)throw Error('Invalid local registration');return {id:response.id,publicKey:'local',counter:0};}};
+ const identity=new IdentityService({repository,webauthn,rateLimiter,clock:clock.now,turnstile:{verify:async()=>true},config:{origin:ISS,rpID:'3sln.example',termsVersion:'v1'}});
  // The organization port as the adapters compose it (packages/runtime/admin-org-cases.mjs), straight into the engine.
  // `intercept` lets a test capture an issued assertion instead of forwarding it.
  const notFound=()=>Object.assign(new Error('Not found.'),{code:'not_found',status:404});
@@ -41,7 +43,7 @@ export async function orgCasesWorld(seed=1,{keyEncryptionKey=KEY,...options}={})
   async resolve(org,input){port.calls.push({method:'resolve',org,input});if(port.intercept)return port.intercept('resolve',org,input);if(org!==ORG)throw notFound();const out=await w.run('orgs.breakglass-resolve','system',input);await w.settle();return out;},
   async cancelProposals(org,input){port.calls.push({method:'cancelProposals',org,input});if(org!==ORG)throw notFound();return w.run('orgs.breakglass-proposal-cancel','system',input);},
   async claimResolve(org,input){port.calls.push({method:'claimResolve',org,input});if(port.intercept)return port.intercept('claimResolve',org,input);if(org!==ORG)throw notFound();const out=await w.run('orgs.claim-resolve','system',input);await w.settle();return out;}};
- const admin=new AdminService({store,identity,webauthn,passwordHasher,rateLimiter,clock:clock.now,config,organizations:port,connectionsSeverAccount:async()=>{}});
+ const admin=new AdminService({store,identity,webauthn:bootWebauthn,rateLimiter,clock:clock.now,config,organizations:port,connectionsSeverAccount:async()=>{}});
  await store.commit({writes:{catalog:CATALOG}});
  const contexts=new Map();let marker=0;
  /** An internal (system-marked) account with a passkey (user passwords were dropped 2026-10-28), its roles, and a signed-in console session. */
@@ -79,9 +81,9 @@ export async function orgCasesWorld(seed=1,{keyEncryptionKey=KEY,...options}={})
   return perform(adminEngine,new DecideOrgCase({actor:{kind:'admin-http',context},input:{org:ORG,kind,process,decision,...needsReason&&decision!=='note'?{category:'evidence-reviewed'}:{},...needsReason?{reason:'Reviewed the case evidence out of band.'}:{},...input}}));
  };
  const caseRow=()=>store.get('org-case/'+ORG);
- /** A boot console session (password), stepped up: only boot changes administrators' roles or suspends them. */
+ /** A boot console session (passkey), stepped up: only boot changes administrators' roles or suspends them. */
  async function boot(){const ctx=extra=>({origin:ISS,remoteIP:'192.0.2.250',...extra}),token=mintBootToken(ISS,{now:clock.now()});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);
-  await admin.bootStart({bootToken:token},ctx({setupBinding:'boot-browser'}));const result=await admin.bootComplete({bootToken:token,method:'password',password:'long boot operator password',acknowledgeExpiry:true},ctx({setupBinding:'boot-browser'}));
+  await admin.bootStart({bootToken:token},ctx({setupBinding:'boot-browser'}));const result=await admin.bootComplete({bootToken:token,method:'passkey',response:{id:'boot-passkey',ok:true},acknowledgeExpiry:true},ctx({setupBinding:'boot-browser'}));
   return ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken});}
  const close=w.close;
  return Object.assign(w,{store,admin,identity,repository,port,adminEngine,contexts,config,operator,stepUp,signIn,list,view,auditLog,decide,challenge,caseRow,boot,verifier:operators,

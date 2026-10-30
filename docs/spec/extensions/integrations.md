@@ -308,7 +308,7 @@ After creating a resource, the integration sends a change hint. The provider the
 
 A brokered resource is invoked directly at the integration's `rpc_endpoint`. The provider brokers the introduction and owns the credential that couples consumer and integration, but it is not on the invocation path. Brokering is an explicit exception to the issuer-gateway-only rule of protocol §4, with the bounds stated in §7 (amendment C8).
 
-**Transport (CBOR phase 4, implemented locally 2026-10-29; owner-approved 2026-10-28 that brokered RPC moves to CBOR, details provisional).** Requests to and responses from an integration's `rpc_endpoint` use the issuer RPC encoding of [protocol §5](../protocol.md#5-rpc-transport): one [Bindle CBOR](../cbor.md) map, `Content-Type` and `Accept` `application/vnd.bindle.rpc+cbor`, 415 for any other media type, the 1,500,000 encoded-byte bound and strict decoding before any check of §5.5 reads the envelope. This covers consumer calls and the provider's own brokered calls (the scoping `describe` of §5.6 and provider-feature calls). A provider accepts a brokered answer only with status 200, the RPC media type and a well-formed envelope. Integrations decode with the same profile; the SDK's `packages/sdk/src/rpc-wire.mjs` provides the reader and writer. Discovery (§4) stays JSON, and events (§6) stay SET JWTs until the COSE phase of the CBOR spike.
+**Transport (CBOR phase 4, implemented locally 2026-10-29; owner-approved 2026-10-28 that brokered RPC moves to CBOR, details provisional).** Requests to and responses from an integration's `rpc_endpoint` use the issuer RPC encoding of [protocol §5](../protocol.md#5-rpc-transport): one [Bindle CBOR](../cbor.md) map, `Content-Type` and `Accept` `application/vnd.bindle.rpc+cbor`, 415 for any other media type, the 1,500,000 encoded-byte bound and strict decoding before any check of §5.5 reads the envelope. This covers consumer calls and the provider's own brokered calls (the scoping `describe` of §5.6 and provider-feature calls). A provider accepts a brokered answer only with status 200, the RPC media type and a well-formed envelope. Integrations decode with the same profile; the SDK's `packages/sdk/src/rpc-wire.mjs` provides the reader and writer. Discovery (§4) stays JSON; events (§6) are COSE_Sign1 CWTs (CBOR phase 5).
 
 ### 5.1 Preferences projection
 
@@ -444,25 +444,30 @@ A contract, never a slot, MAY mark a method `"introspect": true` in its pinned `
 
 ### 6.1 Delivery
 
-The provider delivers events to `events_endpoint` as [Security Event Tokens (RFC 8417)](https://www.rfc-editor.org/rfc/rfc8417.html), using [push delivery (RFC 8935)](https://www.rfc-editor.org/rfc/rfc8935.html): a `POST` with `Content-Type: application/secevent+jwt`. Each SET:
+**CBOR phase 5 (implemented locally 2026-10-29; owner decision 2026-10-28 that integration events move to CBOR as COSE_Sign1 CWTs, format details provisional; [CBOR spike](../../architecture/cbor-rpc-spike.md) §5).** Clean break: SET JWT delivery (`application/secevent+jwt`) is removed, with no dual stack and no flag.
 
-- is signed with a key from the brokering key set (ES256, header `typ` `secevent+jwt`);
-- carries `iss`, `aud` (exactly `events_endpoint`), `iat`, `jti`, `sub` (the entity), and exactly one event in `events`.
+The provider delivers each event to `events_endpoint` as one **untagged COSE_Sign1** ([RFC 9052](https://www.rfc-editor.org/rfc/rfc9052.html)) whose payload is a **CWT claims set** ([RFC 8392](https://www.rfc-editor.org/rfc/rfc8392.html)): a `POST` with `Content-Type: application/cwt`. The exact encoding is the [CBOR profile §9](../cbor.md#9-cose-profile-integration-events). Each event:
 
-Every event payload contains `connection`, `generation` and `seq`. `seq` is a per-connection counter that increases strictly across all events and all generations of that connection id.
+- is signed with the `event` key of the brokering key set (§5.3; ES256 on P-256, the key set still published as a JSON JWKS), with the protected header exactly `{1: -7, 4: kid, 16: "application/vnd.bindle.integration-event+cwt"}`, an empty unprotected header, and `external_aad` `bindle-integration-event-v1`;
+- carries exactly the claims `iss` (1), `sub` (2, the entity), `aud` (3, exactly `events_endpoint`), `iat` (6), `cti` (7, 16 random bytes) and `events` (exactly one event);
+- is at most 65,536 bytes encoded (provisional). The provider never signs a larger event; it records it as `oversize`, and the integration reads `@preferences`.
 
-Every delivery attempt is **signed afresh**, with a new `iat` and the same `jti`. Non-revocation payloads are built at send time from the current state (§6.3).
+Every event payload contains `connection`, `generation` and `seq`. `seq` is a per-connection counter that increases strictly across all events and all generations of that connection id. Payloads use the CBOR data model, so a `preferences-updated` snapshot is the same data as the preferences read (§6.2).
+
+Every delivery attempt is **signed afresh**, with a new `iat` and the same `cti`. Non-revocation payloads are built at send time from the current state (§6.3); a changed payload gets a new `cti` and `seq`.
 
 The integration MUST check, in this order:
 
-1. `typ` is `secevent+jwt`, and `alg` is ES256.
-2. The connection is known for (`iss`, `connection`); if it is unknown, reject without a fetch.
-3. The signature verifies under §5.5 step 2.
-4. `aud` equals its `events_endpoint`.
-5. `sub` equals the connection's entity.
-6. `iat` is within the last 10 minutes and not more than 30 seconds in the future.
+1. `Content-Type` is `application/cwt` and the body is at most 65,536 bytes; the outer array decodes strictly under the CBOR profile, untagged, with exactly four elements.
+2. The protected header is exactly the three parameters above (no `crit`, no other or additional parameter, no key material; `alg` is read only from the protected header and is −7), the unprotected header is empty, the payload is present (not detached), and the signature is 64 bytes.
+3. The claims set decodes strictly and holds exactly the claims above.
+4. The connection is known for (`iss`, `connection`); if it is unknown, reject without a fetch.
+5. The signature verifies under the §5.5 step 2 key rules, with the P-256 key whose `kid` matches, over the Sig_structure built from the **received** protected and payload bytes.
+6. `aud` equals its `events_endpoint`.
+7. `sub` equals the connection's entity.
+8. `iat` is within the last 10 minutes and not more than 30 seconds in the future.
 
-A `jti` it has already processed is answered with 202 and not reprocessed. Otherwise it processes the event and answers 202. Under RFC 8935, a 400 with an error code is a permanent rejection. Any other response, or a network failure, is retried. Unknown event types are acknowledged with 202 and ignored.
+A `cti` it has already processed is answered with 202 and not reprocessed; deduplication never uses the signature bytes, and high-S signatures are accepted. Otherwise it processes the event and answers 202. Delivery is **modelled on** [push delivery (RFC 8935)](https://www.rfc-editor.org/rfc/rfc8935.html), but the body is not a SET, so it does not conform to RFC 8935: a 400 is a permanent rejection, and its optional body is a CBOR map `{"err": code, "description": text}` with an RFC 8935 error code (`Content-Type: application/cbor`), of which the provider keeps at most the code for audit. Any other response, or a network failure, is retried. Unknown event types are acknowledged with 202 and ignored. The SDK helper `verifyIntegrationEvent` (`@3sln/bindle/integration-events.mjs`) performs steps 1–8 and returns the `cti`.
 
 ### 6.2 Event types
 
@@ -542,7 +547,7 @@ The provider reports `access_ends_by` and the acknowledgment status of every sev
 | A token is minted concurrently with the commit | Minting checks authority inside the same serialization domain as the commit: the account's single writer. A token is either minted before the commit, and so bounded by `access_ends_by`, or refused. |
 | A revocation event arrives before an earlier `preferences-updated` | Revocations apply regardless of order. The stale update is ignored because its `seq` is lower. |
 | Reconnect while a `terminal` revocation is still in flight | The reconnect creates a higher generation, and the in-flight event's floor is below it. A late delivery therefore neither cuts off nor deletes the new generation. |
-| A captured revocation SET is replayed | It is answered 202 and not reprocessed while its `jti` is cached. Later replays fail the `iat` window. A replay can only re-apply floors that already hold. |
+| A captured revocation event is replayed | It is answered 202 and not reprocessed while its `cti` is cached. Later replays fail the `iat` window. A replay can only re-apply floors that already hold. |
 | The owner removes and re-adds the same resource | Re-adding creates a new record approval and a new `bindle.grant`, and requires consumer approval again. The old grant stays revoked. |
 | The integration is offline during severance | The §7.3 bound holds for a conforming integration. Events are retried for 72 hours. |
 | The provider is offline after the commit | The commit is durable, and delivery resumes when the provider returns. Consumers cannot obtain new tokens while it is offline. |
@@ -605,13 +610,13 @@ Integrations SHOULD log `jti`, `client_id`, `connection` and `tx` for every brok
 1. **Origin and path binding.** Every integration URL is on the `client_id` origin and path prefix (§2.1). Discovered resource IDs are on the `rpc_endpoint` origin (§4.2). Nothing in a discovery result, event, hint or navigation parameter can introduce another origin.
 2. **Subject binding.** Integrations accept only subjects on the `iss` origin, and bind resources to (`iss`, connection, `sub`) (§3.3).
 3. **Lookup before fetch.** Every verifier resolves the local connection or client before any network fetch (§5.5, §6.1, §8).
-4. **Audience and purpose separation.** Discovery, invocation and event audiences are distinct URLs. `bindle.purpose` distinguishes token uses. The issuer RPC endpoint rejects all provider-minted JWTs. Access tokens (`at+jwt`) and SETs (`secevent+jwt`) are distinct `typ` values, and each verifier MUST check `typ`.
+4. **Audience and purpose separation.** Discovery, invocation and event audiences are distinct URLs. `bindle.purpose` distinguishes token uses. The issuer RPC endpoint rejects all provider-minted JWTs. Access tokens (`at+jwt`, JWS) and integration events (COSE_Sign1 with protected `typ` `application/vnd.bindle.integration-event+cwt` and their own `external_aad`) are distinct formats with distinct `typ` values, and each verifier MUST check `typ`.
 5. **Least data.** Events carry no tokens and reveal no more than the integration's own read would (§6.2). Each token names one resource and its exact methods. A consumer's issuer access token is never sent to an integration. An integration never receives another integration's credentials, or upstream credentials held by the provider.
 6. **Egress.** All provider requests to integrations follow the protocol §2 SSRF rules and per-connection, per-client and global budgets. Response bodies are bounded: discovery 64 KiB, events 4 KiB. Provider-consumer RPC responses are bounded by the contract's published limits.
 7. **Keys.** A dedicated brokering key set (§5.3) holds keys separated by purpose. Rotation publishes a new key before using it, and keeps the old key until every token it signed has expired. Integration key continuity is pinned (§2.3).
 8. **Unverified claims.** Contract claims, labels, descriptions and purposes from integrations are untrusted plain text, and they never earn a trusted badge.
 9. **No silent expansion.** Manifest changes, discovery changes and slot changes never widen a grant (§2.3, §4.4).
-10. **Bounded state.** Connections, brokered records, pending events, cached `jti` values and revoked-grant sets are bounded per account and per connection. Exhausted bounds fail visibly.
+10. **Bounded state.** Connections, brokered records, pending events, cached event `cti` values and revoked-grant sets are bounded per account and per connection. Exhausted bounds fail visibly.
 
 ## 12. Feature declarations
 
@@ -630,7 +635,7 @@ Tests MUST cover:
 - **Discovery:** foreign-origin IDs; contracts outside the manifest; silently ignored facets; oversize responses and cursors; redirects; private addresses; `limit: 0` probes; provider-assigned record IDs with ID collisions and reuse; revalidation to `unavailable` with owner reconfirmation.
 - **Projection:** preferences v1 versus v2.
 - **Tokens:** every §5.5 check and its order (no fetch for unknown connections); cross-audience, cross-purpose, cross-resource, cross-connection and cross-issuer replay; generation above the known maximum; DPoP `supported`/`required` with every proof check; the issuer RPC rejecting minted JWTs.
-- **Events:** SET `typ`, audience, freshness, re-signed retries and duplicate-`jti` acknowledgment; `seq` across push, pull and generations; unknown event types; `terminal` replay after reconnect.
+- **Events:** every §6.1 refusal (media type, size, tags, extra or unprotected header parameters, `crit`, wrong `alg`, wrong `typ`, wrong curve or key, wrong `external_aad`, detached payload, tampered payload, extra claims), audience, freshness, re-signed retries and duplicate-`cti` acknowledgment; `seq` across push, pull and generations; unknown event types; `terminal` replay after reconnect.
 - **Severance:** §7.2 ordering, every §7.4 race, severance with the integration offline, and the key-compromise procedure.
 - **Hints:** forgery, replay, cross-client connection claims and flooding.
 - **Introspection:** scope limits.
@@ -643,5 +648,5 @@ Tests MUST cover:
 | C7 | federation-implementation, client ID metadata | "When the provider declares `integrations.v1`, `token_endpoint_auth_method: private_key_jwt` with a `jwks_uri` on the `client_id` origin and path prefix is accepted. Otherwise such documents are refused." Today every `jwks_uri` and every method other than `none` is refused. |
 | C8 | protocol §2, §4, §5; auth revocation; resource contributions | An explicit `brokered-resources.v1` exception: provider-declared integration endpoints on the integration's own origin may receive consumer RPC and provider events, with revocation bounded by `access_ends_by` rather than immediate. Contracts may opt out (`x-bindle-brokerable: false`) or require introspection. The "no callback URLs" rule of protocol §5 is scoped to consumer RPC. |
 | C9 | contracts | Publish `preferences/v2`, with the uniform per-resource object of §5.1 (`id`, `label`, `status`, `contracts`, `token`, `token_type`, `expires_at`, optional `broker`) and an integration-only result `seq`. |
-| C10 | contracts, `x-methods` | Define method `effect` values `read` and `pure`, which [extensions §3.3](../superseded/extensions-rev2.md#33-failover-for-ordered) relies on, and the optional `introspect` and contract-level `x-bindle-brokerable` markers. |
+| C10 | contracts, `x-methods` | Define method `effect` values `read` and `pure`, which extensions revision 2 §3.3 failover relied on (failover was removed in revision 3.1; the revision 2 text is in git history, `git show 10852e1:docs/spec/extensions.md`), and the optional `introspect` and contract-level `x-bindle-brokerable` markers. |
 | C11 | protocol §2 | Add `integrations.v1` and `brokered-resources.v1` to the feature table. |

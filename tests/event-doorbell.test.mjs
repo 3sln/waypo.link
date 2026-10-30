@@ -1,7 +1,7 @@
 // EV-3 push doorbells (packages/events/doorbell.mjs and the EV-3 hunks of packages/runtime/integration-events.mjs):
-// data-free `bus-advanced` SETs signed by the brokering event key and verified by the conformance fixture
+// data-free `bus-advanced` events (COSE_Sign1 CWTs) signed by the brokering event key and verified by the conformance fixture
 // (tests/fixtures/integration-server.mjs), one pending doorbell per subscription under publish storms, live-grant and
-// revocation gating, the separate doorbell budget that never blocks owner writes or revocation SETs, and a cursor
+// revocation gating, the separate doorbell budget that never blocks owner writes or revocation events, and a cursor
 // read after the doorbell. Engine-harness suites dispatch the real EV-2, X4, X6 and EV-3 operations on one store.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ import {manifest,grantRegistry,app} from './event-bus-fixture.mjs';
 
 const SUB=`${ISSUER}/entities/${OWNER}`,SECRET=Buffer.alloc(32,7).toString('base64'),BELL=D.BUS_ADVANCED_EVENT;
 const busLimits={...BUS_LIMITS,reads:{...BUS_LIMITS.reads,perSecond:1e6},publishPerMinute:1e6,busPublishPerMinute:1e6};
-const decode=token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url'));
+const decode=bytes=>E.parseIntegrationEvent(bytes).claims;
 function memory(){const map=new Map();let tail=Promise.resolve();return {transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(map.get(k)),set:async(k,v)=>{map.set(k,structuredClone(v));}}));tail=run.catch(()=>{});return run;}};}
 function snapshot(host='integration.example',events=[PREFERENCES_UPDATED_EVENT,BELL]){
  const clientId=`https://${host}/bindle/client.json`,redirectUris=[`https://${host}/bindle/callback`],jwksUri=`https://${host}/bindle/jwks.json`;
@@ -35,7 +35,7 @@ const code=async promise=>{try{await promise;return 'ok';}catch(error){return er
 async function world(t,{events,limits,enabled=true,plan='free'}={}){
  const clock=fakeClock(Date.UTC(2026,9,20,12,0,1)),keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory(),clock:()=>clock.now()});
  const busKeyset=await busKeys({KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64')}),grants=grantRegistry(),kicks=[],sent=[];let server;
- const egress={async send({url,body}){sent.push({url,body,at:clock.now(),claims:decode(body)});const response=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.SET_MEDIA_TYPE},body});return {status:response.status,bytes:new Uint8Array(await response.arrayBuffer())};}};
+ const egress={async send({url,body}){sent.push({url,body,at:clock.now(),claims:decode(body)});const response=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.INTEGRATION_EVENT_MEDIA_TYPE},body});return {status:response.status,bytes:new Uint8Array(await response.arrayBuffer())};}};
  const system={kind:'system',owner:OWNER},ownerActor={kind:'owner',owner:OWNER};let x4;
  const op=(Operation,actor,input)=>{const o=new Operation({actor,...input===undefined?{}:{input}});return o instanceof AppQuery?read(x4,o):perform(x4,o);};
  const port=()=>({outbox:i=>op(C.ConnectionOutbox,system,i),ack:i=>op(C.AckConnectionOutbox,system,i),list:()=>op(C.ConnectionList,system),health:i=>op(C.ConnectionHealth,system,i)});
@@ -53,7 +53,7 @@ async function world(t,{events,limits,enabled=true,plan='free'}={}){
  t.after(()=>x4.dispose());
  const connection=await op(C.ConnectIntegration,system,snapshot('integration.example',events));
  server=createIntegrationServer({clock,connections:[{iss:ISSUER,id:connection.id,sub:SUB,generation:connection.generation}],
-  verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifySecurityEventToken(token,{subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection:id})=>id===connection.id,now:clock.now()})).claims:null});
+  verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifyIntegrationEvent(token,{contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection:id})=>id===connection.id,now:clock.now()})).claims:null});
  t.after(()=>server.close());
  const bus=(await harness.perform(new CreateEventBus({actor:ownerActor,input:{url:manifest().id,manifest:manifest()}}))).bus;
  const reader={kind:'app',owner:OWNER,clientId:'https://integration.example/bindle/client.json',origin:'https://integration.example',connection:{id:connection.id,generation:connection.generation}};
@@ -83,7 +83,7 @@ test('EV-3 flags: doorbell operations are not_found unless EVENT_BUSES_ENABLED a
  }
 });
 
-test('publish kicks, the fixture verifies a data-free bus-advanced SET, and the subscriber then reads via its cursor',async t=>{
+test('publish kicks, the fixture verifies a data-free bus-advanced event, and the subscriber then reads via its cursor',async t=>{
  const w=await world(t);
  const first=await w.busRead({});assert.deepEqual(first.records,[]);
  await w.publish({task:'before'});assert.deepEqual(w.kicks,[],'a bus without subscriptions does not kick (EV3-R4)');
@@ -93,9 +93,9 @@ test('publish kicks, the fixture verifies a data-free bus-advanced SET, and the 
  const [bell]=await w.bells();assert.ok(bell,'the conformance fixture verified and recorded the doorbell');
  const claims=w.sent.at(-1).claims,[[type,payload]]=Object.entries(claims.events);
  assert.equal(type,BELL);assert.deepEqual(Object.keys(payload).sort(),['bus','connection','generation','head','seq']);
- assert.deepEqual(Object.keys(claims).sort(),['aud','events','iat','iss','jti','sub']);
+ assert.deepEqual(Object.keys(claims).sort(),['aud','cti','events','iat','iss','sub']);
  assert.equal(payload.bus,w.resource,'bus is the subscriber\'s own resource id');assert.equal(payload.head,3);assert.equal(payload.connection,w.connection.id);
- const raw=Buffer.from(w.sent.at(-1).body.split('.')[1],'base64url').toString();
+ const raw=Buffer.from(w.sent.at(-1).body).toString('latin1');
  for(const leak of ['File taxes','t-1','t-2','created','tasks.example',w.publisher.clientId])assert.equal(raw.includes(leak),false,`no record data or publisher identity in the doorbell (${leak})`);
  // The integration pulls from its own cursor; the doorbell's head is a hint it can compare.
  const reader=createBusReader({call:(method,args)=>w.busRead(args),attestor:ISSUER,cursor:first.cursor});
@@ -136,7 +136,7 @@ test('revoked subscribers get nothing: reader revocation, revocation between rin
  // The cancellation hook deletes the subscription and its pending doorbell in one commit.
  assert.deepEqual(await w.harness.perform(new D.CancelEventDoorbells({actor:w.system,input:{clientId:w.reader.clientId}})),{cancelled:1});
  assert.equal((await w.status()).pending.filter(r=>r.type==='bus-advanced').length,0);assert.equal((await w.deliver()).sent,0);
- // Disconnect: the generation and status change kill the subscription; the revocation SET still goes out.
+ // Disconnect: the generation and status change kill the subscription; the revocation event still goes out.
  await w.subscribe(w.reader,{epoch:'grant:rs-2'});await w.publish();await w.ring();
  await w.op(C.DisconnectConnection,w.ownerActor,{connection:w.connection.id});
  await w.harness.perform(new E.IngestIntegrationEvents({actor:w.system}));await w.ring();const out=await w.deliver();
@@ -196,7 +196,7 @@ test('subscribe gating: live read approval, a pushable integration, caps and own
  assert.equal(await code(v.harness.read(new D.EventBusSubscriptions({actor:v.reader,id:v.bus.id}))),'forbidden');
 });
 
-test('doorbell budgets: an exhausted budget coalesces, never blocks owner writes or revocation SETs',async t=>{
+test('doorbell budgets: an exhausted budget coalesces, never blocks owner writes or revocation events',async t=>{
  const w=await world(t,{limits:{doorbellsPerConnection:1,doorbellRows:1,perConnection:2}});await w.subscribe();
  // Exhaust the subscription's hourly fair share.
  let rung=0;for(let i=0;i<D.DOORBELL_LIMITS.perSubscriptionHourly+3;i++){await w.publish();const r=await w.alarm();rung+=r.rang.rung;w.clock.advance(5000);}
@@ -204,7 +204,7 @@ test('doorbell budgets: an exhausted budget coalesces, never blocks owner writes
  const day=Math.floor(w.clock.now()/86400000);
  assert.ok([...(await w.harness.metadata.list({prefix:`evbus/meter/${day}/bell/`})).keys()].length>=2,'doorbells are metered in the event-allowance counters');
  // Budget exhausted with a doorbell pending in a full doorbell row budget: owner writes (preferences markers) and
- // revocations still enqueue, and the revocation SET is delivered first.
+ // revocations still enqueue, and the revocation event is delivered first.
  w.clock.set(Math.ceil(w.clock.now()/3600000)*3600000+1000);await w.publish();assert.equal((await w.ring()).rung,1);
  const F='https://integration.example/preferences/settings/v1',G='https://integration.example/preferences/layout/v1';
  await w.harness.perform(new E.MarkPreferencesUpdated({actor:w.system,input:{connection:w.connection.id,fragment:F}}));
@@ -212,7 +212,7 @@ test('doorbell budgets: an exhausted budget coalesces, never blocks owner writes
  await w.harness.perform(new E.EnqueueIntegrationEvent({actor:w.system,input:{type:'credential-revoked',connection:w.connection.id,grants:['g-1'],until:Math.floor(w.clock.now()/1000)+300}}));
  const typeOf=sent=>Object.keys(sent.claims.events)[0],before=w.sent.length;await w.deliver();w.clock.advance(1000);await w.deliver();w.clock.advance(1000);await w.deliver();
  const types=w.sent.slice(before).map(typeOf);
- assert.equal(types[0],E.INTEGRATION_EVENT_TYPES['credential-revoked'],'the revocation SET goes first');assert.equal(types.at(-1),BELL,'the doorbell goes last');
+ assert.equal(types[0],E.INTEGRATION_EVENT_TYPES['credential-revoked'],'the revocation event goes first');assert.equal(types.at(-1),BELL,'the doorbell goes last');
  assert.ok(types.includes(PREFERENCES_UPDATED_EVENT),'an owner write marker enqueued beside a full doorbell budget is delivered');
  // A second bus over the per-connection doorbell budget is coalesced (never queued, never failed) and rung later.
  const m2={...manifest(),id:manifest().id+'/2'};const bus2=(await w.harness.perform(new CreateEventBus({actor:w.ownerActor,input:{url:m2.id,manifest:m2}}))).bus;

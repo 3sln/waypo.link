@@ -68,3 +68,14 @@ test('matching suppressed items are pre-declined; a blocked request needs an exp
 test('setup refreshes chosen resource IDs before approval and projects the updated description through CX-1',async()=>{
  const f=fixture({scenario:'setup'});f.facts.items[0].resources.files=[];const after={...structuredClone(f.facts.items[0]),resources:{files:['chosen-calendar']}},provider=createConsentExperience({config:{INCREMENTAL_AUTH_ENABLED:true},prepare:()=>f.facts,describe:input=>described.model(input),transport:{setup:async()=>({revision:'r2',items:[after]})}});let state=await provider.open({...f,view:{}});state=await provider.transition(state,'setup',{fragment,values:{theme:'light'},updateShared:true});state=await provider.transition(state,'include',{id:'files',value:true});assert.deepEqual(walkthroughSelections(state)[0].resources.files,['chosen-calendar']);assert.equal(walkthroughSelections(state)[0].revision,'r2');
 });
+// Found by the multi-provider simulation (tests/sim): the authorize page's CSP is `style-src 'self'`, so an inline
+// <style> in the walkthrough is blocked and the grant-more page renders unstyled. Its rules live in the page stylesheet.
+test('the walkthrough and access views render no inline <style>; their rules ship in the page stylesheet',async t=>{
+ const {Window}=await import('happy-dom'),window=new Window();t.after(()=>window.happyDOM.close());for(const key of ['document','HTMLElement','Node','Element'])globalThis[key]=window[key];
+ const {dodo}=await import('../../apps/web/src/shared/stack.mjs'),{consentWalkthroughView}=await import('../../apps/web/src/ui/consent-walkthrough.mjs'),{readFile}=await import('node:fs/promises');
+ const h=await harness(t),root=document.createElement('div');dodo.reconcile(root,[consentWalkthroughView(await h.read(),{dispatch:()=>{},guard:()=>true,armed:true,busy:false,error:null,account:'ray@provider.example'})]);
+ assert.ok(root.querySelector('.consent-walkthrough'));assert.equal(root.querySelectorAll('style').length,0,'no inline <style> under style-src self');
+ const css=await readFile(new URL('../../apps/web/styles.css',import.meta.url),'utf8');
+ for(const rule of ['.consent-walkthrough{','.consent-walkthrough .consent-card{','.access-view{'])assert.ok(css.includes(rule),`apps/web/styles.css carries ${rule}`);
+ const access=await readFile(new URL('../../apps/web/src/ui/access/index.mjs',import.meta.url),'utf8');assert.doesNotMatch(access,/h\('style'/);
+});

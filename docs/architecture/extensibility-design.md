@@ -1,6 +1,6 @@
 # Extensibility: slots, unified integrations and brokered resources — design note
 
-> **Superseded by [extensions revision 3](../spec/extensions.md)** (draft, pending owner sign-off; CR-X3-17). Slots, `features` and AMD-X1 described here are removed. The revision 2 text this note designed is frozen at [superseded/extensions-rev2](../spec/superseded/extensions-rev2.md).
+> **Superseded by [extensions revision 3](../spec/extensions.md)** (draft, pending owner sign-off; CR-X3-17). Slots, `features` and AMD-X1 described here are removed. The revision 2 text this note designed is in git history (`git show 10852e1:docs/spec/extensions.md`).
 
 Status: **provisional design, 2026-10-20, revision 2.** Revision 1 was wargamed by independent security and interop reviewers; every finding is answered (§12, [extensibility review](../release/extensibility-review.md)). Documentation only: no code, runtime, build or production change. Human sign-off: reviewer ___ / date ___ / outcome ___. The coordinator records the decision in [DEVLOG](../../DEVLOG.md).
 

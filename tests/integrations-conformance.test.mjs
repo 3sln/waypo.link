@@ -11,9 +11,9 @@ const item=(id=RESOURCE,label='Work inbox')=>({iss:ISSUER,connection:CONNECTION,
 function fixture(t,options={}){
  const clock=fakeClock(Date.UTC(2026,9,20)),server=createIntegrationServer({clock,resources:[item()],...options});t.after(()=>server.close());
  const access=(purpose='invoke',extra={})=>server.issueAccessToken({iss:ISSUER,sub:SUBJECT,aud:purpose==='discover'?server.endpoints.discovery:server.endpoints.rpc,client_id:purpose==='discover'?ISSUER:'https://consumer.example/client.json',iat:clock.now()/1000,exp:clock.now()/1000+(purpose==='discover'?60:300),bindle:{v:1,purpose,connection:CONNECTION,generation:1,...purpose==='invoke'?{resource:RESOURCE,grant:'grant-1',methods:{[CONTRACT]:['deliver']},scope:null}:{},...extra}});
- const event=(type,payload={},jti='event-1')=>server.issueEventToken({iss:ISSUER,sub:SUBJECT,aud:server.endpoints.events,iat:clock.now()/1000,jti,events:{[EVENTS[type]??type]:{connection:CONNECTION,generation:1,seq:1,...payload}}});
- // Brokered RPC is Bindle CBOR; discovery stays JSON; events stay SET JWT.
- const post=(url,token,body)=>server.fetch(url,{method:'POST',headers:{'Content-Type':body===undefined?'application/secevent+jwt':url===server.endpoints.rpc?RPC_MEDIA_TYPE:'application/json',...body===undefined?{}:{Authorization:'Bearer '+token}},body:body===undefined?token:url===server.endpoints.rpc?encodeRPC(body):JSON.stringify(body)});
+ const event=(type,payload={},cti='event-1')=>server.issueEventToken({iss:ISSUER,sub:SUBJECT,aud:server.endpoints.events,iat:clock.now()/1000,cti,events:{[EVENTS[type]??type]:{connection:CONNECTION,generation:1,seq:1,...payload}}});
+ // Brokered RPC is Bindle CBOR; discovery stays JSON; events are COSE_Sign1 CWTs (application/cwt).
+ const post=(url,token,body)=>server.fetch(url,{method:'POST',headers:{'Content-Type':body===undefined?'application/cwt':url===server.endpoints.rpc?RPC_MEDIA_TYPE:'application/json',...body===undefined?{}:{Authorization:'Bearer '+token}},body:body===undefined?token:url===server.endpoints.rpc?encodeRPC(body):JSON.stringify(body)});
  return {server,clock,access,event,post};
 }
 const envelope={resource:RESOURCE,contract:CONTRACT,method:'deliver',args:{},tx:'fixture-transaction'};
@@ -29,7 +29,7 @@ test('fixture operations run through the app engine harness over an injected pro
 });
 
 test('preference webhook snapshots ignore stale seq and acknowledge duplicate or unknown events',async t=>{
- const {server,event,post}=fixture(t),send=(payload,jti)=>post(server.endpoints.events,event('preferences-updated',{fragment:FRAGMENT,revision:1,...payload},jti));
+ const {server,event,post}=fixture(t),send=(payload,cti)=>post(server.endpoints.events,event('preferences-updated',{fragment:FRAGMENT,revision:1,...payload},cti));
  assert.equal((await send({seq:4,values:{enabled:true}},'new')).status,202);
  assert.equal((await send({seq:3,values:{enabled:false}},'old')).status,202);
  assert.equal((await send({seq:5,values:null},'new')).status,202);
@@ -78,35 +78,36 @@ test('invalidation rejects grants and raises generation floors even when events 
 
 test('fixture supports loopback HTTP with logical HTTPS audiences and rejects malformed requests',async t=>{
  const {server,event,access,post}=fixture(t),origin=await server.listen();assert.match(origin,/^http:\/\/127\.0\.0\.1:\d+$/);
- const response=await fetch(origin+'/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:event('preferences-updated',{fragment:FRAGMENT,values:null})});assert.equal(response.status,202);
+ const response=await fetch(origin+'/bindle/events',{method:'POST',headers:{'Content-Type':'application/cwt'},body:event('preferences-updated',{fragment:FRAGMENT,values:null})});assert.equal(response.status,202);
  assert.equal((await server.fetch(server.endpoints.rpc)).status,405);
  assert.equal((await server.fetch('https://foreign.example/bindle/rpc')).status,404);
  assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',body:'x'})).status,415);
  assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,415,'brokered RPC refuses JSON');
  assert.equal((await server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':RPC_MEDIA_TYPE},body:Uint8Array.from([0xa1,0x61,0x61])})).status,400,'truncated CBOR');
  assert.equal((await post(server.endpoints.discovery,access('discover'),{v:1,contracts:[CONTRACT],cursor:'x'.repeat(1025)})).status,400);
- assert.equal((await server.fetch(server.endpoints.events,{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'x'.repeat(65537)})).status,413);
+ assert.equal((await server.fetch(server.endpoints.events,{method:'POST',headers:{'Content-Type':'application/cwt'},body:'x'.repeat(65537)})).status,413);
+ assert.equal((await server.fetch(server.endpoints.events,{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:event('preferences-updated',{fragment:FRAGMENT,values:null},'set')})).status,415,'SET JWT delivery is gone (clean break)');
 });
 
-// EXT-X6: the provider side of §6 against this fixture. The fixture verifies every SET with the X6 reference verifier
-// (lookup before any key, ES256 under the event-purpose brokering key, typ, aud, sub, iat) instead of opaque stubs.
-test('EXT-X6: provider outbox SETs are verified, coalesced, re-signed on retry and applied in seq order',async t=>{
+// EXT-X6: the provider side of §6 against this fixture. The fixture verifies every COSE event with verifyIntegrationEvent
+// (lookup before any key, ES256 under the event-purpose brokering key, typ, external_aad, aud, sub, iat).
+test('EXT-X6: provider outbox events are verified, coalesced, re-signed on retry and applied in seq order',async t=>{
  const {brokeringKeys}=await import('../packages/federation/signing.mjs'),E=await import('../packages/runtime/integration-events.mjs');
  const store=new Map();let tail=Promise.resolve();
  const metadata={transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(store.get(k)),set:async(k,v)=>{store.set(k,structuredClone(v));},put:async(k,v)=>{store.set(k,structuredClone(v));},delete:async k=>{store.delete(k);},list:async({prefix})=>new Map([...store].filter(([k])=>k.startsWith(prefix)).sort(([a],[b])=>a<b?-1:1).map(([k,v])=>[k,structuredClone(v)]))}));tail=run.catch(()=>{});return run;},get:async k=>structuredClone(store.get(k)),list:async({prefix})=>new Map([...store].filter(([k])=>k.startsWith(prefix)).sort(([a],[b])=>a<b?-1:1))};
  const clock=fakeClock(Date.UTC(2026,9,20)),keys=brokeringKeys({issuer:ISSUER,secret:Buffer.alloc(32,5).toString('base64'),metadata,clock:()=>clock.now()});
- const server=createIntegrationServer({clock,verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifySecurityEventToken(token,{subject:SUBJECT,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===CONNECTION,now:clock.now()})).claims:null});t.after(()=>server.close());
+ const server=createIntegrationServer({clock,verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifyIntegrationEvent(token,{contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,subject:SUBJECT,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===CONNECTION,now:clock.now()})).claims:null});t.after(()=>server.close());
  const connection={id:CONNECTION,clientId:INTEGRATION+'/bindle/client.json',generation:1,state:'active',integration:{kind:'external',snapshot:{manifest:{events_endpoint:server.endpoints.events}}}};
  const sent=[],down={on:false},values={v:0};
- const egress={async send({url,body}){sent.push(body);if(down.on)throw new Error('down');const r=await server.fetch(url,{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body});return {status:r.status,bytes:new Uint8Array()};}};
+ const egress={async send({url,body}){sent.push(body);if(down.on)throw new Error('down');const r=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.INTEGRATION_EVENT_MEDIA_TYPE},body});return {status:r.status,bytes:new Uint8Array()};}};
  const Provider=E.integrationEventsProvider({enabled:true,issuer:ISSUER,subject:()=>SUBJECT,signer:keys,egress,snapshot:async()=>({revision:'r'+values.v,values:{...values}}),connections:()=>({outbox:async()=>({events:[],seq:0,gap:false}),ack:async()=>({}),list:async()=>[connection],health:async()=>({})})});
  const harness=await createTestEngine({clock,providers:{integrationEvents:Provider}});t.after(()=>harness.dispose());
  const actor={kind:'system',owner:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},mark=()=>harness.perform(new E.MarkPreferencesUpdated({actor,input:{connection:CONNECTION,fragment:FRAGMENT}})),deliver=()=>harness.perform(new E.DeliverIntegrationEvents({actor}));
  values.v=1;await mark();values.v=2;await mark();await deliver();
  down.on=true;values.v=3;await mark();await deliver();clock.advance(10000);down.on=false;await deliver();
- const claims=sent.map(token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url')));
- assert.equal(sent.length,3,'two markers coalesced into one SET, then one retried SET');
- assert.equal(claims[1].jti,claims[2].jti);assert.notEqual(claims[1].iat,claims[2].iat);
+ const claims=sent.map(bytes=>E.parseIntegrationEvent(bytes).claims);
+ assert.equal(sent.length,3,'two markers coalesced into one event, then one retried event');
+ assert.deepEqual(claims[1].cti,claims[2].cti);assert.notEqual(claims[1].iat,claims[2].iat);assert.notDeepEqual(claims[0].cti,claims[1].cti);
  const state=await server.snapshot();assert.deepEqual(state.events.map(e=>e.seq),[1,2]);assert.deepEqual(state.connections[0].preferences[FRAGMENT].values,{v:3});
 });
 
@@ -116,7 +117,6 @@ import * as X7 from '../packages/federation/brokered.mjs';
 import * as X4 from '../packages/app/domains/connections.mjs';
 import {perform} from '../packages/app/engine.mjs';
 import {brokeringKeys,mintAccessToken,verifyAccessToken,DEFAULT_LEAD} from '../packages/federation/signing.mjs';
-import {verifySecurityEventToken} from '../packages/runtime/integration-events.mjs';
 import {MemoryFederationStore,PREFERENCES} from '../packages/federation/index.mjs';
 import {SqliteMetadata} from '../apps/node/resources.mjs';
 const storage=()=>{const map=new Map();return {map,transaction:fn=>fn({get:async k=>structuredClone(map.get(k)),set:async(k,v)=>map.set(k,structuredClone(v)),delete:async k=>map.delete(k)})};};

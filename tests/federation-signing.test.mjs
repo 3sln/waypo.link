@@ -143,8 +143,9 @@ test('the JWKS route and manifest member exist only with brokering enabled, with
 test('signatures are low-s only, purposes fix the typ, and public JWKS reads neither write nor contend per request',async()=>{
  const f=fixture();for(let i=0;i<8;i++){const {token}=await f.mint(),[h,p,sig]=token.split('.'),raw=Buffer.from(sig,'base64url'),N=0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n,sv=BigInt('0x'+raw.subarray(32).toString('hex'));
   assert.ok(sv<=N>>1n,'minted s is low');const flipped=Buffer.concat([raw.subarray(0,32),Buffer.from((N-sv).toString(16).padStart(64,'0'),'hex')]);await reject(f.verify(`${h}.${p}.${flipped.toString('base64url')}`),'signature');}
- const event=await f.keys.sign('event',{iss:issuer});const eh=JSON.parse(Buffer.from(event.token.split('.')[0],'base64url'));assert.equal(eh.typ,'secevent+jwt');assert.match(eh.kid,/^event\./);
- await reject(f.verify(event.token),'typ');await assert.rejects(f.keys.sign('other',{}),TypeError);
+ // The event purpose signs COSE_Sign1 CWTs (CBOR phase 5), never a JWS: no at+jwt verifier can be handed one.
+ const event=await f.keys.sign('event',{iss:issuer,sub:issuer+'/entities/x',aud:'https://integration.example/bindle/events',iat:1,cti:new Uint8Array(16),events:{'https://spec.bindle.example/events/x/v1':{connection:'c',generation:1,seq:1}}});assert.equal(event.token,undefined);assert.ok(event.message instanceof Uint8Array);assert.match(event.kid,/^event\./);
+ await assert.rejects(f.keys.sign('event',{iss:issuer}),{code:'invalid_event'},'claims the receiver would refuse are never signed');await assert.rejects(f.keys.sign('other',{}),TypeError);
  let transactions=0,writes=0;const metadata=memory(),counted={transaction:fn=>{transactions++;return metadata.transaction(tx=>fn({...tx,set:(k,v)=>{writes++;return tx.set(k,v);}}));}},clock={now:Date.UTC(2026,9,20,12)};
  const keys=brokeringKeys({issuer,secret,metadata:counted,clock:()=>clock.now});await keys.jwks();const [t0,w0]=[transactions,writes];assert.equal(w0,1,'first read provisions the set');
  for(let i=0;i<100;i++)await keys.jwks();assert.equal(transactions,t0,'memoized within cacheMs');clock.now+=6000;await keys.jwks();assert.equal(transactions,t0+1);assert.equal(writes,w0,'public reads never write');

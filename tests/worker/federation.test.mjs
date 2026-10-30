@@ -21,7 +21,7 @@ async function fixture(t,overrides={}){
  return {h,owner,token,json,rpc,preferences,stub,refresh:refreshToken=>h.request('/oauth/token',{method:'POST',headers:{Origin:appOrigin,'Content-Type':'application/x-www-form-urlencoded'},form:new URLSearchParams({grant_type:'refresh_token',refresh_token:refreshToken,client_id:clientId})})};
 }
 test('actual sharded Worker consent, relative object RPC and refresh-family revocation enforce live SQLite/R2 authority',async t=>{
- const f=await fixture(t),ref=(await f.json(await f.preferences())).result.values.files;assert.equal(ref.scope,undefined);assert.match(ref.id,/\/resources\/scoped\//);assert.equal(typeof f.token.refresh_token,'string');
+ const f=await fixture(t),ref=(await f.json(await f.preferences())).result.values.files[0];assert.equal(ref.scope,undefined);assert.equal(ref.status,'available');assert.equal(ref.token_type,'Bearer');assert.match(ref.id,/\/resources\/scoped\//);assert.equal(typeof f.token.refresh_token,'string');
  const tx=randomUUID(),args={key:'data.txt',data:new TextEncoder().encode('worker'),condition:{absent:true}};const put=(await f.json(await f.rpc(ref.token,ref.id,'put',args,contract,tx))).result;assert.equal(put.object.key,'data.txt');const replay=(await f.json(await f.rpc(ref.token,ref.id,'put',args,contract,tx))).result;assert.equal(replay.object.version,put.object.version);
  const read=(await f.json(await f.rpc(ref.token,ref.id,'get',{key:'data.txt'}))).result;assert.equal(read.object.key,'data.txt');assert.deepEqual(read.data,args.data);
  const upload=(await f.json(await f.rpc(ref.token,ref.id,'presign',{key:'shared.txt',operation:'write',size:3,contentType:'text/plain',condition:{absent:true}}))).result;assert.equal(upload.mode,'proxy');const uploadRoute=new URL(upload.url).pathname+new URL(upload.url).search;
@@ -35,7 +35,7 @@ test('actual account-local Federation alarm prunes expired credentials while ret
  assert.equal((await f.preferences()).status,401);
 });
 test('actual Worker signed uploads share the unified activity cap, return Retry-After and cannot charge completed replay again',async t=>{
- const f=await fixture(t,{STORAGE_WRITE_FREE_PER_DAY:'3'}),ref=(await f.json(await f.preferences())).result.values.files;
+ const f=await fixture(t,{STORAGE_WRITE_FREE_PER_DAY:'3'}),ref=(await f.json(await f.preferences())).result.values.files[0];
  const mint=async key=>(await f.json(await f.rpc(ref.token,ref.id,'presign',{key,operation:'write',size:1,condition:{absent:true}}))).result;
  const beforeRows=await f.h.accounts.get(f.h.accounts.idFromName(f.owner)).rows();assert.equal(beforeRows.find(([key])=>key==='storage-write/v1')[1].foreground.used,1);
  const first=await mint('one'),route=url=>new URL(url).pathname+new URL(url).search,upload=link=>f.h.request(route(link.url),{method:'PUT',raw:'x',headers:link.requiredHeaders});

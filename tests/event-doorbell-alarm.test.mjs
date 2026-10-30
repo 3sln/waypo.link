@@ -26,7 +26,7 @@ function snapshot(host='integration.example'){
 
 test('account alarm: subscribe, publish kick, fixture-verified doorbell, cursor read, revocation stops doorbells',async t=>{
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory()});let server;const sent=[];
- const egress={async send({url,body}){sent.push(body);const response=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.SET_MEDIA_TYPE},body});return {status:response.status,bytes:new Uint8Array(await response.arrayBuffer())};}};
+ const egress={async send({url,body}){sent.push(body);const response=await server.fetch(url,{method:'POST',headers:{'Content-Type':E.INTEGRATION_EVENT_MEDIA_TYPE},body});return {status:response.status,bytes:new Uint8Array(await response.arrayBuffer())};}};
  const document=manifest(),kicks=[];let a,granted=true;
  const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',EVENT_BUSES_ENABLED:'true',FEDERATION_SCHEMAS:JSON.stringify({[document.id]:document}),
   FEDERATION_IDENTITY_CHECK:async()=>true,IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,
@@ -35,7 +35,7 @@ test('account alarm: subscribe, publish kick, fixture-verified doorbell, cursor 
   INTEGRATION_EVENT_PORTS:{signer:keys,egress,snapshot:async()=>({revision:'r1',values:{}}),doorbellGrant:async({epoch})=>granted&&epoch==='grant:rs-1'}};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
  const c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:snapshot()});
- server=createIntegrationServer({clock:{now:()=>Date.now()},connections:[{iss:ISSUER,id:c.id,sub:SUB,generation:c.generation}],verifyToken:async(token,{audience})=>(await E.verifySecurityEventToken(token,{subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===c.id})).claims});t.after(()=>server.close());
+ server=createIntegrationServer({clock:{now:()=>Date.now()},connections:[{iss:ISSUER,id:c.id,sub:SUB,generation:c.generation}],verifyToken:async(token,{audience})=>(await E.verifyIntegrationEvent(token,{contentType:E.INTEGRATION_EVENT_MEDIA_TYPE,subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===c.id})).claims});t.after(()=>server.close());
  const bus=(await a.eventBusOwner(OWNER,{operation:'events.create',input:{url:document.id}})).bus,resource=`${ISSUER}/entities/${OWNER}/buses/${bus.id}`,clientId=snapshot().client.id;
  await a.eventBusReader(OWNER,{operation:'approved',id:bus.id,input:{clientId,readSince:'rs-1'}});
  const actor={kind:'app',owner:OWNER,clientId,origin:'https://integration.example',connection:{id:c.id,generation:c.generation}};
@@ -46,7 +46,7 @@ test('account alarm: subscribe, publish kick, fixture-verified doorbell, cursor 
  assert.deepEqual(kicks,[OWNER]);assert.ok(await db.getAlarm()<=Date.now()+1000,'the publish woke the alarm');
  const run=await a.integrationEventsAlarm(OWNER);assert.equal(run.rang.rung,1);assert.equal(run.delivered.acknowledged,1);
  const [bell]=(await server.snapshot()).events.filter(e=>e.type===BUS_ADVANCED_EVENT);assert.equal(bell.bus,resource);assert.equal(bell.head,1);
- assert.equal(Buffer.from(sent.at(-1).split('.')[1],'base64url').toString().includes('Secret title'),false);
+ assert.equal(Buffer.from(sent.at(-1)).includes('Secret title'),false);
  const pulled=await eventBusResourceMethod(a,OWNER,context('read',{args:{cursor:first.cursor}}));assert.deepEqual(pulled.records.map(r=>r.data.task),['t-1']);assert.equal(pulled.head,bell.head);
  // Revocation cancels immediately in the mounted reader hook; the next alarm has nothing left to deliver.
  granted=false;await a.eventBusReader(OWNER,{operation:'revoked',id:bus.id,input:{clientId}});

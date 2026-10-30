@@ -121,12 +121,15 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
   const hint=message=>election?election.send(message):(()=>{if(!Channel)return;const bus=new Channel(`bindle-embed:${config.clientId}`);bus.postMessage(message);bus.close();})();
 
   // ---- Tiles ----------------------------------------------------------------------------------------------
-  async function tile(subject,bucket){
+  // `fallback` is what an unbound subject (or a bound one without a usable picture) gets: the subject's monogram
+  // (switcher tiles), or 'none', a transparent tile (the avatar part: components-v1 §6, the element's own standard
+  // avatar shows underneath; ui-elements-audit V2). Either way every state is exactly one constant-size raster.
+  async function tile(subject,bucket,fallback='monogram'){
     if(subject===null)return transparentPNG(bucket);
-    const monogram=tiles.get(`m\0${subject}\0${bucket}\0${scheme}`)??await monogramPNG(subject,{size:bucket,scheme});tiles.set(`m\0${subject}\0${bucket}\0${scheme}`,monogram);
-    const view=views.find(v=>v.subject===subject),source=view?.avatars?.[bucket];if(!source)return monogram;
+    const empty=async()=>{if(fallback==='none')return transparentPNG(bucket);const key=`m\0${subject}\0${bucket}\0${scheme}`,monogram=tiles.get(key)??await monogramPNG(subject,{size:bucket,scheme});tiles.set(key,monogram);return monogram;};
+    const view=views.find(v=>v.subject===subject),source=view?.avatars?.[bucket];if(!source)return empty();
     const cached=tiles.get(`a\0${view.id}\0${bucket}`);if(cached)return cached;
-    const avatar=await reencodeAvatar(source,bucket);if(avatar)tiles.set(`a\0${view.id}\0${bucket}`,avatar);return avatar??monogram;
+    const avatar=await reencodeAvatar(source,bucket);if(avatar)tiles.set(`a\0${view.id}\0${bucket}`,avatar);return avatar??empty();
   }
 
   const ops={
@@ -134,7 +137,7 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
     visible:value=>{visible=value===true;},
     scheme:value=>{if(value==='light'||value==='dark')scheme=value;},
     bucket:value=>{if(validBucket(value)){buckets.set(instance,value);election?.send({type:'hello',instance,avatarBucket:value});if(election?.leading)receive({type:'hello',instance,avatarBucket:value});}},
-    render:async({subjects,bucket})=>{if(!Array.isArray(subjects)||subjects.length>9||!validBucket(bucket))throw new TypeError('render');return Promise.all(subjects.map(s=>tile(typeof s==='string'?s:null,bucket)));},
+    render:async({subjects,bucket,fallback='monogram'})=>{if(!Array.isArray(subjects)||subjects.length>9||!validBucket(bucket)||!['monogram','none'].includes(fallback))throw new TypeError('render');return Promise.all(subjects.map(s=>tile(typeof s==='string'?s:null,bucket,fallback)));},
     createEntry:({prepare})=>createEntry({...scope(),key,prepare,fetch}),
     createRequestEntry:({prepare,subjectConstraint})=>createRequestEntry({...scope(),key,prepare,subjectConstraint,fetch}),
     proof:({entry,challenge})=>key.embedProof({issuer:config.issuer,entry,challenge}),

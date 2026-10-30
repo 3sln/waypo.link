@@ -24,7 +24,7 @@ const requests = [{
 }];
 // Complete ordinary provider login and explicit resource/method consent first.
 const {values} = await client.readPreferences(requests[0].fragment);
-const message = await client.userMessage(values.messages, {
+const message = await client.userMessage(values.messages[0], {
   subject: 'Your export is ready',
   mimeType: 'text/html',
   body: '<p>Your export has finished.</p><a href="https://app.example/exports" data-bindle-action>Open export</a>',

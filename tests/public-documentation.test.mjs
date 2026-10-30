@@ -25,10 +25,10 @@ test('actual public docs omit review tables and operator history but retain stan
 test('every current spec, extension and reference-service document is published under its group, with resolvable links',async()=>{
  assert.deepEqual(publicationProblems(),[]);
  const groups=new Set(publicDocumentation.map(page=>page.group));
- for(const group of ['Start here','Bindle core','Bindle extensions','3sln.me reference service','Hosting','Superseded (for reference)'])assert.ok(groups.has(group),group);
+ for(const group of ['Start here','Bindle core','Bindle extensions','3sln.me reference service','Hosting'])assert.ok(groups.has(group),group);
  for(const page of publicDocumentation){
-  if(page.source.startsWith('docs/spec/superseded/'))assert.equal(page.group,'Superseded (for reference)',page.source);
-  else if(page.source.startsWith('docs/spec/extensions/'))assert.equal(page.group,'Bindle extensions',page.source);
+  assert.ok(!page.source.startsWith('docs/spec/superseded/'),page.source);
+  if(page.source.startsWith('docs/spec/extensions/'))assert.equal(page.group,'Bindle extensions',page.source);
   else if(page.source.startsWith('docs/spec/'))assert.equal(page.group,'Bindle core',page.source);
   else if(page.source.startsWith('docs/3sln/'))assert.equal(page.group,'3sln.me reference service',page.source);
  }
@@ -47,7 +47,8 @@ test('the publication check fails on unlisted specs, links to unpublished specs 
 test('published pages keep their group and draft status visible while dropping reviewer bookkeeping',async()=>{
  for(const page of publicDocumentation){const text=await published(page.source);assert.match(text,/^# .+\n+> \*\*Group:\*\* /,page.source);assert.match(text,/> \*\*Status:\*\* \S/,page.source);assert.doesNotMatch(text,/Reviewer:? ___/,page.source);}
  assert.match(await published('docs/spec/extensions/signaling.md'),/\*\*Status:\*\* draft, revision 3\.2; the engine phase is implemented locally behind default-off flags \(2026-10-28\)/);
- const links=await published('docs/spec/superseded/links.md');assert.equal(movedDocumentation['docs/spec/extensions/links.md'],'docs/spec/superseded/links.md');assert.equal(publicDocumentation.find(page=>page.source==='docs/spec/superseded/links.md')?.group,'Superseded (for reference)');assert.match(links,/> \*\*Group:\*\* Superseded/);assert.match(links,/Proposed amendment AMD-L1 \(2026-10-27, provisional, unsigned\)/);assert.doesNotMatch(links,/DEVLOG/);
+ // The superseded copies were retired (2026-10-29): old locations redirect only to a live successor, and beaming (no successor) has no redirect.
+ assert.equal(movedDocumentation['docs/spec/extensions/links.md'],'docs/spec/extensions/organizations-link-envelope.md');assert.equal(movedDocumentation['docs/spec/superseded/rtc-signaling.md'],'docs/spec/extensions/signaling.md');assert.equal(movedDocumentation['docs/spec/superseded/extensions-rev2.md'],'docs/spec/extensions.md');assert.ok(!('docs/spec/beaming.md' in movedDocumentation)&&!('docs/spec/superseded/beaming.md' in movedDocumentation));
  const device=await published('docs/spec/extensions/device-authorization.md');assert.match(device,/\*\*Does not cover:\*\* session handoff/);assert.match(device,/approve-a-sign-in\.md/);
  const signin=await published('docs/3sln/accounts/sign-in-and-sessions.md');assert.match(signin,/Device authorization does not replace or supersede anything here/);
  const source='# T\n\n> **Group:** Bindle core\n>\n> **Status:** draft; Reviewer ___ Date ___ Outcome ___ stays in the header.\n\nThe rule is proposed (approved provisionally 2026-10-20; DEVLOG "Example entry"). Reviewer ___ / date ___ / outcome ___.\n\n| ID | Decision | Sign-off |\n| --- | --- | --- |\n| X-1 | Keep it. | Reviewer ___ Date ___ Outcome ___ |\n';

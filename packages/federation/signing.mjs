@@ -4,15 +4,17 @@ import {siteGlobal} from '../flags/read.mjs';
 // Provider brokering key set (integrations §5.3, §7 item 7) and RFC 9068 brokered access tokens. ES256 (P-256) only.
 // Keys are purpose-separated (one kid per purpose), sealed at rest with an HKDF-derived AES-GCM key whose AAD binds
 // issuer, kid, purpose and public point, published before use and retained after retirement until every token they
-// signed has expired. Consumer-facing minting routes and SET minting are later slices (EXT-X8, EXT-X6).
+// signed has expired. The `event` purpose signs integration events as COSE_Sign1 CWTs (CBOR phase 5,
+// packages/core/cose.mjs); every other purpose signs compact JWS.
 import {FederationFault} from './schema.mjs';
+import {signIntegrationEvent} from '../core/cose.mjs';
 export const ACCESS_TOKEN_TYP='at+jwt',BROKERING_ALG='ES256',BROKERING_JWKS_PATH='/oauth/brokering/jwks',BROKERING_PURPOSES=Object.freeze(['invoke','describe','discover','event','removal']);
 /** exp − iat bounds in seconds (integrations §5.3); the verifier leeway bound is §5.5 step 5. */
 export const ACCESS_LIFETIMES=Object.freeze({invoke:300,describe:60,discover:60}),MAX_ACCESS_LIFETIME=300,MAX_LEEWAY=30;
 /** JWKS response max-age. Lead time ≥ verifier cache (≤ 1 h, §5.5 step 2) + this; overlap ≥ lifetime + leeway. */
-/** Overlap covers the SET acceptance window (600 s + 30 s, §6.1), which exceeds lifetime + leeway + clock error (360 s, §7.2). */
+/** Overlap covers the integration-event acceptance window (600 s + 30 s, §6.1), which exceeds lifetime + leeway + clock error (360 s, §7.2). */
 export const JWKS_MAX_AGE=300,MIN_OVERLAP=(600+MAX_LEEWAY)*1000,DEFAULT_LEAD=(3600+JWKS_MAX_AGE+60)*1000;
-const TYPES=Object.freeze({invoke:'at+jwt',describe:'at+jwt',discover:'at+jwt',event:'secevent+jwt',removal:'bindle-removal+jwt'});
+const TYPES=Object.freeze({invoke:'at+jwt',describe:'at+jwt',discover:'at+jwt',removal:'bindle-removal+jwt'});
 /** P-256 order; signatures are normalized to low-s and high-s is refused, so a token has one byte encoding. */
 const N=0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n,HALF=N>>1n;
 const big=bytes=>BigInt('0x'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''));
@@ -70,7 +72,7 @@ const aad=(issuer,k)=>text.encode(JSON.stringify(['bindle-brokering-key-v1',issu
 export function brokeringKeys({issuer,secret,metadata,crypto=globalThis.crypto,clock=()=>Date.now(),lead=DEFAULT_LEAD,overlap=3600000,rotateAfter=90*86400000,cacheMs=5000}){
  if(!httpsURL(`${issuer}/`)&&!/^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(issuer??''))throw new TypeError('A provider issuer origin is required.');
  if(typeof metadata?.transaction!=='function')throw new TypeError('Transactional federation metadata is required.');
- if(!Number.isSafeInteger(lead)||lead<DEFAULT_LEAD||!Number.isSafeInteger(overlap)||overlap<MIN_OVERLAP||!Number.isSafeInteger(rotateAfter)||rotateAfter<=lead+overlap)throw new TypeError('Brokering rotation needs lead ≥ verifier cache plus JWKS max-age, overlap ≥ the SET window plus leeway, and a longer rotation period.');
+ if(!Number.isSafeInteger(lead)||lead<DEFAULT_LEAD||!Number.isSafeInteger(overlap)||overlap<MIN_OVERLAP||!Number.isSafeInteger(rotateAfter)||rotateAfter<=lead+overlap)throw new TypeError('Brokering rotation needs lead ≥ verifier cache plus JWKS max-age, overlap ≥ the event window plus leeway, and a longer rotation period.');
  let sealing;const seal=()=>sealing??=sealingKey(crypto,secret,issuer).catch(e=>{sealing=undefined;throw e;});
  const imported=new Map();let memo;const forget=()=>{memo=undefined;};
  async function generate(purpose,now,state){
@@ -115,10 +117,12 @@ export function brokeringKeys({issuer,secret,metadata,crypto=globalThis.crypto,c
    const value=published(set,now);memo={value,until:now+cacheMs};return value;},
   /** Scheduled maintenance: applies due promotions, standby staging and removals. */
   async maintain(){await current();},
-  /** Compact JWS over a canonical header and payload with the purpose's active key. */
+  /** Compact JWS over a canonical header and payload with the purpose's active key; for `event`, an untagged
+   * COSE_Sign1 over the CWT claims set (`payload` = {iss, sub, aud, iat, cti, events}), returned as {kid, message}. */
   async sign(purpose,payload){
    if(!BROKERING_PURPOSES.includes(purpose))throw new TypeError('Unknown brokering purpose.');
    const set=await current(),k=set.keys.find(x=>x.purpose===purpose&&x.state==='active');if(!k)unavailable();
+   if(purpose==='event'){const key=await signingKey(k);return {kid:k.kid,message:await signIntegrationEvent({kid:k.kid,claims:payload,sign:async bytes=>lowS(new Uint8Array(await crypto.subtle.sign(SIG,key,bytes)))})};}
    const input=`${b64u(text.encode(JSON.stringify({alg:BROKERING_ALG,typ:TYPES[purpose],kid:k.kid})))}.${b64u(text.encode(JSON.stringify(payload)))}`;
    return {kid:k.kid,token:`${input}.${b64u(lowS(new Uint8Array(await crypto.subtle.sign(SIG,await signingKey(k),text.encode(input)))))}`};
   },

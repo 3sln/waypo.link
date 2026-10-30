@@ -1,9 +1,9 @@
 // IA-4. Registered by the standard elements entry; inert until explicitly enabled.
 // Assign config={INCREMENTAL_AUTH_ENABLED:true} and request={requests:[…]} or {target,…}; no HTML JSON parsing.
-import {ElementBase,h,reconcileShadow,requestSession,emitLater,localeFor,schemeFor,watchScheme,baseStyles} from './shared.mjs';
+import {ElementBase,h,icon,reconcileShadow,requestSession,emitLater,localeFor,schemeFor,watchScheme,baseStyles} from './shared.mjs';
 import {css} from '../../../../vendor/dodo/style.js';
 import {requestText,requestIslandSpec} from './request-protocol.mjs';
-const styles=view=>css.in(view)`:host{display:block}.island{min-inline-size:0;inline-size:100%}.island[hidden]{display:none}.root{max-inline-size:100%}button{max-inline-size:100%;white-space:normal;overflow-wrap:anywhere}`;
+const styles=view=>css.in(view)`:host{display:block}.island{min-inline-size:0;inline-size:100%}.island[hidden]{display:none}.root{max-inline-size:100%}button{max-inline-size:100%;white-space:normal;overflow-wrap:anywhere;font-family:var(--_system)}.status{font-size:.9em}`;
 export class BindleRequestElement extends ElementBase{
  static observedAttributes=['kind','lang','theme','disabled','island-variant'];
  #ops=null;#config={};#request={};#session=null;#engine=null;#transport=null;#island=null;#subscription=null;#stopScheme=null;#connected=false;#generation=0;#ready=null;#islandState='off';#fallback=false;#state={busy:false,held:false,outcome:null,result:null};#subject=null;#heldSubject=null;
@@ -48,7 +48,7 @@ export class BindleRequestElement extends ElementBase{
  render(){
   if(!this.#connected)return;const text=requestText(localeFor(this)),{theme}=schemeFor(this,this.#session),live=this.#islandState==='live',disabled=this.hasAttribute('disabled')||!this.#engine||this.#state.busy||this.#state.held;
   const status=this.#state.busy?text.busy:({completed:text.finished,canceled:text.canceled,declined:text.declined,unchanged:text.unchanged,'popup-blocked':text.blocked,unavailable:text.unavailable})[this.#state.outcome]??'';
-  reconcileShadow(this,[h('div',h('div',h('div').classes('island-host')).classes('island').props({hidden:!live}).key('island'),(!live||this.#fallback)&&h('button',this.#fallback?text.continue.replace('{host}',this.#session?.session?.issuer?new URL(this.#session.session.issuer).host:''):text[this.kind==='configure'?'settings':'access']).props({type:'button',disabled}).attrs({part:'request','aria-busy':this.#state.busy?'true':'false'}).on({click:this.#activate}),h('p',status).classes('status').attrs({role:'status','aria-live':'polite',part:'status'})).classes('root',theme)],[baseStyles(this.ownerDocument.defaultView),styles(this.ownerDocument.defaultView)]);
+  reconcileShadow(this,[h('div',h('div',h('div').classes('island-host')).classes('island').props({hidden:!live}).key('island'),(!live||this.#fallback)&&h('button',this.#state.busy?icon('spinner'):icon(this.kind==='configure'?'sliders':'lock'),h('span',this.#fallback?text.continue.replace('{host}',this.#session?.session?.issuer?new URL(this.#session.session.issuer).host:''):text[this.kind==='configure'?'settings':'access'])).classes('tonal').props({type:'button',disabled}).attrs({part:'request','aria-busy':this.#state.busy?'true':'false'}).on({click:this.#activate}),h('p',status).classes('status').attrs({role:'status','aria-live':'polite',part:'status'})).classes('root',theme)],[baseStyles(this.ownerDocument.defaultView),styles(this.ownerDocument.defaultView)]);
   this.#island?.refresh();
  }
 }

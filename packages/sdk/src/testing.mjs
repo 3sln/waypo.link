@@ -11,6 +11,7 @@
 import {handleCallback} from './callback.mjs';
 import {EXT} from './capabilities.mjs';
 import {readRPCRequest,rpcResponse,RPCWireFault} from './rpc-wire.mjs';
+export {memorySessionBackend} from './session-store.mjs';
 
 const encode64=bytes=>btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const decode64=text=>Uint8Array.from(atob(text.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-text.length%4)%4)),c=>c.charCodeAt(0));
@@ -47,11 +48,15 @@ export function createMockProvider({issuer='https://provider.example',accounts=[
     ...settings.clientMetadata?[{spec:EXT.clientIdMetadata}]:[],
     ...components?[{spec:EXT.embeddedComponents,options:components}]:[],
   ];
-  const manifest={version:'0',issuer:origin,authorization_endpoint:`${origin}/oauth/authorize`,token_endpoint:`${origin}/oauth/token`,rpc_endpoint:`${origin}/rpc`,jwks_uri:`${origin}/.well-known/jwks.json`,authorization_request_endpoint:`${origin}/api/oauth/requests`,preferences_contract:'https://contracts.example/preferences/v1',
+  const manifest={version:'0',issuer:origin,authorization_endpoint:`${origin}/oauth/authorize`,token_endpoint:`${origin}/oauth/token`,rpc_endpoint:`${origin}/rpc`,jwks_uri:`${origin}/.well-known/jwks.json`,authorization_request_endpoint:`${origin}/api/oauth/requests`,preferences_contract:'https://contracts.example/preferences/v2',
     login_presentation:settings.popup?['redirect','popup']:['redirect'],grant_types_supported:settings.refresh?['authorization_code','refresh_token']:['authorization_code'],
     ...settings.revocation?{revocation_endpoint:`${origin}/oauth/revoke`}:{},...settings.dpop?{dpop_signing_alg_values_supported:['ES256']}:{},
     ...extensions.length?{extensions}:{},...manifestPatch};
   const entries=new Map(),codes=new Map(),refresh=new Map(),revoked=new Set(),log=[],nonces=new Set(),seenJti=new Set(),accessTokens=new Map();
+  // Refresh families (one per code exchange). With `reuseDetection`, presenting an already-rotated refresh token
+  // revokes its whole family (auth.md), like a conforming provider; `revokedFamilies` records each such revocation.
+  const used=new Map(),revokedFamilies=new Set();let familySeq=0;
+  const revokeFamily=family=>{revokedFamilies.add(family);for(const [token,value] of refresh)if(value.family===family)refresh.delete(token);};
   const client=id=>clients.find(item=>item.clientId===id);
   async function verifyProof(proof,htu,{accessToken}={}){
     try{
@@ -66,9 +71,9 @@ export function createMockProvider({issuer='https://provider.example',accounts=[
     }catch{return {error:'invalid_dpop_proof'};}
   }
   const nonceHeader=()=>{if(!settings.dpop)return {};const nonce=random(16);nonces.add(nonce);return {'DPoP-Nonce':nonce};};
-  function issue(entry,account,{jkt}={}){
+  function issue(entry,account,{jkt,family=++familySeq}={}){
     const access='access-'+random(18),refreshToken=settings.refresh?'refresh-'+random(18):undefined;
-    if(refreshToken)refresh.set(refreshToken,{entry,account,jkt});
+    if(refreshToken)refresh.set(refreshToken,{entry,account,jkt,family});
     accessTokens.set(access,{account,type:jkt&&dpopTokenType?'DPoP':'Bearer',jkt});
     return {access_token:access,token_type:jkt&&dpopTokenType?'DPoP':'Bearer',expires_in:300,issuer:origin,client_id:entry.clientId,subject:account.subject,audience:manifest.rpc_endpoint,grants:[],granted_fragments:[],
       ...refreshToken?jkt?{refresh_token:refreshToken,refresh_expires_in:2592000,refresh_idle_expires_in:604800}:{refresh_token:refreshToken,refresh_expires_in:28800}:{},
@@ -113,15 +118,17 @@ export function createMockProvider({issuer='https://provider.example',accounts=[
         return json(issue(record.entry,record.account,{jkt:record.entry.dpopJkt}),200,nonceHeader());
       }
       if(form.get('grant_type')==='refresh_token'){
-        const record=refresh.get(form.get('refresh_token'));
+        const presented=form.get('refresh_token'),record=refresh.get(presented);
         if(record?.jkt&&proof?.jkt!==record.jkt)return json({error:'invalid_dpop_proof',message:'A DPoP proof from the session key is required.'},400,nonceHeader());
-        refresh.delete(form.get('refresh_token'));
-        if(!record||revoked.has(form.get('refresh_token')))return json({error:'invalid_grant',message:'Invalid grant.'},400,nonceHeader());
-        const {auth_time:_omit,...token}=issue({...record.entry,intent:'login'},record.account,{jkt:record.jkt});return json(token,200,nonceHeader());
+        if(!record&&settings.reuseDetection&&used.has(presented)){revokeFamily(used.get(presented));return json({error:'invalid_grant',message:'Invalid grant.'},400,nonceHeader());}
+        refresh.delete(presented);
+        if(!record||revoked.has(presented))return json({error:'invalid_grant',message:'Invalid grant.'},400,nonceHeader());
+        used.set(presented,record.family);
+        const {auth_time:_omit,...token}=issue({...record.entry,intent:'login'},record.account,{jkt:record.jkt,family:record.family});return json(token,200,nonceHeader());
       }
       return json({error:'unsupported_grant_type',message:'Unsupported grant.'},400);
     }
-    if(request.method==='POST'&&url.pathname==='/oauth/revoke'&&settings.revocation){const form=new URLSearchParams(await request.text());revoked.add(form.get('token'));refresh.delete(form.get('token'));return new Response(null,{status:200});}
+    if(request.method==='POST'&&url.pathname==='/oauth/revoke'&&settings.revocation){const form=new URLSearchParams(await request.text()),record=refresh.get(form.get('token'));revoked.add(form.get('token'));refresh.delete(form.get('token'));if(record&&settings.reuseDetection)revokeFamily(record.family);return new Response(null,{status:200});}
     if(request.method==='POST'&&url.pathname==='/rpc'){
       const [scheme,token]=(request.headers.get('authorization')??'').split(' '),record=accessTokens.get(token);
       // Protocol §5: the RPC endpoint speaks Bindle CBOR only (415 for anything else), like a real provider.
@@ -165,11 +172,13 @@ export function createMockProvider({issuer='https://provider.example',accounts=[
       if(choice?.error)throw new DOMException(choice.error,choice.name??'NetworkError');
       if(!entry||entry.clientId!==provider.clientId||choice?.decision!=='approve')throw new DOMException('access_denied','IdentityCredentialError');
       const callback=new URL(authorize(entry.entryId,choice));
-      return {token:JSON.stringify({v:1,code:callback.searchParams.get('code'),state:callback.searchParams.get('state'),iss:callback.searchParams.get('iss')})};
+      return {token:JSON.stringify({v:1,code:callback.searchParams.get('code'),state:callback.searchParams.get('state'),iss:callback.searchParams.get('iss')}),...choice?.autoSelected?{isAutoSelected:true}:{}};
     }};
     return {calls,uninstall(){navigator.credentials=previous;}};
   }
-  const provider={issuer:origin,manifest,settings,accounts:people,entries,log,fetch,handle,authorize,drivePopup,installPopupDriver,installFedCM,revoked,refresh};
+  // Live (unrevoked) families that still hold a refresh token, for assertions.
+  const liveFamilies=()=>new Set([...refresh.values()].map(value=>value.family));
+  const provider={issuer:origin,manifest,settings,accounts:people,entries,log,fetch,handle,authorize,drivePopup,installPopupDriver,installFedCM,revoked,refresh,revokedFamilies,liveFamilies};
   return provider;
 }
 // One window.open for several mock providers: each popup navigation is driven by

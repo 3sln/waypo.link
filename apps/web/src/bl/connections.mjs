@@ -26,7 +26,9 @@ export class ConnectionsIntent extends OwnerFlow {
   const reload=async()=>{const result=await call('connections.list');put(r,ctx,{connections:result.connections,fields:result.fields??[],features:result.features??[],notices:result.notices??[],offerings:result.offerings??port.offerings,stale:false,confirm:null,picker:null,setup:null,candidates:null,error:null});};
   const change=async(operation,input)=>{put(r,ctx,{stale:true,confirm:null});await call(operation,input);put(r,ctx,{notice:'saved'});try{await reload();}catch{put(r,ctx,{error:'saved_stale'});}if(m.confirm)focus(r,'connections-title');};
   try{
-   if(a==='reload'){await reload();return;}
+   // The removal summary belongs to this console (clean removal availability, pending and recent removals), so every
+   // reload carries it, however the console was opened (navigation, deep link or Refresh). An absent route is no error.
+   if(a==='reload'){await reload();try{const removal=await checked(()=>r.api.get('/api/apps/removal'));put(r,ctx,{removals:removal.removals??[],cleanRemovalEnabled:removal.clean_enabled===true,cleanRemovalConnections:removal.clean_connections,removalError:null});}catch(error){if(error?.code==='connection_changed')throw error;if(error?.status!==404&&error?.code!=='not_found')put(r,ctx,{removalError:initial.locale==='es'?'No se pudo cargar el estado de las eliminaciones. Actualiza para intentarlo de nuevo.':'Removal status could not be loaded. Refresh to try again.'});}return;}
    if(a==='close'){const back=m.picker&&m.setup?'connections-setup':'connections-title';put(r,ctx,{confirm:null,external:null,...m.picker&&m.setup?{}:{setup:null},picker:null,error:null});focus(r,back);return;}
    if(m.stale)fail('reload_required');
    if(a==='connect-built-in'){const def=m.offerings.find(x=>x.id===d.id);if(!def)fail('connection_changed');put(r,ctx,{confirm:{kind:'connect',id:def.id}});focus(r,'connections-review');return;}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-const manifest = {version:'0',issuer:'https://self.example',authorization_endpoint:'https://self.example/login',token_endpoint:'https://self.example/token',rpc_endpoint:'https://self.example/rpc',jwks_uri:'https://self.example/keys',authorization_request_endpoint:'https://self.example/api/oauth/requests',preferences_contract:'https://contracts.example/preferences/v1',login_presentation:['redirect']};
+const manifest = {version:'0',issuer:'https://self.example',authorization_endpoint:'https://self.example/login',token_endpoint:'https://self.example/token',rpc_endpoint:'https://self.example/rpc',jwks_uri:'https://self.example/keys',authorization_request_endpoint:'https://self.example/api/oauth/requests',preferences_contract:'https://contracts.example/preferences/v2',login_presentation:['redirect']};
 const reply = value => ({status:200,ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(value),json:async()=>value});
 import { rpcReply, requestEnvelope } from '../../../tests/helpers/rpc.mjs';
 import { parseIdentity, discoverIdentity } from '../src/identity.mjs';

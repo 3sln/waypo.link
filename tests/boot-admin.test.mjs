@@ -3,7 +3,7 @@ import {mkdtemp,readFile,stat,rm} from 'node:fs/promises';import {tmpdir} from '
 import {SqliteMetadata} from '../apps/node/resources.mjs';import {IdentityRepository,FixedWindowGuard} from '../packages/runtime/accounts.mjs';import {IdentityShardStorage,ShardedIdentityRepository,IDENTITY_LAYOUT,ONBOARDING_RELEASE_GRACE_MS} from '../packages/runtime/identity-shards.mjs';
 import {IdentityService} from '../packages/identity/service.mjs';import {encode} from '../packages/identity/crypto.mjs';import {onboardingPort,signOnboardingInvitation} from '../packages/identity/onboarding.mjs';import {signSystemInvitation} from '../packages/identity/system-bootstrap.mjs';
 import {configuredNamePolicy,configuredReservedName} from '../packages/identity/badge-policy.mjs';import {mintBootToken,bootTokenDigest,verifyBootToken} from '../packages/identity/boot.mjs';import {AdminStorage,remoteAdminStore} from '../packages/identity/admin-store.mjs';import {AdminService} from '../packages/identity/admin.mjs';import {validateCatalog,effectiveAuthority} from '../packages/identity/roles.mjs';import {adminRoutes} from '../packages/runtime/admin-http.mjs';
-const origin='https://admin.example',start=1792000000000,key=encode(new Uint8Array(32).fill(77)),PASSWORD='long boot operator password',BADGES=JSON.stringify([{id:'system',name:'System',description:'Host staff.',svg:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>'},{id:'beta',name:'Beta',description:'Beta tester.',svg:'<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/></svg>'}]);
+const origin='https://admin.example',start=1792000000000,key=encode(new Uint8Array(32).fill(77)),BOOT_KEY='boot-passkey',BADGES=JSON.stringify([{id:'system',name:'System',description:'Host staff.',svg:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>'},{id:'beta',name:'Beta',description:'Beta tester.',svg:'<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/></svg>'}]);
 function fixture(worker=false){
  let now=start;const stores=[],db=()=>{const value=new SqliteMetadata(':memory:');stores.push(value);return value;},budget=db(),shards=new Map();
  const shard=name=>{if(!shards.has(name))shards.set(name,new IdentityShardStorage(db()));const storage=shards.get(name);return new Proxy({},{get:(_,method)=>method==='then'?undefined:(...args)=>storage[method.slice(5,6).toLowerCase()+method.slice(6)](...args)});};
@@ -12,13 +12,16 @@ function fixture(worker=false){
  // Worker-style store: a single authority behind a structured-clone RPC boundary.
  const storage=new AdminStorage(db()),store=worker?remoteAdminStore(async(method,args)=>structuredClone(await storage.invoke(method,structuredClone(args)))):storage,guard=new FixedWindowGuard({metadata:budget});
  const webauthn={registrationOptions:async()=>({challenge:'reg-challenge'}),verifyRegistration:async({response})=>{if(response?.ok!==true)throw Error('bad');return {id:response.id,publicKey:'pk',counter:0};},authenticationOptions:async()=>({challenge:'auth-challenge'}),verifyAuthentication:async({response})=>{if(response?.ok!==true)throw Error('bad');return {counter:1,backedUp:false};}};
- let admin;const passwordHasher={hash:async x=>'hash:'+x,verify:async(x,h)=>h==='hash:'+x},rateLimiter={check:async()=>true};
+ let admin;const rateLimiter={check:async()=>true};
  const onboarding=onboardingPort({config,repository,authority:{consumeSignup:(_,input)=>guard.consumeSignup(input)},clock:()=>now,runtimeName:(name,digest)=>admin.runtimeName(name,digest),redeemName:(name,digest)=>admin.redeemName(name,digest)});
- const identity=new IdentityService({repository,onboarding,clock:()=>now,reservedHandle:name=>admin.isReserved(name),config:{...config,origin,rpID:'admin.example',termsVersion:'v1',requireReachability:false},turnstile:{verify:async()=>true},rateLimiter,webauthn,passwordHasher,paidHandleEligibility:async()=>true});
- admin=new AdminService({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock:()=>now,config});
+ const identity=new IdentityService({repository,onboarding,clock:()=>now,reservedHandle:name=>admin.isReserved(name),config:{...config,origin,rpID:'admin.example',termsVersion:'v1',requireReachability:false},turnstile:{verify:async()=>true},rateLimiter,webauthn,paidHandleEligibility:async()=>true});
+ admin=new AdminService({store,identity,onboarding,webauthn,rateLimiter,clock:()=>now,config});
  const ctx=(extra={})=>({origin,remoteIP:'192.0.2.9',...extra});
  async function deploy(at=now){const token=mintBootToken(origin,{now:at});config.BOOTSTRAP_TOKEN_SHA256=await bootTokenDigest(token);return token;}
- async function claimBoot(token,binding='boot-browser',password=PASSWORD){await admin.bootStart({bootToken:token},ctx({setupBinding:binding}));const result=await admin.bootComplete({bootToken:token,method:'password',password,acknowledgeExpiry:true},ctx({setupBinding:binding}));return {...result,context:ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken})};}
+ // Boot is passkey only (2026-10-29, provisional): claim and restore enrol a passkey; sign-in and step-up assert it.
+ async function claimBoot(token,binding='boot-browser',passkeyId=BOOT_KEY){await admin.bootStart({bootToken:token},ctx({setupBinding:binding}));const result=await admin.bootComplete({bootToken:token,method:'passkey',response:{id:passkeyId,ok:true},acknowledgeExpiry:true},ctx({setupBinding:binding}));return {...result,context:ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken})};}
+ async function bootLogin(passkeyId=BOOT_KEY,extra={}){const c=ctx(extra),begun=await admin.bootLoginBegin({},c);return admin.bootLogin({method:'passkey',challengeId:begun.challengeId,response:{id:passkeyId,ok:true}},c);}
+ async function bootStepUp(context,passkeyId=BOOT_KEY){const begun=await admin.bootLoginBegin({},context);return admin.bootStepUp({method:'passkey',challengeId:begun.challengeId,response:{id:passkeyId,ok:true}},context);}
  // Passwords were dropped for user accounts (2026-10-28): claims register a passkey before the recovery download.
  async function activate(link,name,passkeyId='signup-'+name){const onboardingToken=decodeURIComponent(link.split('#token=')[1]),c=ctx({setupBinding:'claim-'+name}),pending=await identity.claimOnboarding({onboardingToken,name,method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},c);await identity.registerPasskey({pendingToken:pending.pendingToken,response:{id:passkeyId,ok:true}},c);const file=await identity.downloadRecovery(pending,c),active=await identity.confirmRecovery({...pending,...file,downloadConfirmed:true},c);const context=ctx({actor:'admin',sessionToken:active.sessionToken,csrfToken:active.csrfToken});return {id:active.account.id,context,signupPasskeyId:passkeyId,stepUp:async()=>{await identity.stepUpBegin({},context);return identity.stepUp({method:'passkey',response:{id:passkeyId,ok:true}},context);}};}
  async function user(extra={}){const id=crypto.randomUUID(),assignmentId=crypto.randomUUID(),handle=await repository.allocateFreeHandle(undefined,id,assignmentId),{verifiedEmail,...rest}=extra,account={id,assignmentId,handle,revision:0,status:'active',createdAt:now,lastActiveAt:now,credentials:[],sessions:[],challenges:[],audit:[],badgeIds:[],passwordHash:'hash:secret user password',recoveryHash:'recovery-secret-hash',...rest};assert(await repository.create(account));if(verifiedEmail)assert(await repository.compareAndSwap(id,0,{...account,revision:1,verifiedEmail}));return repository.get(id);}
@@ -27,7 +30,7 @@ function fixture(worker=false){
  async function makeAdmin(boot,name){await admin.reserve({name},boot.context);const minted=await admin.mintClaim({name,roles:['admin']},boot.context),member=await enrolPasskey(await activate(minted.link,name));await member.stepUp();return member;}
  // Runs the identity storage alarm sweep on every namespace store at an explicit time.
  async function sweep(at=now){if(!worker)return (await repository.shardOnboardingSweep({now:at})).released;const released=[];for(const [shardName,shardStorage]of shards)if(shardName.startsWith('identity-v1/namespace/'))released.push(...(await shardStorage.onboardingSweep({now:at})).released);return released.sort();}
- return {config,repository,store,storage,identity,admin,ctx,deploy,claimBoot,activate,enrolPasskey,user,makeAdmin,sweep,advance:ms=>now+=ms,now:()=>now,close:()=>stores.forEach(s=>s.close())};
+ return {config,repository,store,storage,identity,admin,ctx,deploy,claimBoot,bootLogin,bootStepUp,activate,enrolPasskey,user,makeAdmin,sweep,advance:ms=>now+=ms,now:()=>now,close:()=>stores.forEach(s=>s.close())};
 }
 const both=(title,body)=>{for(const worker of [false,true])test(`${worker?'Worker-style':'Node SQLite'}: ${title}`,async()=>{const f=fixture(worker);try{await body(f);}finally{f.close();}});};
 
@@ -45,14 +48,14 @@ both('a boot token is used exactly once across claim and restore, including conc
  const token=await f.deploy(),[a,b]=await Promise.allSettled([f.admin.bootStart({bootToken:token},f.ctx({setupBinding:'browser-a'})),f.admin.bootStart({bootToken:token},f.ctx({setupBinding:'browser-b'}))]);
  assert.equal([a,b].filter(r=>r.status==='fulfilled').length,1);const winner=a.status==='fulfilled'?'browser-a':'browser-b',loser=winner==='browser-a'?'browser-b':'browser-a';
  assert.equal((await f.admin.bootStart({bootToken:token},f.ctx({setupBinding:winner}))).mode,'claim');
- await assert.rejects(f.admin.bootComplete({bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},f.ctx({setupBinding:loser})),{code:'boot_token_consumed'});
- await assert.rejects(f.admin.bootComplete({bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:false},f.ctx({setupBinding:winner})),{code:'acknowledgement_required'});
- const done=await Promise.allSettled([1,2].map(()=>f.admin.bootComplete({bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},f.ctx({setupBinding:winner}))));
+ await assert.rejects(f.admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},f.ctx({setupBinding:loser})),{code:'boot_token_consumed'});
+ await assert.rejects(f.admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:false},f.ctx({setupBinding:winner})),{code:'acknowledgement_required'});
+ const done=await Promise.allSettled([1,2].map(()=>f.admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},f.ctx({setupBinding:winner}))));
  assert.equal(done.filter(r=>r.status==='fulfilled').length,1);assert.equal(done.find(r=>r.status==='rejected').reason.code,'boot_token_consumed');
  // The same token can neither claim again nor restore an existing boot.
  for(const binding of [winner,loser,'browser-c'])await assert.rejects(f.admin.bootStart({bootToken:token},f.ctx({setupBinding:binding})),{code:'boot_token_consumed'});
  assert.equal((await f.admin.bootStatus({},f.ctx())).token,'used');
- const principal=await f.store.get('boot/principal');assert.equal(principal.generation,1);assert.equal(principal.passwordHash,'hash:'+PASSWORD);
+ const principal=await f.store.get('boot/principal');assert.equal(principal.generation,1);assert.deepEqual(principal.credentials.map(c=>c.id),[BOOT_KEY]);assert.deepEqual(Object.keys(principal).filter(k=>k!=='revision').sort(),['claimedAt','credentials','expiresAt','generation','restoredAt','status','tokenDigest','userId','version']);
  await assert.rejects(f.store.commit({writes:{['boot-token/'+f.config.BOOTSTRAP_TOKEN_SHA256]:null}}),{code:'boot_token_consumed'});
  await assert.rejects(f.store.commit({writes:{['boot-token/'+f.config.BOOTSTRAP_TOKEN_SHA256]:{phase:'reserved'}}}),{code:'boot_token_consumed'});
  // A stale configuration redeployed later is refused by the consumed record and its mint window.
@@ -64,19 +67,19 @@ both('restore resets boot credentials and sessions, re-arms expiry, and leaves a
  assert.equal((await f.admin.overview({},boot.context)).boot.active,true);
  f.advance(2*3600000);
  await assert.rejects(f.admin.overview({},boot.context),{code:'boot_expired'});
- await assert.rejects(f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx()),{code:'boot_expired'});
+ await assert.rejects(f.bootLogin(),{code:'boot_expired'});
  await member.stepUp();assert.equal((await f.admin.overview({},member.context)).actor.kind,'admin');
  assert.equal((await f.admin.overview({},member.context)).boot.active,false);
- const fresh=await f.deploy(),restored=await f.claimBoot(fresh,'restore-browser','replacement boot password');assert.equal(restored.mode,'restore');
+ const fresh=await f.deploy(),restored=await f.claimBoot(fresh,'restore-browser','replacement-passkey');assert.equal(restored.mode,'restore');
  const principal=await f.store.get('boot/principal');assert.equal(principal.generation,2);assert.equal(principal.expiresAt,f.now()+2*3600000);assert.equal(principal.claimedAt,start);
- await assert.rejects(f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx()),{code:'unauthorized'});
+ await assert.rejects(f.bootLogin(),{code:'unauthorized'});
  await assert.rejects(f.admin.overview({},boot.context),{code:'unauthorized'});
- const login=await f.admin.bootLogin({method:'password',password:'replacement boot password'},f.ctx());assert(login.sessionToken);
+ const login=await f.bootLogin('replacement-passkey');assert(login.sessionToken);
  await member.stepUp();assert.equal((await f.admin.lookup({owner:member.id},member.context)).user.authority.admin,true);
  const actions=(await f.admin.audit({fromSeq:1},restored.context)).entries.map(e=>e.action);for(const action of ['boot.claim','boot.restore','admin.claim-mint'])assert(actions.includes(action),action);
  // Passkey boot and step-up windows.
  f.advance(301000);await assert.rejects(f.admin.reserve({name:'helpdesk'},restored.context),{code:'step_up_required'});
- await f.admin.bootStepUp({method:'password',password:'replacement boot password'},restored.context);await f.admin.reserve({name:'helpdesk'},restored.context);
+ await f.bootStepUp(restored.context,'replacement-passkey');await f.admin.reserve({name:'helpdesk'},restored.context);
 });
 
 both('only boot creates or revokes administrators',async f=>{
@@ -123,7 +126,7 @@ both('role classes bound what administrators can grant to users, themselves, oth
  await assert.rejects(f.admin.setBadges({owner:peer.id,badgeIds:[]},member.context),{code:'admin_target_forbidden'});
  assert.equal((await f.admin.lookup({handle:'boot'},member.context)).user,null);
  await assert.rejects(f.admin.setRoles({owner:'boot',roles:[],expectedRevision:null},member.context),{code:'invalid_request'});
- await assert.rejects(f.admin.bootStepUp({method:'password',password:PASSWORD},{...member.context,actor:'boot'}),{code:'unauthorized'});
+ await assert.rejects(f.admin.bootStepUp({method:'passkey',challengeId:'c'.repeat(43),response:{id:BOOT_KEY,ok:true}},{...member.context,actor:'boot'}),{code:'unauthorized'});
  await assert.rejects(f.admin.overview({},{...member.context,actor:undefined}),{code:'actor_required'});
  // Admins may edit only user-class roles with user-class capabilities.
  const current=await f.admin.overview({},member.context);
@@ -164,7 +167,7 @@ both('suspension, step-up freshness, runtime reservations and per-actor rate lim
  await assert.rejects(f.identity.claimOnboarding({onboardingToken:decodeURIComponent(claim.link.split('#token=')[1]),name:'concierge',method:'passkey',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},f.ctx({setupBinding:'late'})),{code:'invalid_onboarding_invitation'});
  await assert.rejects(f.admin.unreserve({name:'concierge'},member.context),{code:'reservation_assigned'});
  let limited;for(let i=0;i<70&&!limited;i++)try{await f.admin.reserve({name:'loop-name'},member.context);}catch(error){limited=error;}
- assert.equal(limited?.code,'rate_limited');await f.admin.bootStepUp({method:'password',password:PASSWORD},boot.context);await f.admin.reserve({name:'loop-name'},boot.context);
+ assert.equal(limited?.code,'rate_limited');await f.bootStepUp(boot.context);await f.admin.reserve({name:'loop-name'},boot.context);
 });
 
 both('audit log is hash-chained, append-only and tamper evident',async f=>{
@@ -182,7 +185,7 @@ both('user lookup is bounded and never returns secrets, credentials or recovery 
  for(const query of [{owner:ordinary.id},{handle:ordinary.handle},{email:'person@EXAMPLE.org'}]){const result=await f.admin.lookup(query,member.context),text=JSON.stringify(result);assert.equal(result.user.id,ordinary.id);assert.equal(result.user.email,'p***@example.org');for(const secret of ['hash:','session-hash','csrf-value','public-key','cred-1','pending-hash','recovery','resume-hash','person@'])assert(!text.includes(secret),secret);}
  await assert.rejects(f.admin.lookup({handle:'ops',owner:member.id},member.context),{code:'invalid_request'});
  await assert.rejects(f.admin.lookup({prefix:'o'},member.context),{code:'invalid_request'});
- const audit=JSON.stringify((await f.admin.audit({fromSeq:1},boot.context)).entries);assert(!audit.includes('person@example.org'));assert(!audit.includes(PASSWORD));
+ const audit=JSON.stringify((await f.admin.audit({fromSeq:1},boot.context)).entries);assert(!audit.includes('person@example.org'));assert(!audit.includes(f.config.BOOTSTRAP_TOKEN_SHA256));
 });
 
 test('boot is permanently unclaimable through signup, policy, onboarding, system invitations and admin claims',async()=>{
@@ -209,7 +212,7 @@ test('admin routes require exact origin, explicit actor and set an isolated Http
   assert.equal(await adminRoutes({path:'/api/other',request:new Request(origin+'/api/other'),env,local:false,context:{},body,json}),null);
   assert.equal((await call('/api/admin/boot/start',{bootToken:token},{Origin:'https://evil.example'})).status,403);
   assert.equal((await call('/api/admin/boot/start',{bootToken:token},{},{setupBinding:'route-browser'})).status,200);
-  const done=await call('/api/admin/boot/complete',{bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},{},{setupBinding:'route-browser'}),cookie=done.headers.get('Set-Cookie'),result=await done.json();
+  const done=await call('/api/admin/boot/complete',{bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},{},{setupBinding:'route-browser'}),cookie=done.headers.get('Set-Cookie'),result=await done.json();
   assert.match(cookie,/^__Host-bindle_boot=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict; Max-Age=\d+; Secure$/);assert.equal(result.sessionToken,undefined);
   const session=cookie.split(';')[0];await assert.rejects(call('/api/admin/overview',{},{Cookie:session,'X-CSRF-Token':result.csrfToken}),{code:'actor_required'});
   assert.equal((await call('/api/admin/overview',{},{Cookie:session,'X-CSRF-Token':result.csrfToken,'X-Bindle-Admin-Actor':'boot'},{csrfToken:result.csrfToken})).status,200);
@@ -255,9 +258,9 @@ both('boot can end its own access early; only a new token restores it',async f=>
  await assert.rejects(f.admin.bootEnd({},boot.context),{code:'invalid_request'});
  const info=await f.admin.bootSessionInfo({},{...boot.context,csrfToken:undefined});assert.equal(info.csrfToken,boot.csrfToken);assert.equal(info.bootExpiresAt,boot.bootExpiresAt);
  f.advance(301000);await assert.rejects(f.admin.bootEnd({confirm:'end-boot-access'},boot.context),{code:'step_up_required'});
- await f.admin.bootStepUp({method:'password',password:PASSWORD},boot.context);
+ await f.bootStepUp(boot.context);
  assert.equal((await f.admin.bootEnd({confirm:'end-boot-access'},boot.context)).ended,true);
- await assert.rejects(f.admin.overview({},boot.context),{code:'boot_expired'});await assert.rejects(f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx()),{code:'boot_expired'});await assert.rejects(f.admin.bootSessionInfo({},boot.context),{code:'boot_expired'});
+ await assert.rejects(f.admin.overview({},boot.context),{code:'boot_expired'});await assert.rejects(f.bootLogin(),{code:'boot_expired'});await assert.rejects(f.admin.bootSessionInfo({},boot.context),{code:'boot_expired'});
  const overview=await f.admin.overview({},member.context);assert.equal(overview.boot.status,'ended');assert.equal(overview.boot.active,false);
  assert.deepEqual((await f.admin.audit({},member.context)).entries.filter(e=>e.action==='boot.end').map(e=>[e.before.status,e.after.status]),[['active','ended']]);
  const restored=await f.claimBoot(await f.deploy(f.now()),'restore-browser');assert.equal(restored.mode,'restore');assert.equal((await f.admin.overview({},restored.context)).boot.active,true);
@@ -273,7 +276,7 @@ both('console access reports only the caller\'s own administrator authority',asy
 test('admin console routes: passkey-only administrator step-up, boot session restore and end clear the cookie',async()=>{
  const f=fixture();try{const token=await f.deploy(),env={APP_ORIGIN:origin,ADMIN_SERVICE:async()=>f.admin},json=(data,status=200,headers)=>new Response(JSON.stringify(data),{status,headers}),body=async request=>request.json();
   const call=(path,input,headers={},context={})=>adminRoutes({path,request:new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(input)}),env,local:true,context:{remoteIP:'192.0.2.1',...context},body,json});
-  await call('/api/admin/boot/start',{bootToken:token},{},{setupBinding:'route-browser'});const done=await call('/api/admin/boot/complete',{bootToken:token,method:'password',password:PASSWORD,acknowledgeExpiry:true},{},{setupBinding:'route-browser'}),result=await done.json(),cookie=done.headers.get('Set-Cookie').split(';')[0],bootSession=cookie.split('=')[1];
+  await call('/api/admin/boot/start',{bootToken:token},{},{setupBinding:'route-browser'});const done=await call('/api/admin/boot/complete',{bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},{},{setupBinding:'route-browser'}),result=await done.json(),cookie=done.headers.get('Set-Cookie').split(';')[0],bootSession=cookie.split('=')[1];
   assert.match(cookie,/^bindle_boot=/);
   const info=await (await call('/api/admin/boot/session',{},{Cookie:cookie},{})).json();assert.equal(info.csrfToken,result.csrfToken);assert.equal(info.bootExpiresAt,result.bootExpiresAt);
   assert.equal((await call('/api/admin/boot/session',{},{Cookie:cookie,Origin:'https://evil.example'})).status,403);
@@ -348,22 +351,45 @@ test('boot passkey begin: the HTTP adapter issues and reads the caller nonce coo
   const ok=await call('/api/admin/boot/login',{method:'passkey',challengeId,response:{id:'boot-key',ok:true}},cookie);assert.equal(ok.status,200);
  }finally{f.close();}
 });
-// Wargame 2026-10-23 #10: password guessing against the single boot principal has ceilings independent of the address,
-// under the production abuse policy, and does not consume the passkey path.
-test('boot password login has principal and global ceilings across many source addresses',async()=>{
- const {enforceAbusePolicy}=await import('../packages/core/abuse-policy.mjs');
- const f=fixture();try{await f.claimBoot(await f.deploy());let verifies=0;const verify=f.admin.passwordHasher.verify;f.admin.passwordHasher={...f.admin.passwordHasher,verify:async(...a)=>{verifies++;return verify(...a);}};
-  const counts=new Map(),windows=new Map(),resource={consume:async w=>{counts.set(w.key,(counts.get(w.key)??0)+1);const at=f.now(),old=windows.get(w.key),next=!old||old.start+w.windowMs<=at?{start:at,n:1}:{start:old.start,n:old.n+1};windows.set(w.key,next);return next.n<=w.limit;}};f.admin.rateLimiter={check:async({operation,remoteIP})=>enforceAbusePolicy(resource,{operation,ipHash:remoteIP,subnetHash:remoteIP})};
-  let limited=0;for(let i=0;i<300;i++)await f.admin.bootLogin({method:'password',password:'guess-'+i+'-xxxxxxxxxxxx'},f.ctx({remoteIP:'2001:db8::'+i.toString(16)})).catch(e=>{if(e.code==='rate_limited')limited++;});
-  assert.equal(verifies,20,'20 password checks per 5 minutes for the principal');assert.equal(limited,280);
-  f.advance(300001);await f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx({remoteIP:'203.0.113.5'}));
-  for(let period=0;period<10;period++){f.advance(300001);for(let i=0;i<20;i++)await f.admin.bootLogin({method:'password',password:'g'.repeat(20)},f.ctx({remoteIP:'2001:db8:1::'+(period*20+i).toString(16)})).catch(()=>{});}
-  assert.equal(verifies,200,'200 password checks per hour for the host, though every 5-minute window was respected');
-  // Passkey begin is counted apart: password guessing never exhausts it.
-  assert.equal(counts.get('boot-login-begin:principal'),undefined);
- }finally{f.close();}
+// Boot is passkey only (coordinator decision under owner delegation, 2026-10-29, provisional; sign-in spike N5). The
+// single-use, expiring deploy boot token is the break-glass; a password is refused at setup, sign-in and step-up alike.
+both('boot password setup, sign-in and step-up are refused with one error and change nothing',async f=>{
+ const token=await f.deploy();await f.admin.bootStart({bootToken:token},f.ctx({setupBinding:'op'}));
+ for(const input of [{bootToken:token,method:'password',password:'a long boot operator password',acknowledgeExpiry:true},{bootToken:token,method:'password',acknowledgeExpiry:true},{bootToken:token,acknowledgeExpiry:true},{bootToken:token,method:'passkey',password:'a long boot operator password',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true}])
+  await assert.rejects(f.admin.bootComplete(input,f.ctx({setupBinding:'op'})),{code:input.method==='passkey'?'invalid_request':'invalid_method'});
+ assert.equal(await f.store.get('boot/principal'),null);assert.equal((await f.admin.bootStatus({},f.ctx())).token,'reserved','refused setups leave the token reserved for the passkey');
+ const boot=await f.admin.bootComplete({bootToken:token,method:'passkey',response:{id:BOOT_KEY,ok:true},acknowledgeExpiry:true},f.ctx({setupBinding:'op'})),context=f.ctx({actor:'boot',bootSession:boot.sessionToken,csrfToken:boot.csrfToken});
+ const before=await f.store.get('boot/sessions');
+ for(const input of [{method:'password',password:'a long boot operator password'},{password:'a long boot operator password'},{}]){
+  await assert.rejects(f.admin.bootLogin(input,f.ctx()),{code:'invalid_method'});await assert.rejects(f.admin.bootStepUp(input,context),{code:'invalid_method'});
+ }
+ assert.deepEqual((await f.store.get('boot/sessions')).sessions.map(s=>s.id),before.sessions.map(s=>s.id));
+ const begin=await f.admin.bootLoginBegin({},f.ctx());assert.deepEqual(Object.keys(begin).sort(),['authenticationOptions','challengeId','passkey']);
+ assert.ok((await f.bootLogin()).sessionToken);
 });
-
+both('a legacy password-only boot record is reset on load, cannot sign in, and a new boot token restores it',async f=>{
+ const token=await f.deploy(),boot=await f.claimBoot(token),principal=await f.store.get('boot/principal'),sessions=await f.store.get('boot/sessions'),{revision,...stored}=principal;
+ // What an older build stored for a password-only boot: no passkey, an argon2 hash under the old field name.
+ await f.store.commit({expect:{'boot/principal':revision},writes:{'boot/principal':{...stored,credentials:[],passwordHash:'$argon2id$legacy'}}});
+ // The reset runs on the first read (here, sign-in begin): the hash is dropped and every boot session ends.
+ assert.deepEqual(await f.admin.bootLoginBegin({},f.ctx()),{passkey:false});
+ const reset=await f.store.get('boot/principal');assert.equal(Object.hasOwn(reset,'passwordHash'),false);assert.deepEqual(reset.credentials,[]);assert.equal(reset.generation,principal.generation);
+ assert.deepEqual((await f.store.get('boot/sessions')).sessions,[]);assert.ok(sessions.sessions.length>0);
+ await assert.rejects(f.admin.overview({},boot.context),{code:'unauthorized'});
+ for(const input of [{method:'password',password:'the old boot operator password'},{method:'passkey',challengeId:'c'.repeat(43),response:{id:BOOT_KEY,ok:true}}])await assert.rejects(f.admin.bootLogin(input,f.ctx()),{code:input.method==='password'?'invalid_method':'unauthorized'});
+ const audit=(await f.storage.list('audit/',{limit:100})).map(({value})=>value).filter(e=>e.action==='boot.reset');assert.equal(audit.length,1);assert.equal(audit[0].after.reset,'boot-password-retired-v1');assert.equal(JSON.stringify(audit).includes('$argon2id$legacy'),false);
+ // Idempotent: a clean principal is never rewritten again.
+ const rev=(await f.store.get('boot/principal')).revision;await f.admin.bootLoginBegin({},f.ctx());assert.equal((await f.store.get('boot/principal')).revision,rev);
+ // Restore with a new deploy token and a passkey.
+ f.advance(1000);const restored=await f.claimBoot(await f.deploy(),'restore-browser','restored-passkey');assert.equal(restored.mode,'restore');
+ assert.ok((await f.bootLogin('restored-passkey')).sessionToken);assert.equal((await f.store.get('boot/principal')).generation,principal.generation+1);
+});
+both('the boot token itself never reaches the admin store or the audit',async f=>{
+ const token=await f.deploy(),boot=await f.claimBoot(token);await f.bootStepUp(boot.context);
+ const rows=JSON.stringify([...await f.storage.metadata.list({prefix:'admin/',limit:1000})]);assert.ok(rows.includes('boot/principal'));
+ assert.equal(rows.includes(token),false);assert.equal(rows.includes(token.slice(6,40)),false);
+ const audit=JSON.stringify((await f.admin.audit({fromSeq:1},boot.context)).entries);assert.equal(audit.includes(f.config.BOOTSTRAP_TOKEN_SHA256),false,'only a 12-character digest prefix is audited');
+});
 // Review 2026-10-23 (provisional): the principal window on boot passkey begin is high (600 per 5 minutes) and the
 // per-address windows do the work, so a flood from about 100 addresses cannot hold off the operator's begin.
 test('boot passkey begin: a distributed begin flood does not exhaust the principal window before the operator begins',async()=>{

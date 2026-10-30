@@ -4,6 +4,7 @@ import {ingressError} from '../../../packages/messaging-engine/domains/receive.m
 import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,fromBase64url} from '../../../packages/messaging-protocol/index.mjs';
 import {fault,MailboxFault} from '../../../packages/messaging-engine/faults.mjs';
 import {RPC_MEDIA_TYPE,isRPCMediaType,rpcResponse} from '../../../packages/sdk/src/rpc-wire.mjs';
+import {INTEGRATION_EVENT_MEDIA_TYPE,INTEGRATION_EVENT_MAX_BYTES,IntegrationEventFault,integrationEventRejection} from '../../../packages/sdk/src/integration-events.mjs';
 import {enabled} from './mailbox.mjs';
 import {handleConversationIngress} from '../../../packages/messaging-engine/domains/conversations.mjs';
 import {createFirstContactBudget} from '../../../packages/messaging-engine/domains/invites.mjs';
@@ -51,9 +52,12 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
    if(request.method==='POST'&&['/bindle/rpc','/bindle/resources','/bindle/events'].includes(path)){
     const contentType=request.headers.get('Content-Type')?.split(';')[0];
     if(path==='/bindle/events'){
-     if(contentType!=='application/secevent+jwt')fault('invalid_input','Use application/secevent+jwt.',415);
+     // Integration events are untagged COSE_Sign1 CWTs (integrations §6.1; CBOR phase 5). The verifier port runs
+     // verifyIntegrationEvent (@3sln/bindle/integration-events.mjs); a refused event is a permanent 400 with a CBOR body.
+     if(contentType?.trim().toLowerCase()!==INTEGRATION_EVENT_MEDIA_TYPE)fault('invalid_input',`Use ${INTEGRATION_EVENT_MEDIA_TYPE}.`,415);
      if(typeof services?.verifyEvent!=='function')fault('recipient_unavailable','Event verifier unavailable.',503);
-     const event=await services.verifyEvent({url:request.url,token:new TextDecoder('utf-8',{fatal:true}).decode(await bodyBytes(request,65536))});
+     let event;try{event=await services.verifyEvent({url:request.url,contentType:request.headers.get('Content-Type'),bytes:await bodyBytes(request,INTEGRATION_EVENT_MAX_BYTES)});}
+     catch(error){if(error instanceof IntegrationEventFault)return new Response(integrationEventRejection(error),{status:error.status,headers:{...headers,'Content-Type':'application/cbor'}});throw error;}
      if(event?.unknown===true)return new Response(null,{status:202,headers});
      if(!event?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(event.owner);await box.run(event.owner,'shell.integration-event',{input:{event}});return new Response(null,{status:202,headers});
     }

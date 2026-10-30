@@ -87,6 +87,25 @@ test('outbound messages follow the per-part events contract; #avatar emits only 
   assert.equal(outbound('sign-in',{...P.readyMessage({part:'sign-in',version:1,issuer}),issuer:'https://other.example'}),null);
 });
 
+// ui-elements-audit §4.3 (provisional): element defaults = island defaults = THEME_DEFAULTS, so a composition reads as
+// one component whatever mounts. The decorative divider is no token and carries no information; the two-tone island
+// focus ring (on-accent inside accent) and the 3:1 control boundary are covered by the contrast matrix.
+test('element, island shell and protocol defaults are one palette in both schemes',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const shared=await readFile(new URL('../packages/sdk/src/elements/shared.mjs',import.meta.url),'utf8'),shell=await readFile(new URL('../apps/embed/styles/shell.css',import.meta.url),'utf8');
+  const element={surface:'surface','surface-raised':'raised',text:'text','text-muted':'muted',accent:'accent','on-accent':'on-accent',border:'border',focus:'focus',danger:'danger'};
+  const block=name=>new RegExp(`const ${name}='([^']+)'`).exec(shared)[1];
+  for(const [scheme,source] of [['light',block('light')],['dark',block('dark')]])for(const token of P.COLOR_TOKENS){
+    const value=new RegExp(`--_${element[token]}:var\\(--bindle-${token},(#[0-9a-f]{6})\\)`).exec(source)?.[1];
+    assert.equal(value,P.THEME_DEFAULTS[scheme][token],`element ${scheme} ${token}`);
+  }
+  const lightShell=/:root\{color-scheme:light dark;[^}]*\}/.exec(shell)[0],darkShell=/:root\[data-scheme=dark\]\{[^}]*\}/.exec(shell)[0],mediaShell=/@media \(prefers-color-scheme:dark\)\{:root:not\(\[data-scheme=light\]\)\{[^}]*\}\}/.exec(shell)[0];
+  for(const [scheme,source] of [['light',lightShell],['dark',darkShell],['dark',mediaShell]])for(const token of P.COLOR_TOKENS)
+    assert.equal(new RegExp(`--d-${token}:(#[0-9a-f]{6})`).exec(source)?.[1],P.THEME_DEFAULTS[scheme][token],`shell ${scheme} ${token}`);
+  for(const scheme of ['light','dark']){const d=P.THEME_DEFAULTS[scheme];
+    assert.ok(P.contrastRatio(d['on-accent'],d.accent)>=3,'two-tone focus ring');assert.ok(P.contrastRatio(d.focus,d.surface)>=3&&P.contrastRatio(d.focus,d['surface-raised'])>=3,'inset ring on rows');}
+});
+
 test('theme tokens: allowlist, grammar and the full contrast matrix; a failing pair reverts both',()=>{
   for(const scheme of ['light','dark'])for(const [fore,back,min] of P.CONTRAST_PAIRS)assert.ok(P.contrastRatio(P.THEME_DEFAULTS[scheme][fore],P.THEME_DEFAULTS[scheme][back])>=min,`${scheme} ${fore}/${back}`);
   assert.equal(P.CONTRAST_PAIRS.length,13);

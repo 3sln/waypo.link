@@ -202,7 +202,7 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
     assert.deepEqual(await types_(page,'v1'),['ready']);
   });
 
-  await t.test('avatar fills min(width,height), centred; monogram fallback with no binding',async()=>{
+  await t.test('avatar fills min(width,height), centred; transparent with no binding',async()=>{
     await page.evaluate(s=>{for(const [id,w,h] of [['m1',120,60],['m2',50,200]]){window.mount(id,'avatar',{w,h});}},subject);
     for(const id of ['m1','m2'])await ready(page,id);
     const iframes=await page.$$('#slot iframe'),m1=await iframes.at(-2).contentFrame(),m2=await iframes.at(-1).contentFrame();
@@ -211,10 +211,10 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
       await until(frame,()=>document.querySelector('img.avatar')?.src.startsWith('blob:'),null,8000);
       const box=await frame.evaluate(()=>{const r=document.querySelector('img.avatar').getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};});
       const s=Math.min(w,h);assert.deepEqual(box,{x:(w-s)/2,y:(h-s)/2,w:s,h:s});
-      const bg=monogramColors(subject,'light').background,expected=[1,3,5].map(i=>parseInt(bg.slice(i,i+2),16));
+      // No binding: a transparent tile of the bucket size, so the element's own avatar shows (components-v1 §6; V2).
       const pixel=async()=>frame.evaluate(async()=>{const img=document.querySelector('img.avatar');await img.decode().catch(()=>{});const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const x=c.getContext('2d');x.drawImage(img,0,0);return [img.naturalWidth,...x.getImageData(1,1,1,1).data];});
-      await until(frame,async e=>{const img=document.querySelector('img.avatar');await img.decode().catch(()=>{});if(!img.naturalWidth)return false;const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const x=c.getContext('2d');x.drawImage(img,0,0);const d=x.getImageData(1,1,1,1).data;return d[3]===255&&d[0]===e[0]&&d[1]===e[1]&&d[2]===e[2];},expected);
-      const [natural,...rgba]=await pixel();assert.equal(natural,64);assert.deepEqual(rgba,[...expected,255],'the monogram tile, opaque, at the bucket size');
+      await until(frame,async e=>{const img=document.querySelector('img.avatar');await img.decode().catch(()=>{});if(!img.naturalWidth)return false;const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const x=c.getContext('2d');x.drawImage(img,0,0);const d=x.getImageData(1,1,1,1).data;return d[3]===0;},null);
+      const [natural,...rgba]=await pixel();assert.equal(natural,64);assert.equal(rgba[3],0,'a transparent tile at the bucket size');
     }
     assert.deepEqual(await types_(page,'m1'),['ready']);
   });
@@ -303,7 +303,7 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
   await t.test('light/dark follows name and scheme; reduced motion removes transitions',async()=>{
     const page=f.page2;await page.evaluate(()=>window.mount('d1','account-switcher',{w:320,h:320,cs:'dark'}));await ready(page,'d1');
     const d1=await(await page.$$('#slot iframe')).at(-1).contentFrame();await until(d1,()=>Boolean(document.querySelector('.switcher')));
-    assert.equal(await d1.evaluate(()=>getComputedStyle(document.querySelector('.switcher')).backgroundColor),'rgb(23, 25, 29)');
+    assert.equal(await d1.evaluate(()=>getComputedStyle(document.querySelector('.switcher')).backgroundColor),'rgb(27, 29, 34)'); // THEME_DEFAULTS.dark.surface #1b1d22
     await page.evaluate(()=>window.send('d1',{v:1,type:'scheme',colorScheme:'light'}));await until(d1,()=>document.documentElement.dataset.scheme==='light');
     assert.equal(await d1.evaluate(()=>getComputedStyle(document.querySelector('.switcher')).backgroundColor),'rgb(255, 255, 255)');
     assert.equal(await d1.evaluate(()=>getComputedStyle(document.querySelector('.control')).transitionDuration.split(',')[0]),'0.12s');

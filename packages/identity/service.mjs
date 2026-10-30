@@ -165,7 +165,7 @@ const LOGIN_TOKEN=/^pl1\.([A-Za-z0-9_-]{1,800})\.([A-Za-z0-9_-]{43})$/;
 export function reissueMarker(account){const marker=account?.recoveryReissue;return marker&&typeof marker==='object'&&RECOVERY_REISSUE_REASONS.includes(marker.reason)&&Number.isSafeInteger(marker.at)&&marker.at>=0?marker:null;}
 const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.fileId==='string'&&RECOVERY_FILE_ID.test(value.fileId)&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
 /** Account security notices sent to every channel (review 2026-10-23 R1(ii)). */
-export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','email-sign-in-enabled','email-sign-in-removed','notice-email-changed','sessions-revoked','sessions-evicted','email-sign-in','email-sign-in-cancelled']);
+export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['email-added','passkey-added','passkey-removed','email-changed','email-sign-in-enabled','email-sign-in-removed','notice-email-changed','sessions-revoked','sessions-evicted','email-sign-in','email-sign-in-cancelled']);
 export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','email-login-disabled','passkey-registered','passkey-added','passkey-removed','recovery-file-issued','recovery-file-reissued','recovery-reissue-cancelled','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
@@ -1170,6 +1170,9 @@ export class IdentityService {
     account.emails = account.emails.map(item => item.address === entry.address && item.state === 'unverified' ? (({ expiresAt, ...rest }) => ({ ...rest, state: 'verified', verifiedAt: now, notices: !hasNotice }))(item) : item);
     account.emailChallenges = (account.emailChallenges ?? []).filter(c => c !== challenge);
     this.securityChanged(account); delete account.noticeWaiver;
+    // A second or later verified address notifies every channel, the new address included (coordinator decision under
+    // owner delegation 2026-10-29, provisional). The first verified address is the account's only one: no notice.
+    if (hasNotice) this.queueNotice(account, 'email-added', await this.sessionID(session));
     this.audit(account, 'email-linked');
     try { await this.save(account, revision); } catch (error) { if (error?.code === 'conflict') { const fresh = await this.repository.findByEmail?.(entry.address); if (fresh && fresh.id !== account.id) invalid(); } throw error; }
     return { linked: true, account: await this.projectAccount(account) };

@@ -86,8 +86,15 @@ export async function renew(client,session,signal){
   const key=session.dpopJkt?await client.dpopKey(session.dpopJkt):null;
   if(session.dpopJkt&&!key)throw new Error('This application session could not be renewed. Sign in again.');
   const requestStartedAt=client.clock(),body=new URLSearchParams({grant_type:'refresh_token',refresh_token:session.refresh_token,client_id:session.client_id});
-  const {response,json:token}=await tokenRequest(client,{endpoint:session.tokenEndpoint,issuer:session.issuer,body,key,signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])});
-  if(!response.ok)throw new Error('This application session could not be renewed. Sign in again.');
+  let response,token;
+  // No answer from the provider (offline, timeout, unreadable body) is coded 'network-error': a persisted session is
+  // kept for a later attempt (W11) instead of being dropped.
+  try{({response,json:token}=await tokenRequest(client,{endpoint:session.tokenEndpoint,issuer:session.issuer,body,key,signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])}));}
+  catch(error){if(signal.aborted)throw error;throw coded(error?.message||'The provider could not be reached to renew this session.','network-error');}
+  // An authoritative refusal of the refresh grant (revoked at the provider, app removed, family ended) is coded
+  // 'revoked' so the app can tell it from expiry (ui-elements-audit G6); a provider outage (5xx, 429) is coded
+  // 'unavailable'; anything else stays a plain failure.
+  if(!response.ok)throw response.status===400&&token?.error==='invalid_grant'?coded('Access to this app was ended at the provider. Sign in again.','revoked'):response.status>=500||response.status===429?coded('The provider is temporarily unavailable.','unavailable'):new Error('This application session could not be renewed. Sign in again.');
   const {auth_time:_ignored,...rest}=token;
   return validateAccessResponse(rest,{issuer:session.issuer,clientId:session.client_id,rpcEndpoint:session.rpcEndpoint,tokenEndpoint:session.tokenEndpoint,preferencesContract:session.preferencesContract,revocationEndpoint:session.revocationEndpoint,dpopJkt:session.dpopJkt,clock:client.clock,requestStartedAt,previous:session});
 }

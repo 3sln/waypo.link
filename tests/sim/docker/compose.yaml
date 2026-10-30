@@ -1,0 +1,18 @@
+# One `sim` service: the simulation orchestrator (providers, sample apps, proxy, Chromium) in one container.
+# Artifacts (manifest, gallery, screenshots) land in ./artifacts/sim on the host.
+services:
+  sim:
+    build:
+      context: ../../..
+      dockerfile: tests/sim/docker/Dockerfile
+    init: true
+    shm_size: 1gb
+    cpus: 2
+    mem_limit: 4g
+    environment:
+      SIM_SEED: ${SIM_SEED:-7}
+    volumes:
+      - ../../../artifacts/sim:/work/artifacts/sim
+    ports:
+      # The CONNECT proxy, for a headed browser on the host while `--keep` holds the world open (loopback only).
+      - "127.0.0.1:3128:3128"

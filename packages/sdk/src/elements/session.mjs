@@ -9,11 +9,11 @@ import {ElementBase,emit,localize,sessionContext,startFlow} from './shared.mjs';
 
 const presentations=['auto','popup','redirect'];
 
-const forwarded=[['change','bindle-session-change'],['flow-start','bindle-flow-start'],['flow-end','bindle-flow-end'],['flow-state','bindle-flow-state'],['capabilities-change','bindle-capabilities-change']];
+const forwarded=[['restore-end','bindle-session-restored'],['change','bindle-session-change'],['flow-start','bindle-flow-start'],['flow-end','bindle-flow-end'],['flow-state','bindle-flow-state'],['capabilities-change','bindle-capabilities-change'],['sessions-change','bindle-sessions-change']];
 const listOf=value=>value?value.split(/\s+/).filter(Boolean):null;
 
 export class BindleSessionElement extends ElementBase {
-  static observedAttributes=['presentation','popup-fallback','default-host','theme','lang','islands','island-issuers'];
+  static observedAttributes=['presentation','popup-fallback','default-host','theme','lang','islands','island-issuers','persist'];
   #client=null;#clientIds;#transports=[];#entryExtensions;#controller=null;#requests;#ready;#resolveReady;#initiator=null;#disposeTimer=null;#loading=null;#settled=false;
   constructor(){
     super();
@@ -38,7 +38,22 @@ export class BindleSessionElement extends ElementBase {
   get requests(){return this.#controller?.requests??this.#requests??[];}
   set requests(value){this.#requests=Array.isArray(value)?value:[];if(this.#controller)this.#controller.requests=this.#requests;}
   get session(){return this.#controller?.session??null;}
-  get state(){return this.#controller?.state??'signed-out';}
+  // 'restoring' until persisted sessions were read (W11), so descendants show a loading state, never a flash of
+  // signed-out content; then signed-out | pending | signed-in.
+  get state(){return this.#controller?.state??(!this.#settled&&this.#mayRestore()?'restoring':'signed-out');}
+  #mayRestore(){return this.persist!=='off'&&(this.#client?!!this.#client.canPersist:!!globalThis.indexedDB);}
+  // persist="device|off" (W11): 'device' (default) keeps eligible app sessions (DPoP-bound, idle lifetime advertised,
+  // user-interactive sign-in) in this app's own storage across reloads; 'off' keeps them in memory only.
+  get persist(){return this.getAttribute('persist')==='off'?'off':'device';}
+  set persist(value){this.setAttribute('persist',value==='off'?'off':'device');}
+  // Where sessions live now: 'device', 'memory' (storage unavailable, e.g. some private modes), 'off' or 'pending'.
+  get persistence(){return this.#controller?.persistence??(this.persist==='off'?'off':'pending');}
+  // Every held app session (frozen views, first-seen order) and the last account change {previous, session, cause}
+  // (ui-elements-audit G4, G6). Empty / null before the controller loads.
+  get sessions(){return this.#controller?.sessions??Object.freeze([]);}
+  get lastChange(){return this.#controller?.lastChange??null;}
+  // False until the headless controller has loaded (or failed to): a gate shows its loading content meanwhile.
+  get loaded(){return this.#settled;}
   get flow(){return this.#controller?.flow??null;}
   get flowInitiator(){return this.#initiator;}
   // Frozen capability set of the current session's issuer (or the default provider when signed out); null before discovery.
@@ -52,19 +67,19 @@ export class BindleSessionElement extends ElementBase {
 
   connectedCallback(){
     if(this.#disposeTimer!==null){clearTimeout(this.#disposeTimer);this.#disposeTimer=null;}
-    this.#loading??=Promise.all([import('../identity.mjs'),import('../flows.mjs')]).then(modules=>{this.#settled=true;this.#start(...modules);},error=>{this.#settled=true;emit(this,'bindle-error',{code:'configuration',message:error?.message??'The Bindle controller could not load.'});this.#resolveReady(this);});
+    this.#loading??=Promise.all([import('../identity.mjs'),import('../flows.mjs')]).then(modules=>this.#start(...modules),error=>{this.#settled=true;emit(this,'bindle-error',{code:'configuration',message:error?.message??'The Bindle controller could not load.'});this.#resolveReady(this);});
   }
-  #start({BindleClient},{createSession}){
+  async #start({BindleClient},{createSession}){
     const {t,locale}=localize(this);
     let client=this.#client;
     try{
       client??=new BindleClient({clientId:this.#clientIds??this.getAttribute('client-id')??undefined,clientMetadataUrl:this.getAttribute('client-metadata')??undefined,redirectUri:this.getAttribute('redirect-uri'),defaultHost:this.defaultHost,emailFallback:this.getAttribute('email-fallback')!=='off'});
     }catch(error){
-      emit(this,'bindle-error',{code:'configuration',message:error.message});
+      this.#settled=true;emit(this,'bindle-error',{code:'configuration',message:error.message});
       this.#resolveReady(this);return;
     }
     const policy=this.#islandPolicy();
-    this.#controller=createSession({client,presentation:this.presentation,popupFallback:this.getAttribute('popup-fallback')==='prompt'?'prompt':'redirect',requests:this.#requests??this.#readRequests(),uiLocales:[locale],colorScheme:this.#colorScheme(),localize:t,transports:this.#transports,entryExtensions:this.#entryExtensions,islands:policy.islands,islandIssuers:policy.issuers});
+    this.#controller=createSession({client,presentation:this.presentation,popupFallback:this.getAttribute('popup-fallback')==='prompt'?'prompt':'redirect',requests:this.#requests??this.#readRequests(),uiLocales:[locale],colorScheme:this.#colorScheme(),localize:t,transports:this.#transports,entryExtensions:this.#entryExtensions,islands:policy.islands,islandIssuers:policy.issuers,persist:this.persist});
     // An explicitly assigned client keeps its own default host unless the attribute is set.
     if(this.hasAttribute('default-host'))this.#controller.defaultHost=this.defaultHost;
     for(const [from,to] of forwarded)this.#controller.addEventListener(from,event=>{
@@ -73,6 +88,8 @@ export class BindleSessionElement extends ElementBase {
       if(from==='change')this.#controller.loadCapabilities();
       emit(this,to,event.detail);
     });
+    // Persisted sessions are restored first (bounded), so the first state descendants see is the real one.
+    await this.#controller.restored;this.#settled=true;
     // Initial state, so late listeners can read session or await ready (EE-13).
     emit(this,'bindle-session-change',this.#controller.session);
     this.#resolveReady(this);
@@ -92,6 +109,7 @@ export class BindleSessionElement extends ElementBase {
     if(name==='theme')controller.colorScheme=this.#colorScheme();
     if(name==='lang')controller.uiLocales=[localize(this).locale];
     if(name==='islands'||name==='island-issuers')controller.islandPolicy=this.#islandPolicy();
+    if(name==='persist')controller.persist=this.persist;
   }
   #colorScheme(){const theme=this.getAttribute('theme');return ['light','dark'].includes(theme)?theme:undefined;}
   #readRequests(){
@@ -120,7 +138,10 @@ export class BindleSessionElement extends ElementBase {
   switchAccount(options={}){return this[startFlow]('select-account',options);}
   reauthenticate(options={}){return this[startFlow]('reauthenticate',options);}
   endProviderSession(){return this[startFlow]('end-session',{});}
+  // signOut({subject?, issuer?, revoke?}): every held session, or exactly one (G5).
   signOut(options={}){return this.#controller?this.#controller.signOut(options):Promise.resolve({outcome:'completed'});}
+  // The app's back end learned that access ended at the provider: forgetSession({subject, issuer?, cause:'revoked'|'removed'}) (G6).
+  forgetSession(options={}){return this.#controller?this.#controller.forgetSession(options):{outcome:'canceled',code:'no-session'};}
   completeCallback(url){return this.#controller?this.#controller.completeCallback(url):Promise.resolve({outcome:'canceled',code:'not-configured'});}
   cancelFlow(){this.#controller?.cancelFlow();}
   continueInTab(){return this.#controller?.continueInTab();}

@@ -8,7 +8,7 @@ import { parseBootToken } from '../providers/admin-browser.mjs';
 export const UPDATED='admin-state-updated';
 export const current=r=>r.state.snapshot();
 export function update(r,ctx,patch){r.state.transition(next=>Object.assign(next,typeof patch==='function'?patch(next):patch));ctx.engineFeed.dispatchEvent(new Event(UPDATED));}
-const STEP_UP_MS=300000,PASSWORD_MIN=15,PASSWORD_MAX=128;
+const STEP_UP_MS=300000;
 export const failure=(code,extra={})=>Object.assign(new Error(code),{code,...extra});
 /** Every privileged datum is dropped together: overview, lookups, audit pages,
  * revealed links and open dialogs. Used on expiry, sign-out and lost authority. */
@@ -61,7 +61,7 @@ async function bootEntry(r,ctx){
   update(r,ctx,{phase:'boot-setup',tokenState:token,setup:null});
 }
 async function loginOptions(r,ctx){
-  try{const result=await r.api.call('boot','/api/admin/boot/login/begin',{});r.browser.storeSecret('bootLogin',result.passkey?{challengeId:result.challengeId,options:result.authenticationOptions}:null);update(r,ctx,{phase:'boot-signin',signin:{password:result.password===true,passkey:result.passkey===true}});}
+  try{const result=await r.api.call('boot','/api/admin/boot/login/begin',{});r.browser.storeSecret('bootLogin',result.passkey?{challengeId:result.challengeId,options:result.authenticationOptions}:null);update(r,ctx,{phase:'boot-signin',signin:{passkey:result.passkey===true}});}
   catch(error){if(error?.code==='boot_expired'){update(r,ctx,{phase:'boot-expired',signin:null});return;}if(error?.code==='boot_unclaimed'){update(r,ctx,{phase:'boot-setup',signin:null});return;}throw error;}
 }
 export class InitializeAdmin extends AdminAction {
@@ -86,20 +86,18 @@ export class BootStart extends AdminAction {
     const result=await r.api.call('boot','/api/admin/boot/start',{bootToken:token});
     if(!['claim','restore'].includes(result.mode)||!Number.isSafeInteger(result.completeBy)||!Number.isSafeInteger(result.accessMs))throw failure('unexpected_response');
     r.browser.storeSecret('bootRegistration',result.registrationOptions??null);
-    update(r,ctx,{setup:{mode:result.mode,completeBy:result.completeBy,accessMs:result.accessMs,method:'passkey'}});r.browser.focus('#boot-credential-heading');
+    update(r,ctx,{setup:{mode:result.mode,completeBy:result.completeBy,accessMs:result.accessMs}});r.browser.focus('#boot-credential-heading');
   }
   async failed(r,ctx,error){r.browser.storeSecret('bootToken',null);update(r,ctx,{setup:null,error:{code:error?.code??'unexpected_response',...error?.issuer?{issuer:error.issuer}:{}},...error?.code==='boot_token_consumed'?{tokenState:'used'}:{}});}
 }
-export class BootMethod extends Action {static deps={state:{write:true}};constructor(detail){super();this.detail=detail;}execute(r,ctx){const setup=current(r).setup;if(setup&&['passkey','password'].includes(this.detail.method))update(r,ctx,{setup:{...setup,method:this.detail.method},error:null});}}
 export class BootComplete extends AdminAction {
   async perform(r,ctx,detail){
     const setup=current(r).setup,token=r.browser.secret('bootToken'),values=detail.values??{};
     if(!setup||!token)throw failure('setup_lost');
     if(setup.completeBy<=r.browser.now())throw failure('setup_expired');
     if(values.acknowledge!=='on')throw failure('acknowledgement_required');
-    const body={bootToken:token,method:setup.method,acknowledgeExpiry:true};
-    if(setup.method==='password'){const password=values.password??'';if([...password].length<PASSWORD_MIN||[...password].length>PASSWORD_MAX)throw failure('invalid_password');if(password!==values.confirm)throw failure('password_mismatch');body.password=password;}
-    else body.response=await r.browser.createPasskey(r.browser.secret('bootRegistration'));
+    // Boot is passkey only (2026-10-29, provisional): the deploy boot token is the break-glass, not a password.
+    const body={bootToken:token,method:'passkey',acknowledgeExpiry:true,response:await r.browser.createPasskey(r.browser.secret('bootRegistration'))};
     const result=await r.api.call('boot','/api/admin/boot/complete',body);
     bootSession(r,ctx,result,{notice:result.mode==='restore'?'restored':'claimed'});
   }
@@ -107,9 +105,8 @@ export class BootComplete extends AdminAction {
 }
 export class BootSignin extends AdminAction {
   async perform(r,ctx,detail){
-    const method=detail.method==='passkey'?'passkey':'password',body={method};
-    if(method==='password'){if(typeof detail.values?.password!=='string'||!detail.values.password)throw failure('password_required');body.password=detail.values.password;}
-    else{const login=r.browser.secret('bootLogin');if(!login)throw failure('passkey_unavailable');body.challengeId=login.challengeId;body.response=await r.browser.authenticatePasskey(login.options);}
+    const login=r.browser.secret('bootLogin');if(!login)throw failure('passkey_unavailable');
+    const body={method:'passkey',challengeId:login.challengeId,response:await r.browser.authenticatePasskey(login.options)};
     bootSession(r,ctx,await r.api.call('boot','/api/admin/boot/login',body));
   }
   async failed(r,ctx,error){update(r,ctx,{error:{code:error?.code??'unexpected_response'}});if(r.browser.secret('bootLogin')&&error?.code!=='boot_expired')await loginOptions(r,ctx).catch(()=>{});}
@@ -143,4 +140,4 @@ export class Tick extends Action {
 export class SetAdminLocale extends Action {static deps={state:{write:true},browser:{}};constructor(detail){super();this.detail=detail;}execute(r,ctx){const locale=resolveLocale(this.detail.values?.locale);r.browser.applyLocale(locale);update(r,ctx,{locale});}}
 export class ConsoleUnavailable extends Action {static deps={state:{write:true},api:{},browser:{}};execute(r,ctx){wipe(r,ctx,{phase:'unavailable',error:{code:'network'}});}}
 export class DismissMessage extends Action {static deps={state:{write:true}};execute(r,ctx){update(r,ctx,{error:null,notice:'',noticeSubject:null});}}
-export const accessConstructors={'boot-start':BootStart,'boot-method':BootMethod,'boot-complete':BootComplete,'boot-signin':BootSignin,'boot-signin-options':BootSigninOptions,'sign-out':SignOut,'set-locale':SetAdminLocale,'dismiss':DismissMessage};
+export const accessConstructors={'boot-start':BootStart,'boot-complete':BootComplete,'boot-signin':BootSignin,'boot-signin-options':BootSigninOptions,'sign-out':SignOut,'set-locale':SetAdminLocale,'dismiss':DismissMessage};

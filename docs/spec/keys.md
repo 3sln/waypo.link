@@ -41,7 +41,7 @@ Where a profile needs a canonical form (for example to compute a digest), it use
 One key may sign several kinds of object. In the reference host, for example, one per-account P-256 signing key signs several profiles. Every profile a key signs MUST be separable from every other:
 
 - Every JWS profile verified against a key MUST check its exact `typ` before using any claim.
-- Every non-JWS profile MUST carry a distinct domain prefix in its signing input.
+- Every non-JWS profile MUST carry a distinct domain prefix in its signing input. A COSE_Sign1 profile carries its domain as the `external_aad` of the RFC 9052 Sig_structure and MUST also check an exact protected `typ`; a Sig_structure begins with the byte `0x84`, so it never equals a JWS signing input.
 - A provider MUST NOT sign caller-supplied bytes with an identity key. It signs only objects it constructs itself.
 - Adding a profile requires adding a row to the table below, or to a profile-specific table that this section names.
 
@@ -50,6 +50,7 @@ One key may sign several kinds of object. In the reference host, for example, on
 | `bindle-link-meta+jwt` (organization and relation invitation link types) | JWS input | `typ`, `bindle` magic, `type`, exact stored claims | [Organizations link envelope](extensions/organizations-link-envelope.md) §3; types in [Organizations](extensions/organizations.md) §5.1, §9.4 |
 | `bindle-relation-participation+jwt` (identity signing key) | JWS input | `typ` | [Organizations](extensions/organizations.md) §9.3 |
 | `bindle-relation-event+jwt` (certification key) | JWS input | `typ` | [Organizations](extensions/organizations.md) §9.9 |
+| Integration event, untagged COSE_Sign1 CWT (brokering `event` key; CBOR phase 5, provisional) | RFC 9052 Sig_structure, deterministic CBOR | protected `typ` `application/vnd.bindle.integration-event+cwt` plus `external_aad` `bindle-integration-event-v1`; distinct `kid` per brokering purpose | [Integrations](extensions/integrations.md) §6.1; [CBOR profile](cbor.md) §9 |
 | DPoP proofs presented with `BindleMember` or `BindleEntity` (the certified key, never an identity key) | JWS input | `typ` `dpop+jwt` ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html)) | [Organizations](extensions/organizations.md) §5.2, §9.5 |
 | Legacy `contact+jwt`, `bindle-contact-endpoint+jwt`, `bindle-inbox+jwt` (removed with contact links in contacts phase 4, 2026-10-28; no longer issued or verified; the `typ` values stay reserved) | JWS input (`eyJ…`) | `typ`, exact stored claims | Parlay legacy record |
 | Conversation v1 payloads (legacy, implemented) | Raw canonical JSON (`{…`), **no domain prefix** | First byte `{` versus `e` | Parlay legacy record |

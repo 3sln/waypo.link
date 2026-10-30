@@ -1,0 +1,3636 @@
+{
+ "runId": "2026-10-30-small-s7-0daa2b6-shots",
+ "scenario": "small",
+ "seed": 7,
+ "parts": [
+  "meet"
+ ],
+ "startedAt": "2026-10-30T01:19:31.609Z",
+ "durationMs": 50469,
+ "catalogueVersion": 2,
+ "profile": "sim",
+ "world": {
+  "profile": "sim",
+  "profileFlags": {
+   "SIGNUP_ENABLED": "true",
+   "FEDERATION_ENABLED": "true",
+   "FEDERATION_ENTRY_ENABLED": "true",
+   "CLIENT_METADATA_ENABLED": "true",
+   "INTEGRATIONS_ENABLED": "true",
+   "BROKERING_ENABLED": "true",
+   "APP_CLEAN_REMOVAL_ENABLED": "true",
+   "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+   "ARTEFACT_VERSIONS_ENABLED": "true",
+   "INTENT_LINKS_ENABLED": "true",
+   "INTENT_APP_HANDLERS_ENABLED": "true",
+   "INCREMENTAL_AUTH_ENABLED": "true",
+   "EXTENSIONS_ENABLED": "true",
+   "SESSION_KINDS_ENABLED": "true",
+   "SIGNALING_ENABLED": "true",
+   "SIGNALING_FOREIGN_ENABLED": "true",
+   "DIRECTORY_ENABLED": "true",
+   "EVENT_BUSES_ENABLED": "true",
+   "ORGANIZATIONS_ENABLED": "true",
+   "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+   "ORG_RELATIONS_ENABLED": "true",
+   "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+   "MEMBER_CERTIFICATES_ENABLED": "true",
+   "KEY_DELEGATION_ENABLED": "false",
+   "EMAIL_FLOW_V2": "false",
+   "EMAIL_SIGNUP_ENABLED": "false",
+   "PAID_SIGNUP_ENABLED": "false",
+   "WAITLIST_ENABLED": "false",
+   "BILLING_ENABLED": "false",
+   "MAIL_ENABLED": "false",
+   "PUSH_ENABLED": "false",
+   "LIFECYCLE_ENABLED": "false",
+   "ACCOUNT_DELETION_ENABLED": "false",
+   "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+   "IDENTITY_TRANSFER_IN_ENABLED": "false",
+   "MCP_ENABLED": "false"
+  },
+  "operatorSettings": {
+   "RELEASE_READY": "false",
+   "SIGNUP_CONTACT_REQUIRED": "false",
+   "SIGNUP_IP_WINDOW_MS": "1000",
+   "SIGNUP_IP_DAILY_LIMIT": "1000",
+   "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+   "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+   "SIGNUP_REGION_DAILY_LIMIT": "1000",
+   "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+   "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+   "REGION_POLICY": "allow-unknown",
+   "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+   "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+   "TURNSTILE_SECRET_KEY": "sim-turnstile-secret"
+  },
+  "seams": [
+   "DIRECTORY_DNS_LOOKUP",
+   "DIRECTORY_HTTPS_REQUEST",
+   "PORTABILITY_DNS_LOOKUP",
+   "PORTABILITY_HTTPS_REQUEST",
+   "CLIENT_METADATA_FETCH",
+   "APP_METADATA_FETCH",
+   "SIGNALING_EGRESS",
+   "INTEGRATION_EGRESS"
+  ],
+  "providers": {
+   "alpha": {
+    "origin": "https://alpha.example",
+    "embedOrigin": "https://embed.alpha.example",
+    "adapter": "node (apps/node/server.mjs createNodeServer, in process)",
+    "config": {
+     "APP_ORIGIN": "https://alpha.example",
+     "EMBED_ORIGIN": "https://embed.alpha.example",
+     "BRAND_NAME": "Alpha",
+     "SIGNUP_ENABLED": "true",
+     "FEDERATION_ENABLED": "true",
+     "FEDERATION_ENTRY_ENABLED": "true",
+     "CLIENT_METADATA_ENABLED": "true",
+     "INTEGRATIONS_ENABLED": "true",
+     "BROKERING_ENABLED": "true",
+     "APP_CLEAN_REMOVAL_ENABLED": "true",
+     "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+     "ARTEFACT_VERSIONS_ENABLED": "true",
+     "INTENT_LINKS_ENABLED": "true",
+     "INTENT_APP_HANDLERS_ENABLED": "true",
+     "INCREMENTAL_AUTH_ENABLED": "true",
+     "EXTENSIONS_ENABLED": "true",
+     "SESSION_KINDS_ENABLED": "true",
+     "SIGNALING_ENABLED": "true",
+     "SIGNALING_FOREIGN_ENABLED": "true",
+     "DIRECTORY_ENABLED": "true",
+     "EVENT_BUSES_ENABLED": "true",
+     "ORGANIZATIONS_ENABLED": "true",
+     "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+     "ORG_RELATIONS_ENABLED": "true",
+     "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+     "MEMBER_CERTIFICATES_ENABLED": "true",
+     "KEY_DELEGATION_ENABLED": "true",
+     "EMAIL_FLOW_V2": "false",
+     "EMAIL_SIGNUP_ENABLED": "false",
+     "PAID_SIGNUP_ENABLED": "false",
+     "WAITLIST_ENABLED": "false",
+     "BILLING_ENABLED": "false",
+     "MAIL_ENABLED": "false",
+     "PUSH_ENABLED": "false",
+     "LIFECYCLE_ENABLED": "false",
+     "ACCOUNT_DELETION_ENABLED": "false",
+     "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+     "IDENTITY_TRANSFER_IN_ENABLED": "false",
+     "MCP_ENABLED": "false",
+     "RELEASE_READY": "false",
+     "SIGNUP_CONTACT_REQUIRED": "false",
+     "SIGNUP_IP_WINDOW_MS": "1000",
+     "SIGNUP_IP_DAILY_LIMIT": "1000",
+     "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+     "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+     "SIGNUP_REGION_DAILY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+     "REGION_POLICY": "allow-unknown",
+     "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+     "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+     "TURNSTILE_SECRET_KEY": "sim-turnstile-secret",
+     "SIGNALING_FOREIGN_ISSUERS": "[\"https://beta.example\"]",
+     "ORG_FOREIGN_ISSUERS": "[\"https://beta.example\",\"https://second.example\"]",
+     "FEDERATION_SCHEMAS_KEYS": [
+      "https://3sln.me/artefacts/preferences/app-messages/v1",
+      "https://notes.example/fragments/sync/v1",
+      "https://photos.example/fragments/library/v1",
+      "https://board.example/fragments/boards/v1",
+      "https://board.example/buses/board-changes/v1"
+     ],
+     "ORGANIZATION_PLANS": {},
+     "FEDERATION_CONTRACTS": "{\"https://meet.example/kinds/call/v1\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]},\"https://meet.example/kinds/call/v1/envelope\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]}}",
+     "FEDERATION_CLIENTS": "[{\"id\":\"https://notes.example/bindle/client.json\",\"name\":\"Notes\",\"origin\":\"https://notes.example\",\"redirectUris\":[\"https://notes.example/bindle/callback\"]},{\"id\":\"https://board.example/bindle/client.json\",\"name\":\"Board\",\"origin\":\"https://board.example\",\"redirectUris\":[\"https://board.example/bindle/callback\"]}]"
+    },
+    "overrides": {},
+    "reviewedClients": [
+     "https://notes.example/bindle/client.json"
+    ]
+   },
+   "beta": {
+    "origin": "https://beta.example",
+    "embedOrigin": "https://embed.beta.example",
+    "adapter": "node (apps/node/server.mjs createNodeServer, in process)",
+    "config": {
+     "APP_ORIGIN": "https://beta.example",
+     "EMBED_ORIGIN": "https://embed.beta.example",
+     "BRAND_NAME": "Beta",
+     "SIGNUP_ENABLED": "true",
+     "FEDERATION_ENABLED": "true",
+     "FEDERATION_ENTRY_ENABLED": "true",
+     "CLIENT_METADATA_ENABLED": "true",
+     "INTEGRATIONS_ENABLED": "true",
+     "BROKERING_ENABLED": "true",
+     "APP_CLEAN_REMOVAL_ENABLED": "true",
+     "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+     "ARTEFACT_VERSIONS_ENABLED": "true",
+     "INTENT_LINKS_ENABLED": "true",
+     "INTENT_APP_HANDLERS_ENABLED": "true",
+     "INCREMENTAL_AUTH_ENABLED": "true",
+     "EXTENSIONS_ENABLED": "true",
+     "SESSION_KINDS_ENABLED": "true",
+     "SIGNALING_ENABLED": "true",
+     "SIGNALING_FOREIGN_ENABLED": "true",
+     "DIRECTORY_ENABLED": "true",
+     "EVENT_BUSES_ENABLED": "true",
+     "ORGANIZATIONS_ENABLED": "true",
+     "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+     "ORG_RELATIONS_ENABLED": "true",
+     "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+     "MEMBER_CERTIFICATES_ENABLED": "true",
+     "KEY_DELEGATION_ENABLED": "true",
+     "EMAIL_FLOW_V2": "false",
+     "EMAIL_SIGNUP_ENABLED": "false",
+     "PAID_SIGNUP_ENABLED": "false",
+     "WAITLIST_ENABLED": "false",
+     "BILLING_ENABLED": "false",
+     "MAIL_ENABLED": "false",
+     "PUSH_ENABLED": "false",
+     "LIFECYCLE_ENABLED": "false",
+     "ACCOUNT_DELETION_ENABLED": "false",
+     "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+     "IDENTITY_TRANSFER_IN_ENABLED": "false",
+     "MCP_ENABLED": "false",
+     "RELEASE_READY": "false",
+     "SIGNUP_CONTACT_REQUIRED": "false",
+     "SIGNUP_IP_WINDOW_MS": "1000",
+     "SIGNUP_IP_DAILY_LIMIT": "1000",
+     "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+     "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+     "SIGNUP_REGION_DAILY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+     "REGION_POLICY": "allow-unknown",
+     "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+     "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+     "TURNSTILE_SECRET_KEY": "sim-turnstile-secret",
+     "SIGNALING_FOREIGN_ISSUERS": "[\"https://alpha.example\"]",
+     "ORG_FOREIGN_ISSUERS": "[\"https://alpha.example\",\"https://second.example\"]",
+     "FEDERATION_SCHEMAS_KEYS": [
+      "https://3sln.me/artefacts/preferences/app-messages/v1",
+      "https://notes.example/fragments/sync/v1",
+      "https://photos.example/fragments/library/v1",
+      "https://board.example/fragments/boards/v1",
+      "https://board.example/buses/board-changes/v1"
+     ],
+     "ORGANIZATION_PLANS": {},
+     "FEDERATION_CONTRACTS": "{\"https://meet.example/kinds/call/v1\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]},\"https://meet.example/kinds/call/v1/envelope\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]}}",
+     "FEDERATION_CLIENTS": "[]"
+    },
+    "overrides": {},
+    "reviewedClients": []
+   }
+  },
+  "apps": {
+   "notes": {
+    "origin": "https://notes.example",
+    "registration": "client-id metadata at /bindle/client.json"
+   },
+   "photos": {
+    "origin": "https://photos.example",
+    "registration": "client-id metadata at /bindle/client.json"
+   }
+  },
+  "services": {
+   "second": {
+    "hosts": [
+     "second.example"
+    ],
+    "origin": "https://second.example",
+    "implementation": "tests/helpers/second-issuer.mjs (clean-room, fetch-shaped; GET only)"
+   },
+   "board": {
+    "hosts": [
+     "board.example"
+    ],
+    "origin": "https://board.example",
+    "registration": "client-id metadata at /bindle/client.json",
+    "seams": [
+     "ORGANIZATION_PLANS (operator allowlist filled at run time)"
+    ]
+   },
+   "meet": {
+    "hosts": [
+     "meet.example"
+    ],
+    "origin": "https://meet.example",
+    "registration": "client-id metadata at /bindle/client.json",
+    "sessionKind": "https://meet.example/kinds/call/v1",
+    "operatorHeld": "FEDERATION_CONTRACTS (line and line/envelope)"
+   },
+   "parlay": {
+    "hosts": [
+     "messages.example"
+    ],
+    "origin": "https://messages.example",
+    "shell": "apps/parlay/node/server.mjs createNodeShell, in process (PARLAY_ENABLED, INTENT_LINKS_ENABLED)",
+    "ports": "tests/sim/parlay-adapter.mjs",
+    "providerConfig": [
+     "KEY_DELEGATION_ENABLED=true",
+     "DELEGATION_SLOT_OCCUPANT (port)"
+    ]
+   }
+  },
+  "hosts": [
+   "challenges.cloudflare.com",
+   "alpha.example",
+   "embed.alpha.example",
+   "beta.example",
+   "embed.beta.example",
+   "second.example",
+   "board.example",
+   "meet.example",
+   "messages.example",
+   "notes.example",
+   "photos.example"
+  ]
+ },
+ "testOnly": {
+  "passkeys": "soft passkeys per person (tests/helpers/soft-passkey.mjs) behind navigator.credentials; real adapter verification",
+  "turnstile": "third-party stand-in for Cloudflare Turnstile (widget script and siteverify), tokens bound to host and action, single use",
+  "tls": "per-run local CA; browsers ignore certificate errors; servers trust only the run CA",
+  "network": "DNS and socket replaced at the providers' injection seams; screening unchanged",
+  "addresses": "each person browses through their own proxy port carrying a seeded address, passed to providers in the operator trusted client-IP header (TRUSTED_CLIENT_IP_HEADER)",
+  "clock": "real time (see gaps: a frozen browser clock breaks DPoP proof iat checks against real-time providers)"
+ },
+ "caveat": "Self-consistency, not interoperability: every provider here shares authors.",
+ "environment": {
+  "incompleteAssetBuild": false
+ },
+ "ledger": {
+  "digest": "0fa0ad88f859e5fe099d17e2fa5907fb49a3b485e624f4b43e3458c6876325b7",
+  "entries": [
+   {
+    "actor": "Hugo Moreau",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "connection",
+    "key": "meet",
+    "value": {
+     "provider": "beta",
+     "via": "redirect"
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "signaling-policy",
+    "key": "beta",
+    "value": {
+     "other": "public"
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "session-approval",
+    "key": "meet",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "meeting",
+    "key": "Design review",
+    "value": {
+     "host": "beta"
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "connection",
+    "key": "meet",
+    "value": {
+     "provider": "alpha",
+     "via": "redirect"
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "signaling-policy",
+    "key": "alpha",
+    "value": {
+     "other": "public"
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "session-approval",
+    "key": "meet",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "call",
+    "key": "meet",
+    "value": {
+     "peer": "Imani Okafor",
+     "route": "direct host candidates (mDNS)",
+     "dataChannel": true
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "call-ended",
+    "key": "meet",
+    "value": {
+     "by": "guest"
+    }
+   }
+  ]
+ },
+ "replay": null,
+ "loadTimings": null,
+ "steps": [
+  {
+   "id": "accounts.signup.alpha.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 6773
+  },
+  {
+   "id": "accounts.signup.alpha.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1589
+  },
+  {
+   "id": "accounts.signup.alpha.3",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1557
+  },
+  {
+   "id": "accounts.signup.beta.4",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1558
+  },
+  {
+   "id": "accounts.signup.beta.5",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1605
+  },
+  {
+   "id": "accounts.signup.beta.6",
+   "actor": "Imani Okafor",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1574
+  },
+  {
+   "id": "meet.host.sign-in",
+   "actor": "Imani Okafor",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 7620
+  },
+  {
+   "id": "meet.host.direct-connections",
+   "actor": "Imani Okafor",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1945
+  },
+  {
+   "id": "meet.host.create",
+   "actor": "Imani Okafor",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 4499
+  },
+  {
+   "id": "meet.guest.open-link",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 8453
+  },
+  {
+   "id": "meet.guest.direct-connections",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1217
+  },
+  {
+   "id": "meet.guest.join",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 6530
+  },
+  {
+   "id": "meet.call.connect",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 3254
+  },
+  {
+   "id": "meet.call.owner-view",
+   "actor": "Imani Okafor",
+   "via": "api",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 26
+  },
+  {
+   "id": "meet.call.end",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "meet",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 757
+  },
+  {
+   "id": "invariant.signaling-closed",
+   "actor": "Imani Okafor",
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 27
+  },
+  {
+   "id": "invariant.accounts",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 62
+  },
+  {
+   "id": "invariant.server-to-server",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 0
+  }
+ ],
+ "gates": [
+  {
+   "id": "G1",
+   "title": "Step expectations",
+   "status": "pass",
+   "summary": "18/18 steps met their expectation; 0 expected-pending held",
+   "details": []
+  },
+  {
+   "id": "G2",
+   "title": "Page health",
+   "status": "fail",
+   "summary": "2 page messages (2 HTTP ≥400 answers recorded), 0 unexplained, 0 known defects observed, 1 known defects no longer observed (remove them)",
+   "knownDefects": [
+    {
+     "id": "org-member-token-no-app-connection",
+     "httpCode": "invalid_grant",
+     "where": "packages/runtime/account/member-certificates.mjs memberTokenAdmit (connection) / packages/federation/member-access.mjs (grant); no org authorization flow",
+     "observed": 0
+    }
+   ],
+   "details": [],
+   "expectedHttp": [
+    {
+     "code": "use_dpop_nonce",
+     "reason": "RFC 9449 §8: the first token request learns the DPoP nonce from a 400 use_dpop_nonce answer; the SDK retries once with it."
+    },
+    {
+     "code": "invite_unverifiable",
+     "reason": "Expected-pending step parlay.cross-provider.invite: Parlay refuses a foreign inviter with 403 invite_unverifiable (messaging CL-24, same-host only); the page shows connectUnverifiable."
+    }
+   ],
+   "allowlist": [
+    {
+     "match": "/console-error https:\\/\\/(alpha|beta)\\.example Failed to load resource: the server responded with a status of 401/",
+     "reason": "Provider pages probe /api/session-scoped endpoints before sign-in; a 401 answer is the signed-out state, logged by Chromium as a resource error."
+    },
+    {
+     "match": "/console-error https:\\/\\/(alpha|beta)\\.example Failed to load resource: the server responded with a status of 404 \\(Not Found\\)$/",
+     "reason": "Optional provider assets (badge sprite or per-account avatar) answer 404 when absent."
+    }
+   ]
+  },
+  {
+   "id": "G3",
+   "title": "Server health and egress",
+   "status": "pass",
+   "summary": "0 5xx answers, 0 egress refusals outside the run's hosts, 0 log findings",
+   "details": {
+    "fivexx": [],
+    "egress": [],
+    "leaks": [],
+    "browserNoise": 0
+   }
+  },
+  {
+   "id": "G4",
+   "title": "Post-run invariants",
+   "status": "pass",
+   "summary": "3/3 invariant steps hold",
+   "details": [
+    {
+     "id": "invariant.signaling-closed",
+     "outcome": "pass"
+    },
+    {
+     "id": "invariant.accounts",
+     "outcome": "pass"
+    },
+    {
+     "id": "invariant.server-to-server",
+     "outcome": "pass"
+    }
+   ]
+  },
+  {
+   "id": "G5",
+   "title": "Layout at 390 px and colour scheme",
+   "status": "pass",
+   "summary": "0 layout failures, 0 informational",
+   "details": []
+  },
+  {
+   "id": "G6",
+   "title": "Deterministic replay",
+   "status": "info",
+   "summary": "not checked in this run (use --replay)",
+   "details": null
+  },
+  {
+   "id": "G7",
+   "title": "Step budget",
+   "status": "info",
+   "summary": "accounts p95 6773 ms (was 6456); meet p95 8453 ms (was 8290); invariant p95 62 ms (was 50)",
+   "details": {
+    "accounts": {
+     "count": 6,
+     "p95": 6773,
+     "previousP95": 6456
+    },
+    "meet": {
+     "count": 9,
+     "p95": 8453,
+     "previousP95": 8290
+    },
+    "invariant": {
+     "count": 3,
+     "p95": 62,
+     "previousP95": 50
+    }
+   }
+  }
+ ],
+ "budget": {
+  "accounts": {
+   "count": 6,
+   "p95": 6773,
+   "previousP95": 6456
+  },
+  "meet": {
+   "count": 9,
+   "p95": 8453,
+   "previousP95": 8290
+  },
+  "invariant": {
+   "count": 3,
+   "p95": 62,
+   "previousP95": 50
+  }
+ },
+ "passed": false,
+ "health": [
+  {
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "kind": "http-400",
+   "text": "POST https://beta.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  }
+ ],
+ "shots": [
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "908c860666e91d2d"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "89246cdf56f39e0d"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "7a1a47ff0b7157cd"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "1c4882945582a0b8"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "385d3685b2fc99fc"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "55cca039bd7501e6"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "8f837a706632816b"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-home",
+   "title": "Provider home, signed out",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/01-provider-home--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "dc63c3a06e84a157"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-questions",
+   "title": "Signup: before we create your account",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/02-signup-questions--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "e5f3b2853e99a7df"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-questions",
+   "title": "Signup: before we create your account",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/02-signup-questions--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "14aef19154a42d05"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-questions",
+   "title": "Signup: before we create your account",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/02-signup-questions--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "1415d1cf23f8dc77"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-questions",
+   "title": "Signup: before we create your account",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/02-signup-questions--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "7abd8a2569a59e16"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-recovery",
+   "title": "Signup: keep a way back in",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/03-signup-recovery--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "a1195c009d12e7a8"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-recovery",
+   "title": "Signup: keep a way back in",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/03-signup-recovery--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "8449414ca72fd4ff"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-recovery",
+   "title": "Signup: keep a way back in",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/03-signup-recovery--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "57c6e39d0a2442cf"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-recovery",
+   "title": "Signup: keep a way back in",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/03-signup-recovery--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "554f50ac95493fec"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-ready",
+   "title": "Signup: recovery file tested",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/04-signup-ready--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "612222103fe8b3e9"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-ready",
+   "title": "Signup: recovery file tested",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/04-signup-ready--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "db81e40e4c15721d"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-ready",
+   "title": "Signup: recovery file tested",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/04-signup-ready--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "be8e12aef8d19a7d"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "signup-ready",
+   "title": "Signup: recovery file tested",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/04-signup-ready--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "16076fb58668d025"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "8b87b5b9a3910b00"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "f3b0aa9e6c96e306"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "c33be330513187c6"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "36a22a40479e71f0"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "879c0cfee5c09cc0"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "c9742cc07dd60709"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "b18adc0274fe5ce9"
+  },
+  {
+   "scenario": "small",
+   "step": "accounts.signup.alpha.1",
+   "moment": "provider-console",
+   "title": "Provider console after signup",
+   "element": null,
+   "surface": "provider",
+   "actor": "Hugo Moreau",
+   "origin": "https://alpha.example",
+   "path": "shots/small/05-provider-console--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "1acb0f1e1aab4efe"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "994cf3ed582605c9"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "207dfc53c034cf42"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "5761b50bb9840672"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "57f1ce668fa1e9db"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "1a53ed67fd39e126"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "46343d2ff5cf7967"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "fcce909ec7bc3824"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-home-signed-out",
+   "title": "Meet: home, signed out",
+   "element": "<bindle-account> signed out (avatar placeholder)",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/06-meet-home-signed-out--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "a8ac2ccd672412dc"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "5141da8836a9111f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "006df79af7489036"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "865e3fa1a4b164b4"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "e17d07a0d3721134"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "86e9916a73d517a5"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "3a3df5b8367c0a70"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "e7ac8dc3ba79661b"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-sign-in",
+   "title": "Meet: sign in to host (handle form, redirect)",
+   "element": "<bindle-sign-in> identity-required, islands off",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/07-meet-sign-in--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "d79b3e3fdb58e687"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/08-meet-provider-consent--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "784ac3d4695d67c8"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/08-meet-provider-consent--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "093befe9ee6364a4"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/08-meet-provider-consent--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "f6dc1d90716a22da"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.sign-in",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/08-meet-provider-consent--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "09a4c626482b415f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.direct-connections",
+   "moment": "provider-signaling-privacy",
+   "title": "Provider: direct connections privacy (allow public address)",
+   "localeNote": "unsaved choice on the page; a reload would discard it",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/09-provider-signaling-privacy--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "44c4f4aa151a9819"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.direct-connections",
+   "moment": "provider-signaling-privacy",
+   "title": "Provider: direct connections privacy (allow public address)",
+   "localeNote": "unsaved choice on the page; a reload would discard it",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/09-provider-signaling-privacy--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "f1c586ba5b4add86"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.direct-connections",
+   "moment": "provider-signaling-privacy",
+   "title": "Provider: direct connections privacy (allow public address)",
+   "localeNote": "unsaved choice on the page; a reload would discard it",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/09-provider-signaling-privacy--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "2bc65e560f14d13f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.direct-connections",
+   "moment": "provider-signaling-privacy",
+   "title": "Provider: direct connections privacy (allow public address)",
+   "localeNote": "unsaved choice on the page; a reload would discard it",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/09-provider-signaling-privacy--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "4113d595f3153c3f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "a3274a0a63b023cf"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "4cc66c04adce3a1a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "60ec08a71deda6aa"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "3d5981a9069c2436"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "80d191df1abe63f9"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "a08ad130078cbf6b"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "3da7113787f2b257"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-home",
+   "title": "Meet: start a meeting",
+   "element": "<bindle-account> signed in",
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/10-meet-home--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "3d7c3c9d70b00457"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "f3ab6ad2040b25cc"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "c4ae8b27179aec7a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "00761f0648cef828"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "ddc1597dc8cfc6a8"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "30d2b69663c01744"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "6c0b4cfa21e3d7b1"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "9ebd440c8032f558"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-approval",
+   "title": "Meet: approve calls at your provider",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/11-meet-approval--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "00beadb965fc0bcb"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "provider-signaling-approve",
+   "title": "Provider: approve Meet’s call kind",
+   "localeNote": "mid-flow page (a review armed for this decision); a reload starts a new review",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/12-provider-signaling-approve--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "75ed4e03eeb0de8a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "provider-signaling-approve",
+   "title": "Provider: approve Meet’s call kind",
+   "localeNote": "mid-flow page (a review armed for this decision); a reload starts a new review",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/12-provider-signaling-approve--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "be6eed1c964deabd"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "provider-signaling-approve",
+   "title": "Provider: approve Meet’s call kind",
+   "localeNote": "mid-flow page (a review armed for this decision); a reload starts a new review",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/12-provider-signaling-approve--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "e617eb85288cc4cd"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "provider-signaling-approve",
+   "title": "Provider: approve Meet’s call kind",
+   "localeNote": "mid-flow page (a review armed for this decision); a reload starts a new review",
+   "element": null,
+   "surface": "provider",
+   "actor": "Imani Okafor",
+   "origin": "https://beta.example",
+   "path": "shots/small/12-provider-signaling-approve--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "f5680606745b95dc"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "8596a7b64659a81f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "041d367aca6d4c4b"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "1ce58299cb0e4441"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "183676deabd4afc4"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "dc858319a9362527"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "39a6de62f2868c3f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "81ce657413a035a9"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.host.create",
+   "moment": "meet-lobby-host",
+   "title": "Meet: host lobby with the join link",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/13-meet-lobby-host--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "3ab464d7fca91e4d"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "2dad35a997dae1d8"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "39d036f70b562022"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "54c7ef8c1b92967b"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "38051a86bfdf42dc"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "fb59fdffa61b1b1e"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "dcfc8d3144004edd"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "6ea3f235bc4e3adf"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-guest",
+   "title": "Meet: join link, guest view (signed out)",
+   "element": "signed out (guest)",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/14-meet-guest--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "bb44ff39485d440d"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "082af1029dce12e3"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "d3c485c2c167648d"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "67268c2955fafea9"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "56ef178b86dded54"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "6070b5f91cef30a1"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "10666ba629209eb6"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "6f579569bbd0c9f8"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-sign-in-join",
+   "title": "Meet: sign in to join",
+   "element": "<bindle-sign-in> handle form",
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/15-meet-sign-in-join--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "79bf31cedb4f9bfa"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Dev Malhotra",
+   "origin": "https://alpha.example",
+   "path": "shots/small/16-meet-provider-consent--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "27d8249007f823f9"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Dev Malhotra",
+   "origin": "https://alpha.example",
+   "path": "shots/small/16-meet-provider-consent--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "9d6dd67098f274be"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Dev Malhotra",
+   "origin": "https://alpha.example",
+   "path": "shots/small/16-meet-provider-consent--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "f8e7b9f30e8a20ca"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-provider-consent",
+   "title": "Provider: Meet asks for the signaling service",
+   "localeNote": "mid-flow page: a reload to switch language would restart the flow",
+   "element": null,
+   "surface": "provider",
+   "actor": "Dev Malhotra",
+   "origin": "https://alpha.example",
+   "path": "shots/small/16-meet-provider-consent--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "0cfd0887f7ebfb44"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "313a1cf772b3d19e"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "54e2eb96a1f7a953"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "06797272f69fcdf3"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "400997a88fa47a7a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "a106943516a43a23"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "1484b7c1c636510a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "a055e41cca73fa97"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.open-link",
+   "moment": "meet-lobby-guest",
+   "title": "Meet: pre-call, ready to join",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/17-meet-lobby-guest--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "2e8a5a37c4e4b79d"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "057521362287b739"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "109c7d88808f4d94"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "ee79d202ce67b9ff"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "cb3a560353760a22"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "e8dea656336aab90"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "c1f9a2c3c370b5de"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "0c79f2f48efb49d5"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-joining",
+   "title": "Meet: asking to join (guest)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/18-meet-joining--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "8f4938d22a927e39"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "cf123a5e1edad755"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "b63505fef2a85e95"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "eaa60661bf1f4bca"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "34fb3039cdfc2e6a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "9cfb239fb198d60d"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "941f4cc950372b05"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "724d94396cd91920"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.guest.join",
+   "moment": "meet-ringing",
+   "title": "Meet: someone wants to join (host)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/19-meet-ringing--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "54fcbfec71a18f90"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "6b1b307cb33f51ec"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "40fcc1a7d037464b"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "34ac782db9aa57a5"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "bed53bc7b14b3725"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "62ecbf4d08e5d106"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "f1e0061a8cabf87f"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "9b51ab44202b53dd"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call",
+   "title": "Meet: in call (host, beta)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Imani Okafor",
+   "origin": "https://meet.example",
+   "path": "shots/small/20-meet-in-call--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "112d8567bf4b0a4a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "3695843bc2817f36"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "63753a6f7d5aa113"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "2534f051c7598629"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "e4dc719411168e21"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "828f1f140d3cfda7"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "321042fad3e9b85d"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "a9d462c67297c062"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.connect",
+   "moment": "meet-in-call-guest",
+   "title": "Meet: in call (guest, alpha)",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/21-meet-in-call-guest--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "c92ed1f54e6a556e"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--en-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "cba5bb2d583ca6ce"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--en-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "381fb70bd4ee5b58"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--en-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "18264a1eabd2b51e"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--en-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "en",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "e75a9005c455b1cd"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--es-light-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "f225a78e5d68dfa9"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--es-light-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "light",
+   "profile": "sim",
+   "pixelHash": "1955f99168ba09eb"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--es-dark-390.png",
+   "viewport": {
+    "width": 390,
+    "height": 844
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "2fdc662d699ae45a"
+  },
+  {
+   "scenario": "small",
+   "step": "meet.call.end",
+   "moment": "meet-ended",
+   "title": "Meet: call ended",
+   "element": null,
+   "surface": "meet",
+   "actor": "Dev Malhotra",
+   "origin": "https://meet.example",
+   "path": "shots/small/22-meet-ended--es-dark-1280.png",
+   "viewport": {
+    "width": 1280,
+    "height": 900
+   },
+   "locale": "es",
+   "scheme": "dark",
+   "profile": "sim",
+   "pixelHash": "ea418f0969923d74"
+  }
+ ],
+ "egress": {
+  "violations": [],
+  "tunnels": 112,
+  "serverDials": 40
+ }
+}

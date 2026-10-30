@@ -1,7 +1,6 @@
 import { Engine, Provider, Action, Query } from '../../vendor/ngin/src/index.js';
 import { IdentityService } from './service.mjs';
 export { IdentityService, IdentityFault } from './service.mjs';
-export { createArgon2Hasher } from './crypto.mjs';
 export { createWebAuthnAdapter } from './webauthn.mjs';
 export { planAccountLifecycle } from './lifecycle.mjs';
 

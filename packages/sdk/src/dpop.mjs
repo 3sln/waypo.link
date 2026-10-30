@@ -28,7 +28,8 @@ export async function createProof(key,{htm='POST',htu,nonce,accessToken,crypto=g
 
 // Holds a non-extractable key across one redirect round trip (structured clone
 // keeps it non-extractable). Entries are deleted as soon as the code exchange
-// ends; refresh tokens themselves are never persisted by the SDK.
+// ends. Persisted app sessions (W11) keep their key and refresh token in a
+// separate store (session-store.mjs), never here.
 export function indexedDBKeyStore({indexedDB=globalThis.indexedDB,name='bindle-sdk',store='dpop-keys'}={}){
   if(!indexedDB)return null;
   const open=()=>new Promise((resolve,reject)=>{const request=indexedDB.open(name,1);request.onupgradeneeded=()=>request.result.createObjectStore(store);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});

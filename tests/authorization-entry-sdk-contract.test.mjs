@@ -77,8 +77,9 @@ test('SDK contract: reauthentication requires the same subject and a fresh auth_
  await session.signIn({identity:'alex'});const original=session.client.session;
  choice={decision:'approve',account:p.accounts[1]};assert.deepEqual(await session.reauthenticate({maxAge:60}),{outcome:'canceled'});assert.equal(session.client.session,original);
  choice={decision:'approve',authTime:p.clock()-120000};assert.deepEqual(await session.reauthenticate({maxAge:60}),{outcome:'canceled'});assert.equal(session.client.session,original);
- choice={decision:'approve'};assert.deepEqual(await session.reauthenticate({maxAge:60}),{outcome:'completed'});
+ choice={decision:'approve'};const confirmed=await session.reauthenticate({maxAge:60});
  assert.equal(session.client.session.subject,original.subject);assert.ok(Number.isSafeInteger(session.client.session.auth_time));
+ assert.deepEqual(confirmed,{outcome:'completed',authTime:session.client.session.auth_time*1000},'a confirmed step-up reports the auth time (ui-elements-audit G6b)');
  const entry=(await entryRecords(p)).at(-1);assert.equal(entry.subjectConstraint,original.subject);assert.equal(entry.maxAge,60);
 });
 

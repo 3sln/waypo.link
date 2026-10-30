@@ -8,7 +8,7 @@
 >
 > **Does not cover:** signed-object rules ([keys](../keys.md)); the meaning of each invitation type ([Organizations](organizations.md)); intent links ([intents](intents.md)); invitations between people ([Bindle Messaging §4](messaging.md#4-invitations)); capability-URL handling ([security](../security.md#capability-urls)).
 
-This annex is part of the Organizations extension. A provider implements it only for the link types that Organizations defines. Its §1 to §5 keep the numbering of the former links draft; links §8 is §6 here, and the generic part of links §9 is §7. The former draft is kept, frozen, as [links](../superseded/links.md). MUST, SHOULD and MAY express draft requirements. Hosts under `.example` and identifiers under `https://spec.bindle.example/` are placeholders.
+This annex is part of the Organizations extension. A provider implements it only for the link types that Organizations defines. Its §1 to §5 keep the numbering of the former links draft; links §8 is §6 here, and the generic part of links §9 is §7. The former draft is in git history (`git show bbbbdad:docs/spec/superseded/links.md`). MUST, SHOULD and MAY express draft requirements. Hosts under `.example` and identifiers under `https://spec.bindle.example/` are placeholders.
 
 ## 1. Terms
 

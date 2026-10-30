@@ -72,7 +72,10 @@ const randomSecret = crypto => encode64(crypto.getRandomValues(new Uint8Array(32
 const entryCoreKeys=new Set(['clientId','redirectUri','challenge','challengeMethod','state','intent','loginHint','subjectConstraint','maxAge','requests','uiLocales','colorScheme','presentation','dpopJkt','embedJkt','delivery']);
 const opaqueIdentifier=/^(?:[0-9a-f-]{36}\.)?[A-Za-z0-9_-]{43}$/,jktPattern=/^[A-Za-z0-9_-]{43}$/;
 const boundedSignal=signal=>signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);
-const tokens=()=>import('./tokens.mjs'),dpop=()=>import('./dpop.mjs');
+const tokens=()=>import('./tokens.mjs'),dpop=()=>import('./dpop.mjs'),sessionStores=()=>import('./session-store.mjs');
+const sessionKey=session=>`${session.issuer} ${session.subject}`;
+// Persisted-session failures that are not an answer from the provider: the session is kept for a later attempt.
+const transientCodes=new Set(['network-error','unavailable']);
 // At most this many pending transactions per callback (redirect, popup and island flows at once).
 export const pendingLimit=8;
 // A metadata-document client ID: HTTPS, non-root path, no query, fragment or credentials (protocol §2).
@@ -86,7 +89,7 @@ export class BindleClient {
   // clientId: one string for every provider, a map {issuerOrigin: id}, or a
   // resolver (issuer) => id|null. clientMetadataUrl: an HTTPS client ID used with
   // providers that declare client-id-metadata.v1 when no explicit ID applies.
-  constructor({clientId,clientMetadataUrl,redirectUri,fetcher=globalThis.fetch?.bind(globalThis),crypto=globalThis.crypto,storage=globalThis.sessionStorage,storageKey='bindle.pending-login',clock=Date.now,allowInsecureLocalhost=false,history=globalThis.history,defaultHost='3sln.me',emailFallback=true,capabilities=new CapabilityStore({clock}),keyStore,embedderOrigin=globalThis.location?.origin}={}) {
+  constructor({clientId,clientMetadataUrl,redirectUri,fetcher=globalThis.fetch?.bind(globalThis),crypto=globalThis.crypto,storage=globalThis.sessionStorage,storageKey='bindle.pending-login',clock=Date.now,allowInsecureLocalhost=false,history=globalThis.history,defaultHost='3sln.me',emailFallback=true,capabilities=new CapabilityStore({clock}),keyStore,embedderOrigin=globalThis.location?.origin,sessionStore,persist='device'}={}) {
     const callback=new URL(redirectUri);
     const configured=typeof clientId==='string'?!!clientId&&clientId.length<=2048:typeof clientId==='function'||!!clientId&&typeof clientId==='object'&&!Array.isArray(clientId);
     if(!(configured||clientMetadataUrl)||callback.hash||callback.username||callback.password||!['https:','http:'].includes(callback.protocol)||callback.protocol==='http:'&&!['localhost','127.0.0.1'].includes(callback.hostname))throw new Error('A client ID and secure callback URL are required.');
@@ -102,7 +105,18 @@ export class BindleClient {
     this.memoryPending=new Map();
     // App sessions held in this document, one per (issuer, subject); `session` is the current one.
     this.sessions=new Map();
+    // Why held sessions ended without an app call (ui-elements-audit G6): key "issuer subject" → 'revoked', read once by
+    // the session controller. Listeners hear every change to `session` or `sessions` (synchronously; never re-enter).
+    this.endCauses=new Map();this.sessionListeners=new Set();
     this.dpopKeys=new Map();this.dpopNonces=new Map();this.keyStore=keyStore;
+    // Persisted app sessions (W11). `sessionStore`: undefined uses the app origin's IndexedDB where it exists, null
+    // keeps every session in memory. `persist`: 'device' persists eligible sessions (DPoP-bound, idle lifetime
+    // advertised, user-interactive flow), 'off' never persists and erases this client's records.
+    this.sessionStoreOption=sessionStore;this.persistMode=persist==='off'?'off':'device';
+    // Keys ("issuer subject") of sessions from user-interactive flows, of sessions whose record this document wrote or
+    // restored (→ the key's jkt), and of sessions restored since the controller last looked.
+    this.persistable=new Set();this.persisted=new Map();this.restoredKeys=new Set();
+    this.persistence=this.canPersist?(this.persistMode==='off'?'off':'pending'):'memory';
   }
   // A string client ID (or undefined when IDs differ per provider).
   get clientId(){return typeof this.clientIds==='string'?this.clientIds:undefined;}
@@ -298,21 +312,28 @@ export class BindleClient {
     // Every provider-side non-approval is one generic outcome (embeddable-elements §4).
     if(callback.searchParams.has('error')){if(pending.dpopJkt)this.#releaseKey(pending.dpopJkt);throw coded('The application connection was declined or could not be completed.','canceled');}
     const code=callback.searchParams.get('code');if(!opaqueIdentifier.test(code??''))throw coded('The callback does not contain a valid authorization code.','invalid-callback');
-    return this.#redeem(pending,code,{signal,generation});
+    // A callback is the end of a provider page the user went through (the provider decides whether it asked them).
+    return this.#redeem(pending,code,{signal,generation,interactive:true});
   }
   // A code delivered by an island port or a FedCM token: validated exactly as
   // callback parameters (state, issuer, expiry, single use) against its record.
   // `presentation` ('island' or 'fedcm', required) binds the code to the transport that created the record.
-  async completeCode({code,state,iss}={},{signal,presentation}={}){
+  // `interactive`: island codes follow a click in the island and a provider page (default true); FedCM codes count only
+  // when the caller says the user picked the account (never a browser auto-selection, default false).
+  async completeCode({code,state,iss}={},{signal,presentation,interactive=presentation==='island'}={}){
     const pending=typeof state==='string'?this.readPending(state):null;
     if(!pending||!['island','fedcm'].includes(presentation)||pending.presentation!==presentation||pending.state!==state||iss!==pending.issuer||pending.intent==='end-session'||pending.redirectUri!==this.redirectUri||!this.#knownClient(pending)||pending.expiresAt<=this.clock())throw coded('This sign-in response is invalid or expired.','invalid-callback');
     this.#consume(state);
     if(typeof code!=='string'||!/^[\x21-\x7e]{1,2048}$/.test(code)){if(pending.dpopJkt)this.#releaseKey(pending.dpopJkt);throw coded('The response does not contain a valid authorization code.','invalid-callback');}
-    return this.#redeem(pending,code,{signal,generation:this.loginGeneration});
+    return this.#redeem(pending,code,{signal,generation:this.loginGeneration,interactive:interactive===true});
   }
-  async #redeem(pending,code,options){
-    try{const validated=await (await tokens()).redeem(this,pending,code,options);this.#install(validated);return this.session;}
+  async #redeem(pending,code,{interactive=false,...options}={}){
+    let validated;
+    try{validated=await (await tokens()).redeem(this,pending,code,options);this.#install(validated,{interactive});}
     catch(error){if(pending.dpopJkt)this.#releaseKey(pending.dpopJkt);throw error;}
+    // Written before the login resolves, so a reload right after it restores the session.
+    if(this.canPersist&&this.persistMode==='device')await this.#queue(()=>this.#persist(validated));
+    return this.session;
   }
   // End-session callbacks carry only state, iss and result, so a login code can
   // never be mistaken for a sign-out result. App tokens are cleared either way.
@@ -330,34 +351,191 @@ export class BindleClient {
     return this.readPending(state??undefined)?.intent==='end-session'?this.completeEndSession(callbackUrl):this.completeLogin(callbackUrl,options);
   }
 
+  // ---- Persisted app sessions (W11; account-chooser-island §5.4) ----
+  // True when this client could persist at all (a store is configured or the app origin has IndexedDB). Synchronous,
+  // so the controller can show `restoring` instead of a flash of signed-out content.
+  get canPersist(){return this.sessionStoreOption!==null&&(this.sessionStoreOption!==undefined||!!globalThis.indexedDB);}
+  get persist(){return this.persistMode;}
+  // Switching to 'off' stops persisting and erases this client's records on this device (held sessions stay in memory).
+  set persist(value){
+    const mode=value==='off'?'off':'device';if(mode===this.persistMode)return;this.persistMode=mode;
+    if(mode==='off'){this.persisted.clear();this.persistence=this.canPersist?'off':'memory';this.#queue(async store=>{await store.clear(this.#scope);});}
+    else{this.persistence=this.canPersist?'pending':'memory';for(const session of this.sessions.values())this.#queue(()=>this.#persist(session));}
+  }
+  #storeReady=null;#unsubscribeStore=null;#writes=Promise.resolve();
+  get #scope(){return JSON.stringify([this.storageKey,this.redirectUri]);}
+  #id(session){return JSON.stringify([this.#scope,session.issuer,session.subject]);}
+  #store(){
+    if(!this.canPersist)return Promise.resolve(null);
+    return this.#storeReady??=(async()=>{const store=this.sessionStoreOption??(await sessionStores()).indexedDBSessionStore();return store??null;})().catch(()=>null);
+  }
+  // Storage writes run in order; flushPersistence() resolves once every queued write settled (sign-out awaits it).
+  #queue(task){const run=this.#writes.then(async()=>{const store=await this.#store();if(store)await task(store);}).catch(()=>{});this.#writes=run;return run;}
+  flushPersistence(){return this.#writes;}
+  #listen(store){
+    if(this.#unsubscribeStore||typeof store?.subscribe!=='function')return;
+    this.#unsubscribeStore=store.subscribe(message=>{if(message?.scope===this.#scope)this.#remoteChange(store,message).catch(()=>{});});
+  }
+  // A session is persisted only when it is DPoP-bound with a refresh token, the provider advertises DPoP and the
+  // refresh idle lifetime (auth.md), and the flow that issued it was user-interactive (never auto-selected FedCM).
+  #eligible(session){
+    const key=sessionKey(session);
+    if(this.persistMode!=='device'||!this.persistable.has(key)||!session.dpopJkt||typeof session.refresh_token!=='string'||!Number.isSafeInteger(session.refresh_idle_expires_in)||!this.dpopKeys.has(session.dpopJkt))return false;
+    return this.persisted.get(key)===session.dpopJkt||!!this.capabilities.declaration?.(session.issuer,{stale:true})?.dpop;
+  }
+  #record(session,key,usedAt=this.clock()){
+    const plain=value=>value===undefined?undefined:JSON.parse(JSON.stringify(value));
+    return {v:1,scope:this.#scope,issuer:session.issuer,subject:session.subject,clientId:session.client_id,key,refreshToken:session.refresh_token,refreshExpiresAt:session.refreshExpiresAt,refreshExpiresIn:session.refresh_expires_in,refreshIdle:session.refresh_idle_expires_in,tokenEndpoint:session.tokenEndpoint,rpcEndpoint:session.rpcEndpoint,preferencesContract:session.preferencesContract,...session.revocationEndpoint?{revocationEndpoint:session.revocationEndpoint}:{},tokenType:session.tokenType,grantedFragments:plain(session.granted_fragments),...Array.isArray(session.grants)?{grants:plain(session.grants)}:{},...session.profile&&typeof session.profile==='object'?{profile:plain(session.profile)}:{},savedAt:this.clock(),usedAt};
+  }
+  // A held session from a stored record, or null when the record is malformed, foreign, expired or not this client's.
+  // The access token is absent (expired at 0), so the first use renews it under the cross-document lock.
+  #fromRecord(record,now=this.clock()){
+    try{
+      if(!record||record.v!==1||record.scope!==this.#scope||typeof record.issuer!=='string'||typeof record.subject!=='string'||typeof record.refreshToken!=='string'||!record.refreshToken||record.refreshToken.length>8192||!(record.refreshExpiresAt>now)||!Number.isSafeInteger(record.refreshIdle))return null;
+      const issuer=new URL(record.issuer).origin,subject=new URL(record.subject);
+      if(issuer!==record.issuer||subject.origin!==issuer||subject.href!==record.subject||subject.search||subject.hash)return null;
+      for(const endpoint of [record.tokenEndpoint,record.rpcEndpoint,...record.revocationEndpoint?[record.revocationEndpoint]:[]])if(new URL(endpoint).origin!==issuer)return null;
+      if(record.clientId!==this.clientIdFor(issuer)&&!(record.clientId&&record.clientId===this.clientMetadataUrl))return null;
+      const key=record.key;if(!key?.privateKey||!key.jwk||!jktPattern.test(key.jkt??''))return null;
+      if(!Array.isArray(record.grantedFragments)||record.grantedFragments.length>8)return null;
+      const profile=record.profile&&typeof record.profile==='object'&&!Array.isArray(record.profile)?record.profile:undefined;
+      return deepFreeze({issuer,subject:record.subject,client_id:record.clientId,audience:record.rpcEndpoint,token_type:record.tokenType==='DPoP'?'DPoP':'Bearer',tokenType:record.tokenType==='DPoP'?'DPoP':'Bearer',expires_in:0,expiresAt:0,refresh_token:record.refreshToken,refresh_expires_in:record.refreshExpiresIn,refresh_idle_expires_in:record.refreshIdle,refreshExpiresAt:record.refreshExpiresAt,granted_fragments:structuredClone(record.grantedFragments),...Array.isArray(record.grants)?{grants:structuredClone(record.grants)}:{},...profile?{profile:structuredClone(profile)}:{},clientId:record.clientId,dpopJkt:key.jkt,rpcEndpoint:record.rpcEndpoint,tokenEndpoint:record.tokenEndpoint,preferencesContract:record.preferencesContract,...record.revocationEndpoint?{revocationEndpoint:record.revocationEndpoint}:{},renewalCount:1});
+    }catch{return null;}
+  }
+  #adopt(record,session){this.dpopKeys.set(record.key.jkt,record.key);const key=sessionKey(session);this.persisted.set(key,record.key.jkt);this.persistable.add(key);}
+  async #persist(session){
+    const key=sessionKey(session),store=await this.#store();if(!store)return false;
+    if(!this.#eligible(session)){
+      // A non-persistable session replaced a persisted one for the same account: its record goes too.
+      if(this.persisted.has(key)&&this.persisted.get(key)!==session.dpopJkt){this.persisted.delete(key);await store.remove(this.#id(session)).catch(()=>{});}
+      return false;
+    }
+    try{
+      const previous=await store.get(this.#id(session)).catch(()=>null);
+      await store.put(this.#id(session),this.#record(session,this.dpopKeys.get(session.dpopJkt),previous?.usedAt>this.clock()?previous.usedAt:this.clock()));
+      this.persisted.set(key,session.dpopJkt);this.persistence='device';this.#listen(store);
+      // At most `pendingLimit` records per client: the least recently used beyond it are erased.
+      const records=await store.list(this.#scope).catch(()=>[]);
+      for(const stale of records.sort((a,b)=>(b.usedAt??0)-(a.usedAt??0)).slice(pendingLimit))await store.remove(JSON.stringify([this.#scope,stale.issuer,stale.subject]),{refreshToken:stale.refreshToken}).catch(()=>{});
+      return true;
+    }catch{
+      // A failed write never leaves an older refresh token behind to be replayed later.
+      this.persisted.delete(key);this.persistence='memory';await store.remove(this.#id(session)).catch(()=>{});return false;
+    }
+  }
+  /** Restores this client's persisted sessions (most recently used becomes current when none is). Resolves to the restored sessions. */
+  async restoreSessions(){
+    const store=await this.#store();
+    if(!store){this.persistence='memory';return [];}
+    if(this.persistMode==='off'){await store.clear(this.#scope).catch(()=>{});this.persistence='off';return [];}
+    let records;try{records=await store.list(this.#scope);}catch{this.persistence='memory';return [];}
+    this.persistence='device';this.#listen(store);
+    const now=this.clock(),usable=[];
+    for(const record of records){const session=this.#fromRecord(record,now);if(session)usable.push([record,session]);else store.remove(JSON.stringify([this.#scope,record?.issuer,record?.subject]),record?.refreshToken?{refreshToken:record.refreshToken}:undefined).catch(()=>{});}
+    usable.sort((a,b)=>(a[0].usedAt??0)-(b[0].usedAt??0));
+    const restored=[],existing=[...this.sessions];
+    for(const [record,session] of usable.slice(-pendingLimit)){const key=sessionKey(session);if(this.sessions.has(key))continue;this.#adopt(record,session);restored.push([key,session]);this.restoredKeys.add(key);}
+    if(!restored.length)return [];
+    // Restored sessions are older than anything signed in meanwhile, so they come first in recency order.
+    this.sessions.clear();for(const [key,session] of [...restored,...existing])this.sessions.set(key,session);
+    if(!this.session){this.session=restored.at(-1)[1];this.generation++;}
+    this.#changed();
+    return restored.map(([,session])=>session);
+  }
+  /** Keys of sessions restored since the last call (read by the controller to report cause `restored`). */
+  takeRestored(){const keys=new Set(this.restoredKeys);this.restoredKeys.clear();return keys;}
+  // Another document changed this client's records: a deletion signs that account out here too; a new record (a
+  // sign-in in another tab) is held here as well.
+  async #remoteChange(store,message){
+    if(this.persistMode!=='device')return;
+    const held=[...this.sessions.values()];
+    if(message.op==='delete'||message.op==='clear'){
+      for(const session of held){
+        const key=sessionKey(session);if(!this.persisted.has(key)||message.op==='delete'&&message.id!==this.#id(session))continue;
+        const record=await store.get(this.#id(session)).catch(()=>undefined);
+        if(record===undefined||record&&record.key?.jkt===this.persisted.get(key))continue;
+        if(this.sessions.get(key)!==session)continue;
+        this.persisted.delete(key);this.endCauses.set(key,'sign-out');this.forgetSession(session,{device:'none'});
+      }
+      return;
+    }
+    if(this.sessions.size>=pendingLimit)return;
+    const record=await store.get(message.id).catch(()=>null),session=this.#fromRecord(record);
+    if(!session)return;const key=sessionKey(session);if(this.sessions.has(key))return;
+    this.#adopt(record,session);this.restoredKeys.add(key);this.sessions.set(key,session);
+    if(!this.session){this.session=session;this.generation++;}
+    this.#changed();
+  }
+  // Renewal of a persisted session: under the cross-document lock, re-read the record (another tab may have rotated
+  // it, or signed the account out), renew with the stored refresh token and write the successor before releasing.
+  async #renewPersisted(session,signal){
+    const store=await this.#store(),key=sessionKey(session),id=this.#id(session),module=await tokens();
+    if(!store){this.persisted.delete(key);return module.renew(this,session,signal);}
+    return store.lock(`bindle-sdk-refresh:${id}`,signal,async()=>{
+      const record=await store.get(id).catch(()=>undefined);
+      // Storage became unusable: continue in memory only.
+      if(record===undefined){this.persisted.delete(key);this.persistence='memory';return module.renew(this,session,signal);}
+      // The record is gone (signed out in another document, site data cleared) or belongs to a different sign-in.
+      const current=record&&(record.refreshToken===session.refresh_token&&record.key?.jkt===session.dpopJkt?session:this.#fromRecord(record));
+      if(!current)throw coded('This account was signed out on this device.','signed-out');
+      if(current!==session)this.#adopt(record,current);
+      let renewed;
+      try{renewed=await module.renew(this,current,signal);}
+      catch(error){if(error?.code==='revoked')await store.remove(id,{refreshToken:record.refreshToken}).catch(()=>{});throw error;}
+      let written=await store.replace(id,this.#record(renewed,record.key,record.usedAt??this.clock()),{refreshToken:record.refreshToken}).catch(()=>false);
+      // A provider grace window may have returned the same successor to another document that wrote it first.
+      if(!written)written=(await store.get(id).catch(()=>null))?.refreshToken===renewed.refresh_token;
+      if(!written){module.revoke(this,renewed).catch(()=>{});throw coded('This account was signed out on this device.','signed-out');}
+      return renewed;
+    });
+  }
+  // Deletes the record of `session`: every record of that account ('all', an explicit sign-out), only the same
+  // sign-in ('family', automatic ends), or none ('none'). The latest stored refresh token is kept for revocation.
+  #drop(session,device){
+    const key=sessionKey(session),known=this.persisted.get(key);this.persisted.delete(key);
+    if(device==='none'||device!=='all'&&!known)return;
+    this.#queue(async store=>{const removed=await store.remove(this.#id(session),device==='all'?undefined:{jkt:known});if(removed?.refreshToken&&removed.refreshToken!==session.refresh_token)this.#latest.set(session,removed.refreshToken);});
+  }
+  #latest=new WeakMap();
+
   // ---- App sessions ----
-  #install(session){
+  /** Calls `listener()` after every change to `session` or `sessions`; returns an unsubscribe function. */
+  subscribeSessions(listener){this.sessionListeners.add(listener);return ()=>this.sessionListeners.delete(listener);}
+  #changed(){for(const listener of [...this.sessionListeners]){try{listener();}catch{}}}
+  #install(session,{interactive=false}={}){
     if(this.refreshController){this.refreshController.abort();this.refreshController=null;}
-    this.refreshPromise=null;this.generation++;this.session=session;this.#hold(session);
+    const key=sessionKey(session);if(interactive)this.persistable.add(key);else this.persistable.delete(key);
+    this.refreshPromise=null;this.generation++;this.session=session;this.#hold(session);this.#changed();
   }
   #hold(session){
     const key=`${session.issuer} ${session.subject}`,previous=this.sessions.get(key);
     this.sessions.delete(key);this.sessions.set(key,session);
     if(previous?.dpopJkt&&previous.dpopJkt!==session.dpopJkt)this.#releaseKey(previous.dpopJkt);
-    while(this.sessions.size>pendingLimit){const [oldest,value]=this.sessions.entries().next().value;this.sessions.delete(oldest);if(value===this.session)this.sessions.set(oldest,value);else if(value.dpopJkt)this.#releaseKey(value.dpopJkt);}
+    while(this.sessions.size>pendingLimit){const [oldest,value]=this.sessions.entries().next().value;this.sessions.delete(oldest);if(value===this.session)this.sessions.set(oldest,value);else{this.#drop(value,'family');if(value.dpopJkt)this.#releaseKey(value.dpopJkt);}}
   }
   // A held app session for exactly (issuer, subject), or null.
   heldSession(issuer,subject){const session=this.sessions.get(`${issuer} ${subject}`);return session&&(session.refresh_token?session.refreshExpiresAt:session.expiresAt)>this.clock()?session:null;}
   // Makes a held session current (an island `select`); never starts a flow.
   selectSession(issuer,subject){
     const session=this.heldSession(issuer,subject);if(!session)return false;
-    if(session!==this.session){if(this.refreshController){this.refreshController.abort();this.refreshController=null;}this.refreshPromise=null;this.generation++;this.session=session;}
+    if(session!==this.session){if(this.refreshController){this.refreshController.abort();this.refreshController=null;}this.refreshPromise=null;this.generation++;this.session=session;this.#changed();
+      // The most recently used account is the one a reload restores as current.
+      if(this.persisted.has(sessionKey(session)))this.#queue(async store=>{const id=this.#id(session),record=await store.get(id);if(record)await store.replace(id,{...record,usedAt:this.clock()},{refreshToken:record.refreshToken});});}
     return true;
   }
   // Removes one app session from this document (after revocation or sign-out of it).
-  forgetSession(session){
+  // `device`: which persisted record goes with it ('family' by default: only this sign-in's; 'all' for an explicit
+  // sign-out of the account; 'none' when another document already removed it).
+  forgetSession(session,{device='family'}={}){
     if(!session)return;const key=`${session.issuer} ${session.subject}`;
+    this.#drop(session,device);this.persistable.delete(key);
     if(this.sessions.get(key)===session)this.sessions.delete(key);
     if(this.session===session){this.session=null;this.generation++;if(this.refreshController){this.refreshController.abort();this.refreshController=null;}this.refreshPromise=null;}
     if(session.dpopJkt)this.#releaseKey(session.dpopJkt);
+    this.#changed();
   }
   // RFC 7009 revocation of exactly that app session. Returns false when not advertised.
-  async revokeSession(session=this.session,options) {const result=await (await tokens()).revoke(this,session,options);return result;}
+  async revokeSession(session=this.session,options) {const latest=session&&this.#latest.get(session);const result=await (await tokens()).revoke(this,latest?{...session,refresh_token:latest}:session,options);return result;}
   refresh({signal}={}) {
     if(signal?.aborted)return Promise.reject(new DOMException('The operation was canceled.','AbortError'));
     if(this.refreshPromise)return waitForRefresh(this.refreshPromise,signal);
@@ -366,13 +544,14 @@ export class BindleClient {
     const controller=new AbortController();this.refreshController=controller;
     const promise=(async()=>{
       try {
-        const renewed=await (await tokens()).renew(this,session,controller.signal);
+        const renewed=this.persisted.has(sessionKey(session))?await this.#renewPersisted(session,controller.signal):await (await tokens()).renew(this,session,controller.signal);
         if(generation!==this.generation||this.session!==session)throw new Error('Session renewal was canceled.');
-        this.session=renewed;this.#hold(renewed);return renewed;
+        this.session=renewed;this.#hold(renewed);this.#changed();return renewed;
       } catch(error) {
         // Rotation may have reached the provider even if its response was lost.
         // Never replay the previous refresh token or wipe a newer login.
-        if(generation===this.generation&&this.session===session)this.forgetSession(session);
+        // A persisted session survives a failure that is not the provider's answer (offline, 5xx): the next use retries.
+        if(generation===this.generation&&this.session===session&&!(this.persisted.has(sessionKey(session))&&transientCodes.has(error?.code))){if(error?.code==='revoked'||error?.code==='signed-out')this.endCauses.set(`${session.issuer} ${session.subject}`,error.code==='revoked'?'revoked':'sign-out');this.forgetSession(session,{device:error?.code==='signed-out'?'none':'family'});}
         throw error;
       }
     })();
@@ -410,8 +589,12 @@ export class BindleClient {
   // App sign-out of every app session held in this document; pending logins end too.
   signOut(){
     const held=[...this.sessions.values()];this.sessions.clear();this.session=null;this.generation++;
+    // Every record of this client on this device goes (explicit sign-out); latest stored tokens are kept for revocation.
+    this.persisted.clear();this.persistable.clear();
+    if(this.canPersist)this.#queue(async store=>{for(const removed of await store.clear(this.#scope)){const session=held.find(item=>item.issuer===removed.issuer&&item.subject===removed.subject);if(session&&removed.refreshToken!==session.refresh_token)this.#latest.set(session,removed.refreshToken);}});
     if(this.refreshController){this.refreshController.abort();this.refreshController=null;}this.refreshPromise=null;this.cancelLogin();
     for(const session of held)if(session.dpopJkt)this.#releaseKey(session.dpopJkt);
+    if(held.length)this.#changed();
     return held;
   }
 }

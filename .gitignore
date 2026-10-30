@@ -10,3 +10,4 @@ dist/
 .dev.vars
 artifacts/browser/
 .data/
+artifacts/sim/

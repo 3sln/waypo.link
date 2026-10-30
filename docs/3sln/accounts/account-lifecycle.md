@@ -39,7 +39,7 @@ Automatic permanent deletion remains disabled until actual notice delivery, reco
 | Decision | Reviewer | Date | Outcome |
 | --- | --- | --- | --- |
 | Free signup, passkey and mandatory recovery gate | Pending | Pending | Provisional implementation under user authorization |
-| Operator boot password parameters and Worker resource budget | Pending | Pending | Argon2id kept for the boot principal only (N5 open); deployment verification required |
+| Operator boot passkey only (boot password and its Argon2id hasher removed) | Pending | Pending | Coordinator decision under owner delegation 2026-10-29 (spike N5), provisional; reset `boot-password-retired-v1`; deployment verification required |
 | Optional verified-email ownership and recovery policy | Pending | Pending | Implemented service; configured delivery/provider verification required |
 | Seven-day R2 cache eviction and restoration | Pending | Pending | Separate nondestructive cache policy implemented; actual Worker tests cover restore |
 | Requested unused-account and long-inactivity retention | Pending | Pending | Executor implemented locally behind flags that default to off and dry run. Production delivery and purge enablement are unverified. |

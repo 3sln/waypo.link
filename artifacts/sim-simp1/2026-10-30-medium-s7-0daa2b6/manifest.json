@@ -1,0 +1,1169 @@
+{
+ "runId": "2026-10-30-medium-s7-0daa2b6",
+ "scenario": "medium",
+ "seed": 7,
+ "parts": [
+  "none"
+ ],
+ "startedAt": "2026-10-30T00:39:26.309Z",
+ "durationMs": 16236,
+ "catalogueVersion": 2,
+ "profile": "sim",
+ "world": {
+  "profile": "sim",
+  "profileFlags": {
+   "SIGNUP_ENABLED": "true",
+   "FEDERATION_ENABLED": "true",
+   "FEDERATION_ENTRY_ENABLED": "true",
+   "CLIENT_METADATA_ENABLED": "true",
+   "INTEGRATIONS_ENABLED": "true",
+   "BROKERING_ENABLED": "true",
+   "APP_CLEAN_REMOVAL_ENABLED": "true",
+   "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+   "ARTEFACT_VERSIONS_ENABLED": "true",
+   "INTENT_LINKS_ENABLED": "true",
+   "INTENT_APP_HANDLERS_ENABLED": "true",
+   "INCREMENTAL_AUTH_ENABLED": "true",
+   "EXTENSIONS_ENABLED": "true",
+   "SESSION_KINDS_ENABLED": "true",
+   "SIGNALING_ENABLED": "true",
+   "SIGNALING_FOREIGN_ENABLED": "true",
+   "DIRECTORY_ENABLED": "true",
+   "EVENT_BUSES_ENABLED": "true",
+   "ORGANIZATIONS_ENABLED": "true",
+   "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+   "ORG_RELATIONS_ENABLED": "true",
+   "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+   "MEMBER_CERTIFICATES_ENABLED": "true",
+   "KEY_DELEGATION_ENABLED": "false",
+   "EMAIL_FLOW_V2": "false",
+   "EMAIL_SIGNUP_ENABLED": "false",
+   "PAID_SIGNUP_ENABLED": "false",
+   "WAITLIST_ENABLED": "false",
+   "BILLING_ENABLED": "false",
+   "MAIL_ENABLED": "false",
+   "PUSH_ENABLED": "false",
+   "LIFECYCLE_ENABLED": "false",
+   "ACCOUNT_DELETION_ENABLED": "false",
+   "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+   "IDENTITY_TRANSFER_IN_ENABLED": "false",
+   "MCP_ENABLED": "false"
+  },
+  "operatorSettings": {
+   "RELEASE_READY": "false",
+   "SIGNUP_CONTACT_REQUIRED": "false",
+   "SIGNUP_IP_WINDOW_MS": "1000",
+   "SIGNUP_IP_DAILY_LIMIT": "1000",
+   "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+   "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+   "SIGNUP_REGION_DAILY_LIMIT": "1000",
+   "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+   "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+   "REGION_POLICY": "allow-unknown",
+   "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+   "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+   "TURNSTILE_SECRET_KEY": "sim-turnstile-secret"
+  },
+  "seams": [
+   "DIRECTORY_DNS_LOOKUP",
+   "DIRECTORY_HTTPS_REQUEST",
+   "PORTABILITY_DNS_LOOKUP",
+   "PORTABILITY_HTTPS_REQUEST",
+   "CLIENT_METADATA_FETCH",
+   "APP_METADATA_FETCH",
+   "SIGNALING_EGRESS",
+   "INTEGRATION_EGRESS"
+  ],
+  "providers": {
+   "alpha": {
+    "origin": "https://alpha.example",
+    "embedOrigin": "https://embed.alpha.example",
+    "adapter": "node (apps/node/server.mjs createNodeServer, in process)",
+    "config": {
+     "APP_ORIGIN": "https://alpha.example",
+     "EMBED_ORIGIN": "https://embed.alpha.example",
+     "BRAND_NAME": "Alpha",
+     "SIGNUP_ENABLED": "true",
+     "FEDERATION_ENABLED": "true",
+     "FEDERATION_ENTRY_ENABLED": "true",
+     "CLIENT_METADATA_ENABLED": "true",
+     "INTEGRATIONS_ENABLED": "true",
+     "BROKERING_ENABLED": "true",
+     "APP_CLEAN_REMOVAL_ENABLED": "true",
+     "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+     "ARTEFACT_VERSIONS_ENABLED": "true",
+     "INTENT_LINKS_ENABLED": "true",
+     "INTENT_APP_HANDLERS_ENABLED": "true",
+     "INCREMENTAL_AUTH_ENABLED": "true",
+     "EXTENSIONS_ENABLED": "true",
+     "SESSION_KINDS_ENABLED": "true",
+     "SIGNALING_ENABLED": "true",
+     "SIGNALING_FOREIGN_ENABLED": "true",
+     "DIRECTORY_ENABLED": "true",
+     "EVENT_BUSES_ENABLED": "true",
+     "ORGANIZATIONS_ENABLED": "true",
+     "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+     "ORG_RELATIONS_ENABLED": "true",
+     "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+     "MEMBER_CERTIFICATES_ENABLED": "true",
+     "KEY_DELEGATION_ENABLED": "true",
+     "EMAIL_FLOW_V2": "false",
+     "EMAIL_SIGNUP_ENABLED": "false",
+     "PAID_SIGNUP_ENABLED": "false",
+     "WAITLIST_ENABLED": "false",
+     "BILLING_ENABLED": "false",
+     "MAIL_ENABLED": "false",
+     "PUSH_ENABLED": "false",
+     "LIFECYCLE_ENABLED": "false",
+     "ACCOUNT_DELETION_ENABLED": "false",
+     "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+     "IDENTITY_TRANSFER_IN_ENABLED": "false",
+     "MCP_ENABLED": "false",
+     "RELEASE_READY": "false",
+     "SIGNUP_CONTACT_REQUIRED": "false",
+     "SIGNUP_IP_WINDOW_MS": "1000",
+     "SIGNUP_IP_DAILY_LIMIT": "1000",
+     "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+     "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+     "SIGNUP_REGION_DAILY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+     "REGION_POLICY": "allow-unknown",
+     "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+     "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+     "TURNSTILE_SECRET_KEY": "sim-turnstile-secret",
+     "SIGNALING_FOREIGN_ISSUERS": "[\"https://beta.example\"]",
+     "ORG_FOREIGN_ISSUERS": "[\"https://beta.example\",\"https://second.example\"]",
+     "FEDERATION_SCHEMAS_KEYS": [
+      "https://3sln.me/artefacts/preferences/app-messages/v1",
+      "https://notes.example/fragments/sync/v1",
+      "https://photos.example/fragments/library/v1",
+      "https://board.example/fragments/boards/v1",
+      "https://board.example/buses/board-changes/v1"
+     ],
+     "ORGANIZATION_PLANS": {},
+     "FEDERATION_CONTRACTS": "{\"https://meet.example/kinds/call/v1\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]},\"https://meet.example/kinds/call/v1/envelope\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]}}",
+     "FEDERATION_CLIENTS": "[{\"id\":\"https://notes.example/bindle/client.json\",\"name\":\"Notes\",\"origin\":\"https://notes.example\",\"redirectUris\":[\"https://notes.example/bindle/callback\"]}]"
+    },
+    "overrides": {},
+    "reviewedClients": [
+     "https://notes.example/bindle/client.json"
+    ]
+   },
+   "beta": {
+    "origin": "https://beta.example",
+    "embedOrigin": "https://embed.beta.example",
+    "adapter": "node (apps/node/server.mjs createNodeServer, in process)",
+    "config": {
+     "APP_ORIGIN": "https://beta.example",
+     "EMBED_ORIGIN": "https://embed.beta.example",
+     "BRAND_NAME": "Beta",
+     "SIGNUP_ENABLED": "true",
+     "FEDERATION_ENABLED": "true",
+     "FEDERATION_ENTRY_ENABLED": "true",
+     "CLIENT_METADATA_ENABLED": "true",
+     "INTEGRATIONS_ENABLED": "true",
+     "BROKERING_ENABLED": "true",
+     "APP_CLEAN_REMOVAL_ENABLED": "true",
+     "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+     "ARTEFACT_VERSIONS_ENABLED": "true",
+     "INTENT_LINKS_ENABLED": "true",
+     "INTENT_APP_HANDLERS_ENABLED": "true",
+     "INCREMENTAL_AUTH_ENABLED": "true",
+     "EXTENSIONS_ENABLED": "true",
+     "SESSION_KINDS_ENABLED": "true",
+     "SIGNALING_ENABLED": "true",
+     "SIGNALING_FOREIGN_ENABLED": "true",
+     "DIRECTORY_ENABLED": "true",
+     "EVENT_BUSES_ENABLED": "true",
+     "ORGANIZATIONS_ENABLED": "true",
+     "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+     "ORG_RELATIONS_ENABLED": "true",
+     "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+     "MEMBER_CERTIFICATES_ENABLED": "true",
+     "KEY_DELEGATION_ENABLED": "true",
+     "EMAIL_FLOW_V2": "false",
+     "EMAIL_SIGNUP_ENABLED": "false",
+     "PAID_SIGNUP_ENABLED": "false",
+     "WAITLIST_ENABLED": "false",
+     "BILLING_ENABLED": "false",
+     "MAIL_ENABLED": "false",
+     "PUSH_ENABLED": "false",
+     "LIFECYCLE_ENABLED": "false",
+     "ACCOUNT_DELETION_ENABLED": "false",
+     "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+     "IDENTITY_TRANSFER_IN_ENABLED": "false",
+     "MCP_ENABLED": "false",
+     "RELEASE_READY": "false",
+     "SIGNUP_CONTACT_REQUIRED": "false",
+     "SIGNUP_IP_WINDOW_MS": "1000",
+     "SIGNUP_IP_DAILY_LIMIT": "1000",
+     "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+     "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+     "SIGNUP_REGION_DAILY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+     "REGION_POLICY": "allow-unknown",
+     "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+     "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+     "TURNSTILE_SECRET_KEY": "sim-turnstile-secret",
+     "SIGNALING_FOREIGN_ISSUERS": "[\"https://alpha.example\"]",
+     "ORG_FOREIGN_ISSUERS": "[\"https://alpha.example\",\"https://second.example\"]",
+     "FEDERATION_SCHEMAS_KEYS": [
+      "https://3sln.me/artefacts/preferences/app-messages/v1",
+      "https://notes.example/fragments/sync/v1",
+      "https://photos.example/fragments/library/v1",
+      "https://board.example/fragments/boards/v1",
+      "https://board.example/buses/board-changes/v1"
+     ],
+     "ORGANIZATION_PLANS": {},
+     "FEDERATION_CONTRACTS": "{\"https://meet.example/kinds/call/v1\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]},\"https://meet.example/kinds/call/v1/envelope\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]}}",
+     "FEDERATION_CLIENTS": "[]"
+    },
+    "overrides": {},
+    "reviewedClients": []
+   }
+  },
+  "apps": {
+   "notes": {
+    "origin": "https://notes.example",
+    "registration": "client-id metadata at /bindle/client.json"
+   },
+   "photos": {
+    "origin": "https://photos.example",
+    "registration": "client-id metadata at /bindle/client.json"
+   }
+  },
+  "services": {
+   "second": {
+    "hosts": [
+     "second.example"
+    ],
+    "origin": "https://second.example",
+    "implementation": "tests/helpers/second-issuer.mjs (clean-room, fetch-shaped; GET only)"
+   },
+   "board": {
+    "hosts": [
+     "board.example"
+    ],
+    "origin": "https://board.example",
+    "registration": "client-id metadata at /bindle/client.json",
+    "seams": [
+     "ORGANIZATION_PLANS (operator allowlist filled at run time)"
+    ]
+   },
+   "meet": {
+    "hosts": [
+     "meet.example"
+    ],
+    "origin": "https://meet.example",
+    "registration": "client-id metadata at /bindle/client.json",
+    "sessionKind": "https://meet.example/kinds/call/v1",
+    "operatorHeld": "FEDERATION_CONTRACTS (line and line/envelope)"
+   },
+   "parlay": {
+    "hosts": [
+     "messages.example"
+    ],
+    "origin": "https://messages.example",
+    "shell": "apps/parlay/node/server.mjs createNodeShell, in process (PARLAY_ENABLED, INTENT_LINKS_ENABLED)",
+    "ports": "tests/sim/parlay-adapter.mjs",
+    "providerConfig": [
+     "KEY_DELEGATION_ENABLED=true",
+     "DELEGATION_SLOT_OCCUPANT (port)"
+    ]
+   }
+  },
+  "hosts": [
+   "challenges.cloudflare.com",
+   "alpha.example",
+   "embed.alpha.example",
+   "beta.example",
+   "embed.beta.example",
+   "second.example",
+   "board.example",
+   "meet.example",
+   "messages.example",
+   "notes.example",
+   "photos.example"
+  ]
+ },
+ "testOnly": {
+  "passkeys": "soft passkeys per person (tests/helpers/soft-passkey.mjs) behind navigator.credentials; real adapter verification",
+  "turnstile": "third-party stand-in for Cloudflare Turnstile (widget script and siteverify), tokens bound to host and action, single use",
+  "tls": "per-run local CA; browsers ignore certificate errors; servers trust only the run CA",
+  "network": "DNS and socket replaced at the providers' injection seams; screening unchanged",
+  "addresses": "each person browses through their own proxy port carrying a seeded address, passed to providers in the operator trusted client-IP header (TRUSTED_CLIENT_IP_HEADER)",
+  "clock": "real time (see gaps: a frozen browser clock breaks DPoP proof iat checks against real-time providers)"
+ },
+ "caveat": "Self-consistency, not interoperability: every provider here shares authors.",
+ "environment": {
+  "incompleteAssetBuild": false
+ },
+ "ledger": {
+  "digest": "6bd5ff7274604c9b408667085ef6edec18370f7a88ded39e45d2890909b3af94",
+  "entries": [
+   {
+    "actor": "Hugo Moreau",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-1",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-2",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-3",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-4",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-5",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-6",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-7",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-8",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-9",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-10",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-11",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-12",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-13",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-14",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-15",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-16",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-17",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-18",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-19",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-20",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-21",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-22",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-23",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-24",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-25",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-26",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-27",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-28",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-29",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-30",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-31",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-32",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-33",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-34",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-35",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-36",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-37",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-38",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-39",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-40",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-41",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-42",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-43",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-44",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-45",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-46",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-47",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-48",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-49",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-50",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-51",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-52",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-53",
+    "value": {
+     "provider": "alpha"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "account",
+    "key": "load-user-54",
+    "value": {
+     "provider": "beta"
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "timing",
+    "key": "load.signup",
+    "value": {
+     "budgetMs": 240000
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-1",
+    "value": {
+     "provider": "alpha",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-2",
+    "value": {
+     "provider": "beta",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-3",
+    "value": {
+     "provider": "alpha",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-4",
+    "value": {
+     "provider": "beta",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-5",
+    "value": {
+     "provider": "alpha",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-6",
+    "value": {
+     "provider": "beta",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-7",
+    "value": {
+     "provider": "alpha",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "org",
+    "key": "team-8",
+    "value": {
+     "provider": "beta",
+     "members": 10
+    }
+   },
+   {
+    "actor": "load",
+    "kind": "timing",
+    "key": "load.orgs",
+    "value": {
+     "budgetMs": 240000
+    }
+   }
+  ]
+ },
+ "replay": null,
+ "loadTimings": {
+  "load.signup": {
+   "ms": 3215,
+   "budgetMs": 240000,
+   "count": 54,
+   "p95Ms": 617
+  },
+  "load.orgs": {
+   "ms": 1542,
+   "budgetMs": 240000,
+   "orgs": 8,
+   "memberships": 72,
+   "p95InviteAcceptMs": 90
+  }
+ },
+ "steps": [
+  {
+   "id": "accounts.signup.alpha.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 2238
+  },
+  {
+   "id": "accounts.signup.alpha.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1455
+  },
+  {
+   "id": "accounts.signup.alpha.3",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1444
+  },
+  {
+   "id": "accounts.signup.beta.4",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1449
+  },
+  {
+   "id": "accounts.signup.beta.5",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1438
+  },
+  {
+   "id": "accounts.signup.beta.6",
+   "actor": "Imani Okafor",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1468
+  },
+  {
+   "id": "invariant.accounts",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 32
+  },
+  {
+   "id": "invariant.server-to-server",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 0
+  },
+  {
+   "id": "load.signup",
+   "actor": null,
+   "via": "api",
+   "kind": "load",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 3222
+  },
+  {
+   "id": "load.orgs",
+   "actor": null,
+   "via": "api",
+   "kind": "load",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1542
+  },
+  {
+   "id": "load.messages",
+   "actor": null,
+   "via": "api",
+   "kind": "load",
+   "expect": "pass",
+   "outcome": "fail",
+   "ok": false,
+   "ms": 1,
+   "error": "subject",
+   "at": "tests/sim/parlay-adapter.mjs:86:33"
+  },
+  {
+   "id": "invariant.load",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "skipped",
+   "ok": false,
+   "ms": 0
+  }
+ ],
+ "gates": [
+  {
+   "id": "G1",
+   "title": "Step expectations",
+   "status": "fail",
+   "summary": "10/12 steps met their expectation; 0 expected-pending held",
+   "details": [
+    {
+     "id": "load.messages",
+     "outcome": "fail",
+     "error": "subject"
+    },
+    {
+     "id": "invariant.load",
+     "outcome": "skipped"
+    }
+   ]
+  },
+  {
+   "id": "G2",
+   "title": "Page health",
+   "status": "pass",
+   "summary": "0 page messages (0 HTTP ≥400 answers recorded), 0 unexplained, 0 known defects observed",
+   "knownDefects": [],
+   "details": [],
+   "expectedHttp": [
+    {
+     "code": "use_dpop_nonce",
+     "reason": "RFC 9449 §8: the first token request learns the DPoP nonce from a 400 use_dpop_nonce answer; the SDK retries once with it."
+    },
+    {
+     "code": "invite_unverifiable",
+     "reason": "Expected-pending step parlay.cross-provider.invite: Parlay refuses a foreign inviter with 403 invite_unverifiable (messaging CL-24, same-host only); the page shows connectUnverifiable."
+    }
+   ],
+   "allowlist": [
+    {
+     "match": "/console-error https:\\/\\/(alpha|beta)\\.example Failed to load resource: the server responded with a status of 401/",
+     "reason": "Provider pages probe /api/session-scoped endpoints before sign-in; a 401 answer is the signed-out state, logged by Chromium as a resource error."
+    },
+    {
+     "match": "/console-error https:\\/\\/(alpha|beta)\\.example Failed to load resource: the server responded with a status of 404 \\(Not Found\\)$/",
+     "reason": "Optional provider assets (badge sprite or per-account avatar) answer 404 when absent."
+    }
+   ]
+  },
+  {
+   "id": "G3",
+   "title": "Server health and egress",
+   "status": "pass",
+   "summary": "0 5xx answers, 0 egress refusals outside the run's hosts, 0 log findings",
+   "details": {
+    "fivexx": [],
+    "egress": [],
+    "leaks": [],
+    "browserNoise": 0
+   }
+  },
+  {
+   "id": "G4",
+   "title": "Post-run invariants",
+   "status": "fail",
+   "summary": "2/3 invariant steps hold",
+   "details": [
+    {
+     "id": "invariant.accounts",
+     "outcome": "pass"
+    },
+    {
+     "id": "invariant.server-to-server",
+     "outcome": "pass"
+    },
+    {
+     "id": "invariant.load",
+     "outcome": "skipped"
+    }
+   ]
+  },
+  {
+   "id": "G5",
+   "title": "Layout at 390 px and colour scheme",
+   "status": "pass",
+   "summary": "0 layout failures, 0 informational",
+   "details": []
+  },
+  {
+   "id": "G6",
+   "title": "Deterministic replay",
+   "status": "info",
+   "summary": "not checked in this run (use --replay)",
+   "details": null
+  },
+  {
+   "id": "G7",
+   "title": "Step budget",
+   "status": "info",
+   "summary": "accounts p95 2238 ms (was 2371); invariant p95 32 ms (was 36); load p95 3222 ms (was 2984)",
+   "details": {
+    "accounts": {
+     "count": 6,
+     "p95": 2238,
+     "previousP95": 2371
+    },
+    "invariant": {
+     "count": 2,
+     "p95": 32,
+     "previousP95": 36
+    },
+    "load": {
+     "count": 3,
+     "p95": 3222,
+     "previousP95": 2984
+    }
+   }
+  }
+ ],
+ "budget": {
+  "accounts": {
+   "count": 6,
+   "p95": 2238,
+   "previousP95": 2371
+  },
+  "invariant": {
+   "count": 2,
+   "p95": 32,
+   "previousP95": 36
+  },
+  "load": {
+   "count": 3,
+   "p95": 3222,
+   "previousP95": 2984
+  }
+ },
+ "passed": false,
+ "health": [],
+ "shots": [],
+ "egress": {
+  "violations": [],
+  "tunnels": 54,
+  "serverDials": 0
+ }
+}

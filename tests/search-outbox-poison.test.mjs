@@ -123,7 +123,7 @@ test('a connected app sending 31 tags does not wedge the owner search outbox',as
  const view=await controller.inspect(ownerAuth,request.requestId);
  const callback=new URL((await controller.approve(ownerAuth,{requestId:request.requestId,approved:[{fragment:APP_NOTIFICATION_PREFERENCES,revision:view.requests[0].revision,fields:['notifications'],resources:{notifications:[resource]},methods:{notifications:{[APP_NOTIFICATIONS]:methods}}}]})).redirectUri);
  const session=await controller.exchange({clientId:client.id,redirectUri:client.redirectUris[0],code:callback.searchParams.get('code'),verifier});
- const ref=(await controller.rpc(session.access_token,{version:'0',tx:crypto.randomUUID(),resource:'@preferences',contract:'https://3sln.me/artefacts/contracts/preferences/v1',method:'read',args:{fragment:APP_NOTIFICATION_PREFERENCES}})).result.values.notifications;
+ const ref=(await controller.rpc(session.access_token,{version:'0',tx:crypto.randomUUID(),resource:'@preferences',contract:'https://3sln.me/artefacts/contracts/preferences/v2',method:'read',args:{fragment:APP_NOTIFICATION_PREFERENCES}})).result.values.notifications[0];
  const send=(input={})=>{const transactionId=crypto.randomUUID();return controller.rpc(ref.token,{version:'0',tx:transactionId,resource:ref.id,contract:APP_NOTIFICATIONS,method:'createOwn',args:{transactionId,createdAt:Date.now(),subject:'Event reminder',body:'Meeting tomorrow',...input}},{requestOrigin:ORIGIN});};
  const response=await send({tags:Array.from({length:31},(_,i)=>`app${i}`)});assert.equal(response.error,undefined,JSON.stringify(response));
  const stored=[...(await db.list({prefix:'app-message/'})).values()][0];assert.equal(stored.tags.length,33);

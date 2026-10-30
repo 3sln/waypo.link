@@ -69,8 +69,8 @@ async function connect(w,kinds=[CHAT]){
  const decision=await d.json();assert.equal(d.status,200,JSON.stringify(decision));
  const token=await (await w.post('/oauth/token',{clientId:APP.id,redirectUri:APP.redirectUris[0],code:new URL(decision.redirectUri).searchParams.get('code'),verifier},{origin:APP.origin})).json();
  const rpc=(bearer,res,contract,method,args={})=>w.post('/bindle/rpc',{version:'0',tx:randomUUID(),resource:res,contract,method,args},{bearer,origin:APP.origin});
- const prefs=await (await rpc(token.access_token,'@preferences','https://3sln.me/artefacts/contracts/preferences/v1','read',{fragment:SIGNALING_FRAGMENT})).json();
- const ref=prefs.result?.values?.signaling;assert.ok(ref,'preferences read: '+JSON.stringify(prefs));
+ const prefs=await (await rpc(token.access_token,'@preferences','https://3sln.me/artefacts/contracts/preferences/v2','read',{fragment:SIGNALING_FRAGMENT})).json();
+ const ref=prefs.result?.values?.signaling?.[0];assert.ok(ref,'preferences read: '+JSON.stringify(prefs));
  // The owner approves the app for each kind (a session handler approval, never inside the app's authorization flow).
  const post=async(path,body)=>{const res=await w.post(path,body,owner);return {status:res.status,body:await res.json()};};
  const approve=line=>reviewedHTTP(post,[{path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP.id,kind:REF[line]}}]).then(([r])=>r);

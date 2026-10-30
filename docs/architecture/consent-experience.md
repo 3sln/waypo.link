@@ -6,7 +6,7 @@ This is **host UX**, which the Bindle specs deliberately leave out. It relies on
 
 - [events](../spec/extensions/events.md): buses, access modes and disclosures;
 - [incremental authorization](../spec/extensions/incremental-authorization.md): the `grant-more` and `configure` intents, outcomes, suppression, limits and effect metadata;
-- the existing [protocol §3–§4](../spec/protocol.md) consent rules, [extensions §5](../spec/superseded/extensions-rev2.md#5-occupancy-consumption-and-consent), and [integrations §5.2](../spec/extensions/integrations.md#52-consent-disclosure).
+- the existing [protocol §3–§4](../spec/protocol.md) consent rules, [extensions §5](../spec/extensions.md#5-candidates-and-assignment) (revision 2 §5 at the time of writing: `git show 10852e1:docs/spec/extensions.md`), and [integrations §5.2](../spec/extensions/integrations.md#52-consent-disclosure).
 
 It replaces the review layout of the current consent kit (`apps/web/src/ui/authorize-entry-consent.mjs`), and keeps the entry page's framing, member and arming protections ([authorize-entry UI review](../release/authorize-entry-ui-review.md)).
 

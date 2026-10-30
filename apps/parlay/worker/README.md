@@ -62,8 +62,11 @@ issuer is not evidence of current directory availability.
   resource and method checks. Write methods require fresh live introspection on every request (`live:true`).
   It MUST NOT return `live:true` from cached authorization. The mailbox independently checks current local
   connection/generation/grant state, and rechecks it in each write transaction.
-- `verifyEvent({url,token})` → `{owner,issuer,connection,generation,seq,jti,type,payload}` only after every SET
-  validation in integrations §6.1. `type` is normalized to the event name, e.g. `connection-revoked`.
+- `verifyEvent({url,contentType,bytes})` → `{owner,issuer,connection,generation,seq,cti,type,payload}` only after
+  `verifyIntegrationEvent` (`@3sln/bindle/integration-events.mjs`) accepts the COSE_Sign1 CWT under every integrations
+  §6.1 rule; `cti` is the event's `ctiId` (22-character base64url) and `type` is normalized to the event name, e.g.
+  `connection-revoked`. A thrown `IntegrationEventFault` becomes a 400 (413/415) with a CBOR `{err, description}` body.
+  The mailbox dedupes on `cti`; the SET-era `shell:set-jtis` cache is deleted by the first event that finds it.
 
 `egress.fetch(Request)` MUST implement restricted HTTPS egress with connect-time private-address/DNS screening,
 no redirects, cancellation, and network budgets. The engine also enforces connect/total/response bounds. There
@@ -77,7 +80,7 @@ broker calls require the connection/generation binding. Local recipients are an 
 Conversation tasks additionally use B4's live room, accepted-peer, block and incarnation checks inside the queue
 transaction; they never derive permission from a signed draft or a browser request. Occupancy changes must be
 reflected by the trusted integration adapter. Disconnect removes renewal immediately and cancels pending sends at
-the next drain. A resumed SET never reinstalls consent; trusted provisioning installs a newer snapshot.
+the next drain. A resumed event never reinstalls consent; trusted provisioning installs a newer snapshot.
 After the provider's explicit key-delegation consent, trusted installation code dispatches
 `shell.delegation-renew` once to acquire the first certificate; subsequent renewal is driven by alarms.
 

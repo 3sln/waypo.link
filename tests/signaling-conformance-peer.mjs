@@ -131,7 +131,7 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
     version: '0', issuer: origin,
     authorization_request_endpoint: `${origin}/oauth/requests`, authorization_endpoint: `${origin}/oauth/authorize`,
     token_endpoint: `${origin}/oauth/token`, rpc_endpoint: `${origin}/bindle/rpc`, jwks_uri: `${origin}/oauth/jwks`,
-    preferences_contract: 'https://3sln.me/artefacts/contracts/preferences/v1', login_presentation: ['redirect'],
+    preferences_contract: 'https://3sln.me/artefacts/contracts/preferences/v2', login_presentation: ['redirect'],
     // Optional under protocol §2 ("every ... DPoP declaration is optional"); `dpop: false` publishes the bare floor.
     ...dpop ? { dpop_signing_alg_values_supported: ['ES256'] } : {},
     extensions: [

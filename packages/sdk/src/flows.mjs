@@ -38,20 +38,50 @@ const freezeView=session=>{
   return Object.freeze(view);
 };
 const viewKey=view=>view?JSON.stringify(view):'';
+const keyOf=session=>session?`${session.issuer} ${session.subject}`:'';
+// Why the current account changed (ui-elements-audit G6): sign-in, switch, sign-out (the app's own or provider
+// end-session), expired (no renewal left), revoked (the provider refused renewal: access ended at the provider),
+// removed (the app reported that it was removed at the provider; forgetSession()), restored (a persisted session was
+// restored on load or arrived from another tab of this app, W11).
+export const changeCauses=Object.freeze(['sign-in','switch','sign-out','expired','revoked','removed','restored']);
+// Restore never holds the UI longer than this: past it the controller continues signed out and a late restore still
+// installs the sessions (cause `restored`).
+export const restoreTimeout=2500;
 
 export class BindleSession extends EventTarget {
   #client;#window;#channel;#crypto;#timers;#flow=null;#view=null;#viewKey='';#watched=null;#expiry=null;#t;#capabilityKey='';#unsubscribe;#fedcmFailures=new Map();
-  constructor({client,clientId,clientMetadataUrl,redirectUri,presentation='auto',popupFallback='redirect',defaultHost='3sln.me',emailFallback=true,requests=[],uiLocales=[],colorScheme,transports=[],entryExtensions,islands='auto',islandIssuers=null,window:win=globalThis.window,BroadcastChannel:Channel=globalThis.BroadcastChannel,crypto=globalThis.crypto,timers=globalThis,localize,...clientOptions}={}){
+  // Multi-account state (G4–G6): first-seen order of held sessions, their frozen views, the last account change and
+  // the cause queued by the operation that is about to change the session.
+  #order=[];#sessions=Object.freeze([]);#sessionsKey='';#ended=new Map();#current='';#lastChange=null;#cause=null;#unsubscribeSessions=null;#syncQueued=false;
+  constructor({client,clientId,clientMetadataUrl,redirectUri,presentation='auto',popupFallback='redirect',defaultHost='3sln.me',emailFallback=true,requests=[],uiLocales=[],colorScheme,transports=[],entryExtensions,islands='auto',islandIssuers=null,window:win=globalThis.window,BroadcastChannel:Channel=globalThis.BroadcastChannel,crypto=globalThis.crypto,timers=globalThis,localize,persist,restore=true,...clientOptions}={}){
     super();
-    this.#client=client??new BindleClient({clientId,clientMetadataUrl,redirectUri,defaultHost,emailFallback,crypto,...clientOptions});
+    this.#client=client??new BindleClient({clientId,clientMetadataUrl,redirectUri,defaultHost,emailFallback,crypto,...persist!==undefined?{persist}:{},...clientOptions});
+    if(persist!==undefined&&this.#client.persist!==undefined)this.#client.persist=persist;
     this.#window=win;this.#channel=Channel;this.#crypto=crypto;this.#timers=timers;
     this.presentation=presentation;this.popupFallback=popupFallback;this.transports=transports;this.entryExtensions=entryExtensions;this.requests=requests;this.uiLocales=uiLocales;this.colorScheme=colorScheme;
     this.#client.islandPolicy={islands,issuers:islandIssuers};if(win)this.#client.userAgent={identityCredential:!!win.IdentityCredential};
     this.#t=localize??createSdkLocalization({locale:win?.navigator?.language}).t;
     this.#unsubscribe=this.#client.capabilities?.subscribe?.(()=>this.#capabilitiesChanged());
+    // Direct client changes (a renewal refused during an RPC, client.signOut()) reach the UI without a flow.
+    this.#unsubscribeSessions=this.#client.subscribeSessions?.(()=>{if(this.#syncQueued)return;this.#syncQueued=true;queueMicrotask(()=>{this.#syncQueued=false;this.#sync();});});
     this.#sync(false);
+    // Persisted sessions (W11) are restored before the UI decides what to show: until then state is `restoring`.
+    this.restored=restore&&this.#client.canPersist&&typeof this.#client.restoreSessions==='function'?this.#restore():Promise.resolve([]);
+  }
+  #restoring=false;
+  async #restore(){
+    this.#restoring=true;let timer;
+    const late=this.#client.restoreSessions().catch(()=>[]);
+    const result=await Promise.race([late,new Promise(resolve=>{timer=this.#timers.setTimeout(()=>resolve(null),restoreTimeout);timer?.unref?.();})]);
+    this.#timers.clearTimeout(timer);this.#restoring=false;this.#sync();this.#dispatch('restore-end',{sessions:this.#sessions,timedOut:result===null});
+    return result??[];
   }
   get client(){return this.#client;}
+  /** 'device' (default: eligible sessions persist on this device) or 'off' (memory only; erases this app's records). */
+  get persist(){return this.#client.persist??'off';}
+  set persist(value){if(this.#client.persist!==undefined)this.#client.persist=value==='off'?'off':'device';}
+  /** Where sessions live now: 'device', 'memory' (no usable storage), 'off', or 'pending' before the first access. */
+  get persistence(){return this.#client.persistence??'memory';}
   get defaultHost(){return this.#client.defaultHost??'3sln.me';}
   set defaultHost(value){this.#client.defaultHost=value||'3sln.me';this.#capabilitiesChanged();}
   get presentation(){return this.#presentation;}
@@ -61,8 +91,12 @@ export class BindleSession extends EventTarget {
   get islandPolicy(){return this.#client.islandPolicy;}
   set islandPolicy({islands='auto',issuers=null}={}){this.#client.islandPolicy={islands:islands==='off'?'off':'auto',issuers:Array.isArray(issuers)?[...issuers]:null};this.#capabilitiesChanged();}
   get session(){this.#sync();return this.#view;}
+  /** Every app session this document holds (unexpired), as frozen views in first-seen order; the current one included. */
+  get sessions(){this.#sync();return this.#sessions;}
+  /** The last change of the current account: {previous:{issuer,subject}|null, session, cause} (see changeCauses), or null. */
+  get lastChange(){this.#sync();return this.#lastChange;}
   // App state only. A pending flow never reveals provider state.
-  get state(){const view=this.session;return view?'signed-in':this.#flow&&!this.#flow.done?'pending':'signed-out';}
+  get state(){const view=this.session;return view?'signed-in':this.#flow&&!this.#flow.done?'pending':this.#restoring?'restoring':'signed-out';}
   get flow(){const flow=this.#flow;return flow?Object.freeze({intent:flow.intent,phase:flow.phase,presentation:flow.presentation,host:flow.host,lingering:flow.lingering,fallback:flow.fallback,done:flow.done}):null;}
   get popupAvailable(){return typeof this.#channel==='function'&&typeof this.#window?.open==='function';}
   // The issuer whose capabilities the UI composes from: the current session's, else the default provider's.
@@ -106,17 +140,48 @@ export class BindleSession extends EventTarget {
   // document already holds for exactly (current issuer, subject). Never a flow.
   selectAccount(subject){
     const session=this.#client.session;
-    if(!session||!this.#client.selectSession(session.issuer,subject))return {outcome:'canceled',code:'no-session'};
-    this.#sync();return {outcome:'completed'};
+    if(!session||!this.#client.heldSession(session.issuer,subject))return {outcome:'canceled',code:'no-session'};
+    this.#cause='switch';this.#client.selectSession(session.issuer,subject);this.#sync();return {outcome:'completed'};
   }
   // App sign-out only (decision D8): clears this app's sessions and pending
   // logins, optionally revoking each app session with its own token (RFC 7009).
-  // Never ends provider sessions.
-  async signOut({revoke=false}={}){
-    this.cancelFlow();const held=this.#signedOut(this.#client.signOut());this.#sync();
-    if(revoke)await Promise.all(held.map(session=>this.#client.revokeSession(session).catch(()=>false)));
+  // Never ends provider sessions. With `subject` (and optionally `issuer`, default
+  // the current issuer) only that held session ends (G5); when it was current, the
+  // most recently used remaining session becomes current (cause 'sign-out').
+  async signOut({revoke=false,subject,issuer}={}){
+    if(subject===undefined){
+      this.cancelFlow();this.#cause='sign-out';const held=this.#signedOut(this.#client.signOut());this.#sync();
+      // Persisted records are gone before this resolves (and their latest refresh tokens are the ones revoked).
+      await this.#client.flushPersistence?.();
+      if(revoke)await Promise.all(held.map(session=>this.#client.revokeSession(session).catch(()=>false)));
+      return {outcome:'completed'};
+    }
+    const held=this.#endOne({issuer,subject},'sign-out');if(!held)return {outcome:'canceled',code:'no-session'};
+    await this.#client.flushPersistence?.();
+    if(revoke)await this.#client.revokeSession(held).catch(()=>false);
     return {outcome:'completed'};
   }
+  // The app learned from its own back end that access ended at the provider (an app-removal or subject-deleted
+  // signal, a refused resource call): ends that held session locally with cause 'revoked' or 'removed' (G6), so the
+  // elements can say why. Never contacts the provider.
+  forgetSession({subject,issuer,cause='revoked'}={}){
+    if(!['revoked','removed'].includes(cause))throw new TypeError('cause must be revoked or removed.');
+    return this.#endOne({issuer,subject},cause)?{outcome:'completed'}:{outcome:'canceled',code:'no-session'};
+  }
+  #endOne({issuer,subject},cause){
+    const current=this.#client.session,from=issuer??current?.issuer;if(typeof subject!=='string'||!from)return null;
+    const held=this.#client.sessions.get(`${from} ${subject}`);if(!held)return null;
+    const wasCurrent=held===current;
+    if(wasCurrent&&this.#flow&&!this.#flow.done&&this.#flow.intent!=='login')this.cancelFlow();
+    this.#ended.set(keyOf(held),cause);this.#signedOut([held]);
+    // An explicit end erases every persisted record of that account on this device.
+    this.#client.forgetSession(held,{device:'all'});
+    if(wasCurrent)this.#selectNext();
+    this.#cause=cause;this.#sync();
+    return held;
+  }
+  // After the current session ended while others are held: the most recently used one becomes current.
+  #selectNext(){const next=[...this.#client.sessions.values()].reverse().find(item=>this.#client.heldSession(item.issuer,item.subject));if(next)this.#client.selectSession(next.issuer,next.subject);}
   // Redirect-mode completion on the registered callback page.
   completeCallback(url=this.#window?.location?.href){
     let state=null;try{state=new URL(url).searchParams.get('state');}catch{}
@@ -274,12 +339,15 @@ export class BindleSession extends EventTarget {
     const client=this.#client,previous=client.session;
     try{
       // completeEndSession clears app tokens itself (whatever the result), so the ended sessions are captured first.
-      if(flow.intent==='end-session'){const held=[...client.sessions?.values?.()??[]];let result;try{({result}=await client.completeEndSession(url));}finally{if(held.length&&!client.session)this.#signedOut(held);}this.#sync();return this.#end(flow,{outcome:result==='completed'?'completed':'canceled'});}
+      if(flow.intent==='end-session'){const held=[...client.sessions?.values?.()??[]];let result;try{({result}=await client.completeEndSession(url));}finally{if(held.length&&!client.session)this.#signedOut(held);}this.#cause='sign-out';this.#sync();return this.#end(flow,{outcome:result==='completed'?'completed':'canceled'});}
       await client.completeLogin(url);
       // Revoking a same-account grant could also revoke the new tokens (RFC 7009 may revoke the whole grant).
       const current=client.session;
-      if((flow.intent==='select-account'||flow.params.switching)&&flow.params.revokePrevious&&previous&&current&&(previous.subject!==current.subject||previous.issuer!==current.issuer)){client.forgetSession(previous);client.revokeSession(previous).catch(()=>{});}
-      this.#sync();this.#end(flow,{outcome:'completed'});
+      if((flow.intent==='select-account'||flow.params.switching)&&flow.params.revokePrevious&&previous&&current&&(previous.subject!==current.subject||previous.issuer!==current.issuer)){this.#ended.set(keyOf(previous),'sign-out');client.forgetSession(previous);client.revokeSession(previous).catch(()=>{});}
+      // A confirmed step-up reports when the provider re-authenticated the user (G6b); auth_time is kept only for
+      // reauthentication (EE-02), as epoch milliseconds.
+      const authTime=flow.intent==='reauthenticate'&&Number.isSafeInteger(current?.auth_time)?current.auth_time*1000:undefined;
+      this.#cause=keyOf(current)===keyOf(previous)?null:previous?'switch':'sign-in';this.#sync();this.#end(flow,{outcome:'completed',...authTime!==undefined?{authTime}:{}});
     }catch(error){
       this.#sync();
       const code=error?.code;
@@ -292,7 +360,7 @@ export class BindleSession extends EventTarget {
     // Terminal outcomes never leave a redeemable verifier behind.
     if(!['redirecting','popup-blocked'].includes(result.outcome)&&flow.state)this.#client.cancelLogin(flow.state);
     // Provider end-session always clears app tokens once the flow finishes, whatever the result.
-    if(flow.intent==='end-session'&&!['redirecting','popup-blocked'].includes(result.outcome)&&this.#client.session){this.#signedOut(this.#client.signOut());this.#sync();}
+    if(flow.intent==='end-session'&&!['redirecting','popup-blocked'].includes(result.outcome)&&this.#client.session){this.#cause='sign-out';this.#signedOut(this.#client.signOut());this.#sync();}
     for(const timer of flow.timers)this.#timers.clearTimeout(timer);
     flow.channel?.close();flow.channel=null;flow.controller.abort();
     if(this.#flow===flow&&!['popup-blocked','redirecting'].includes(result.outcome))this.#flow=null;
@@ -305,12 +373,45 @@ export class BindleSession extends EventTarget {
   #dispatch(type,detail){this.dispatchEvent(new CustomEvent(type,{detail}));}
   // Re-reads the client so direct client calls (completeLogin, signOut) are reflected.
   #sync(emit=true){
-    const session=this.#client.session;
+    let session=this.#client.session;
+    // A renewal the provider refused (client.refresh) ended the current session: name the cause and, like an
+    // explicit per-account end, continue with the most recently used remaining session.
+    for(const [key,cause] of this.#client.endCauses??[]){this.#client.endCauses.delete(key);this.#ended.set(key,cause);if(key===this.#current&&!session){this.#selectNext();session=this.#client.session;this.#cause??=cause;}}
     if(session!==this.#watched){this.#watched=session;this.#scheduleExpiry();}
-    const view=freezeView(session),key=viewKey(view);
-    if(key===this.#viewKey)return;
-    this.#view=view;this.#viewKey=key;
-    if(emit){this.#capabilitiesChanged();this.#dispatch('change',view);}
+    const restored=this.#client.takeRestored?.()??new Set();
+    const view=freezeView(session),key=viewKey(view),current=keyOf(session);
+    const sessions=this.#heldViews(),sessionsKey=JSON.stringify(sessions);
+    const viewChanged=key!==this.#viewKey,accountChanged=current!==this.#current,listChanged=sessionsKey!==this.#sessionsKey;
+    if(!viewChanged&&!listChanged){this.#cause=null;return;}
+    const previous=this.#current,previousView=this.#view;
+    this.#view=view;this.#viewKey=key;this.#current=current;
+    // Sessions that left the held set since the last sync, each with its cause.
+    const left=this.#sessions.filter(item=>!sessions.some(next=>next.issuer===item.issuer&&next.subject===item.subject));
+    const endCause=['sign-out','expired','revoked','removed'].includes(this.#cause)?this.#cause:null;
+    const ended=Object.freeze(left.map(({issuer,subject})=>{const k=`${issuer} ${subject}`,cause=this.#ended.get(k)??(this.#expiredKeys.delete(k)?'expired':endCause??'sign-out');this.#ended.delete(k);return Object.freeze({issuer,subject,cause});}));
+    this.#sessions=sessions;this.#sessionsKey=sessionsKey;
+    let change=null;
+    if(accountChanged){
+      // An explicit operation names its cause; otherwise an ended previous account explains the change, else it is a
+      // plain switch or sign-in.
+      const endedCurrent=ended.find(item=>`${item.issuer} ${item.subject}`===previous);
+      const cause=this.#cause??endedCurrent?.cause??(restored.has(current)?'restored':!previous?'sign-in':current?'switch':'sign-out');
+      change=Object.freeze({previous:previousView?Object.freeze({issuer:previousView.issuer,subject:previousView.subject}):null,session:view,cause});
+      this.#lastChange=change;
+    }
+    this.#cause=null;
+    if(!emit)return;
+    if(viewChanged){this.#capabilitiesChanged();this.#dispatch('change',view);}
+    if(change)this.#dispatch('account-change',change);
+    if(listChanged)this.#dispatch('sessions-change',Object.freeze({sessions,ended}));
+  }
+  #expiredKeys=new Set();
+  // Held, unexpired sessions as frozen views, in the order this controller first saw them.
+  #heldViews(){
+    const client=this.#client,held=[...client.sessions?.values?.()??[]].filter(item=>client.heldSession?.(item.issuer,item.subject)??true);
+    for(const item of held){const k=keyOf(item);if(!this.#order.includes(k))this.#order.push(k);}
+    this.#order=this.#order.filter(k=>held.some(item=>keyOf(item)===k));
+    return Object.freeze(this.#order.map(k=>freezeView(held.find(item=>keyOf(item)===k))));
   }
   refresh(){this.#sync();}
   #scheduleExpiry(){
@@ -322,11 +423,11 @@ export class BindleSession extends EventTarget {
       this.#expiry=null;const current=this.#client.session;
       if(!current)return this.#sync();
       const end=current.refresh_token?current.refreshExpiresAt:current.expiresAt;
-      if(clock()>=end){this.#client.forgetSession(current);this.#sync();}else{this.#watched=null;this.#sync();}
+      if(clock()>=end){this.#expiredKeys.add(keyOf(current));this.#client.forgetSession(current);this.#selectNext();this.#sync();}else{this.#watched=null;this.#sync();}
     },Math.max(0,Math.min(deadline-clock(),2147483647)));
     this.#expiry?.unref?.();
   }
-  dispose(){this.cancelFlow();this.#unsubscribe?.();if(this.#expiry!==null)this.#timers.clearTimeout(this.#expiry);this.#expiry=null;}
+  dispose(){this.cancelFlow();this.#unsubscribe?.();this.#unsubscribeSessions?.();if(this.#expiry!==null)this.#timers.clearTimeout(this.#expiry);this.#expiry=null;}
 }
 
 export function createSession(options){return new BindleSession(options);}

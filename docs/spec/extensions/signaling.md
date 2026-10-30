@@ -2,13 +2,13 @@
 
 > **Group:** Bindle extension
 >
-> **Status:** draft, revision 3.2; the engine phase is implemented locally behind default-off flags (2026-10-28), with Appendix C.5 steps 6 to 8 and the provider pages outstanding; nothing is published, deployed or production-verified. It supersedes [RTC signaling](../superseded/rtc-signaling.md) pending owner sign-off; every decision is provisional.
+> **Status:** draft, revision 3.2; the engine phase is implemented locally behind default-off flags (2026-10-28), with Appendix C.5 steps 6 to 8 and the provider pages outstanding; nothing is published, deployed or production-verified. It supersedes RTC signaling (`rtc-signaling.v1`; in git history: `git show bbbbdad:docs/spec/superseded/rtc-signaling.md`) pending owner sign-off; every decision is provisional.
 >
 > **Covers:** a generic signed session channel between endpoints: `self`, `pairing` and `offer` bases, pairings, offers and the ICE relay fragment.
 >
 > **Does not cover:** calls and call invitations ([Bindle Messaging §5.5](messaging.md) and the Parlay app); app sign-in on devices ([device authorization](device-authorization.md)); local clients ([local clients spike](../../architecture/local-clients-spike.md)).
 
-Status: **draft, 2026-10-27, revision 3.2. The engine phase is implemented locally behind default-off flags (2026-10-28, Appendix C.5 steps 2 to 5; provisional, unsigned).** Steps 6 to 8 (conformance peer rewrite, enrolment approval page, docs) and the provider pages for approvals, pairing creation and activation and service designation are outstanding; nothing is published, deployed or production-verified. It replaces [RTC signaling](../superseded/rtc-signaling.md) (`rtc-signaling.v1`), which is **superseded by this draft, pending sign-off**; the local `rtc-signaling.v1` code and its interim extension identity are retired. Appendix C plans the move. Revision 3 is written against [extensions revision 3.2](../extensions.md) (draft, unsigned): a `{spec, options}` declaration, two fragments and no slots. It applies extensions change request CR-X3-03 here (§3.1 to §3.3, §4.2, §6.1, §20.1.4). Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-51 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the owner questions carry provisional answers in §19.3 to §19.5. The decision records are in [DEVLOG](../../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1; Appendix A.2), "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2; Appendix A.4), "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1; Appendix A.5), "signaling.v1 spec rev 3 (core-scope cut, extensions rev 3, pairing consent)" (revision 3; Appendix A.6 maps each applied change request to its section) "signaling.v1 spec rev 3.1 (rev 3 review fixes; open offers)" (revision 3.1; Appendix A.7) and "signaling.v1 spec rev 3.2 (rev 3.1 verification fixes)" (revision 3.2; Appendix A.8). Revision 2.1, with the history of revisions 0 to 2.1 (former Appendix A.1 to A.5) and the bodies of amendments withdrawn since, is frozen in [superseded/signaling-rev2.1.md](../superseded/signaling-rev2.1.md). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
+Status: **draft, 2026-10-27, revision 3.2. The engine phase is implemented locally behind default-off flags (2026-10-28, Appendix C.5 steps 2 to 5; provisional, unsigned).** Steps 6 to 8 (conformance peer rewrite, enrolment approval page, docs) and the provider pages for approvals, pairing creation and activation and service designation are outstanding; nothing is published, deployed or production-verified. It replaces RTC signaling (`rtc-signaling.v1`; in git history: `git show bbbbdad:docs/spec/superseded/rtc-signaling.md`), which is **superseded by this draft, pending sign-off**; the local `rtc-signaling.v1` code and its interim extension identity are retired. Appendix C plans the move. Revision 3 is written against [extensions revision 3.2](../extensions.md) (draft, unsigned): a `{spec, options}` declaration, two fragments and no slots. It applies extensions change request CR-X3-03 here (§3.1 to §3.3, §4.2, §6.1, §20.1.4). Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-51 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the owner questions carry provisional answers in §19.3 to §19.5. The decision records are in [DEVLOG](../../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1; Appendix A.2), "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2; Appendix A.4), "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1; Appendix A.5), "signaling.v1 spec rev 3 (core-scope cut, extensions rev 3, pairing consent)" (revision 3; Appendix A.6 maps each applied change request to its section) "signaling.v1 spec rev 3.1 (rev 3 review fixes; open offers)" (revision 3.1; Appendix A.7) and "signaling.v1 spec rev 3.2 (rev 3.1 verification fixes)" (revision 3.2; Appendix A.8). Revision 2.1, with the history of revisions 0 to 2.1 (former Appendix A.1 to A.5) and the bodies of amendments withdrawn since, is in git history: `git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md` (a frozen copy of `git show 2a686cf:docs/spec/signaling.md`). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -140,9 +140,9 @@ Without a valid declaration, a provider's entities can hold sessions only with e
 
 ### 3.3 The ice-relay fragment
 
-`https://spec.bindle.example/fragments/ice-relay/v1` carries what [rtc-signaling §3.3](../superseded/rtc-signaling.md#33-the-ice-relay-slot) defined as a slot, restated as a fragment:
+`https://spec.bindle.example/fragments/ice-relay/v1` carries what the former RTC signaling draft (§3.3, in git history: `git show bbbbdad:docs/spec/superseded/rtc-signaling.md`) defined as a slot, restated as a fragment:
 - one `resource` field `relays`, `cardinality` 0 to 4, contract `…/contracts/ice-relay/v1`, `selection: "ordered"` (failover only before dispatch, [extensions §3.3](../extensions.md#33-failover-for-ordered)), `consumers: ["application", "provider"]`, no options;
-- one method, `credentials({sid?})` → `{ice_servers, expires_at}`, a write effect. Brokered relay resources are allowed.
+- one method, `credentials({sid?})` → `{ice_servers, expires_at}`, a write effect (it spends relay budget). Brokered relay resources are allowed. `ice_servers` is a list of at most 4 `{urls, username?, credential?}` entries, each with at most 4 `turn:`, `turns:` or `stun:` URLs. `sid` is meaningful only to the built-in relay resource, which uses it to check that the leg is live; a consumer MUST NOT send it to a brokered resource, so third parties never learn session identifiers.
 
 Carried rules:
 - **AMD-RL1.** The built-in relay resource also takes `endpoint` and, for an endpoint registered without DPoP, `endpoint_secret`, bound as in §10.1. `sid`, `endpoint` and `endpoint_secret` are sent only to the built-in resource, never to a brokered one.
@@ -874,13 +874,13 @@ A queue that overflowed reports `gap: true`. The affected sessions end `failed`,
   - The payload is exactly `{"t":"signal","endpoint":"<endpoint>"}`: no initiator, kind or session.
   - Pushes count against the recipient's invite limits (§13.1).
   - A subscription reported gone is removed.
-- **Integration doorbell.** A confidential integration's server MAY receive the SET event `…/events/signaling-doorbell/v1` (payload exactly `{endpoint}`) on its existing events channel ([integrations §6](integrations.md#6-events)), so that it can wake its native app. AMD-SG-E1 registers it.
+- **Integration doorbell.** A confidential integration's server MAY receive the integration event `…/events/signaling-doorbell/v1` (payload exactly `{endpoint}`) on its existing events channel ([integrations §6](integrations.md#6-events)), so that it can wake its native app. AMD-SG-E1 registers it.
 
 How an app presents an invite once woken is the app's concern.
 
 ### 11.3 Withdrawn: the owner hook
 
-Revision 3.1 removes the owner hook, the provider's last presentation duty. It served only held requests and own-entity invites with no eligible endpoint; the `none` basis is reserved (§15) and own-entity invites route only to the initiating app or its `target` (§5.4), so an invite with no eligible endpoint simply ends silently at `answer_by`. The provider presents nothing about invites (§3.6). Its earlier text is in the [frozen revision 2.1 copy](../superseded/signaling-rev2.1.md#113-the-owner-hook-the-providers-only-presentation-duty); the section number is kept so that references stay stable.
+Revision 3.1 removes the owner hook, the provider's last presentation duty. It served only held requests and own-entity invites with no eligible endpoint; the `none` basis is reserved (§15) and own-entity invites route only to the initiating app or its `target` (§5.4), so an invite with no eligible endpoint simply ends silently at `answer_by`. The provider presents nothing about invites (§3.6). Its earlier text is in revision 2.1 §11.3, in git history (`git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md`); the section number is kept so that references stay stable.
 
 ### 11.4 Withdrawn: handoff to the chosen app
 
@@ -1459,7 +1459,7 @@ Revisions 1 to 2.1 also defined `standing_accept`. Revision 3.1 replaces it with
 
 #### 20.1.5 Withdrawn in revision 3.1: routing handler
 
-The routing handler, its explicit default, sole-handler promotion and the chooser offered from the owner hook are withdrawn with intents routing (signaling SG-44). Their earlier text is in the [frozen revision 2.1 copy](../superseded/signaling-rev2.1.md#2015-routing-handler).
+The routing handler, its explicit default, sole-handler promotion and the chooser offered from the owner hook are withdrawn with intents routing (signaling SG-44). Their earlier text is in revision 2.1 §20.1.5, in git history (`git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md`).
 
 #### 20.1.6 Addressed delivery (amends §6)
 
@@ -1469,7 +1469,7 @@ The routing handler, its explicit default, sole-handler promotion and the choose
 
 #### 20.1.7 Withdrawn in revision 3.1: session handoff
 
-The `bsession` handoff from the owner hook is withdrawn (signaling §11.4, SG-44). Its earlier text is in the [frozen revision 2.1 copy](../superseded/signaling-rev2.1.md#2017-session-handoff-amends-8).
+The `bsession` handoff from the owner hook is withdrawn (signaling §11.4, SG-44). Its earlier text is in revision 2.1 §20.1.7, in git history (`git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md`).
 
 #### 20.1.8 Feature and amendment rows
 
@@ -1497,7 +1497,7 @@ Moved to AMD-INT-R1 in revision 2, and out of signaling in revision 3.1 (§20.10
 
 ### 20.2 AMD-SG-A1: provider-feature source items (activity) — withdrawn in revision 1
 
-Revision 0 proposed provider-source activity items for invites. Revision 1 withdraws it, following the owner's direction that presentation belongs to apps. Signaling creates no activity items. The precondition revision 1 set for any later activity mirror is in the [frozen revision 2.1 copy](../superseded/signaling-rev2.1.md#202-amd-sg-a1-provider-feature-source-items-activity--withdrawn-in-revision-1); since revision 3.1 there is nothing left to mirror.
+Revision 0 proposed provider-source activity items for invites. Revision 1 withdraws it, following the owner's direction that presentation belongs to apps. Signaling creates no activity items. The precondition revision 1 set for any later activity mirror is in revision 2.1 §20.2, in git history (`git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md`); since revision 3.1 there is nothing left to mirror.
 
 ### 20.3 AMD-SG-L1: withdrawn in revision 3
 
@@ -1550,7 +1550,7 @@ Signaling creates no activity items (§3.6), so it needs nothing from notificati
 
 ### 20.10 AMD-INT-R1: moved out of signaling
 
-Revision 3.1 withdraws AMD-INT-R1 from this document: signaling no longer depends on it (SG-42, SG-44). Its items 1 to 4 (chooser order and short lists, the single-candidate confirmation, the choice history, and the scope rule that intents never route incoming events) are generic intents obligations, carried as an intents change request. Item 5 was withdrawn in revision 3. The text as proposed is in the [frozen revision 2.1 copy](../superseded/signaling-rev2.1.md#2010-amd-int-r1-chooser-ordering-short-lists-and-scope-intents).
+Revision 3.1 withdraws AMD-INT-R1 from this document: signaling no longer depends on it (SG-42, SG-44). Its items 1 to 4 (chooser order and short lists, the single-candidate confirmation, the choice history, and the scope rule that intents never route incoming events) are generic intents obligations, carried as an intents change request. Item 5 was withdrawn in revision 3. The text as proposed is in revision 2.1 §20.10, in git history (`git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md`).
 
 ### 20.11 AMD-SG-D1: standing device grants (device authorization)
 
@@ -1786,7 +1786,7 @@ It still must import no 3sln.me code, and be rewritten only from this text.
 
 ### A.1 to A.5 (moved)
 
-The history of revisions 0 to 2.1 (RTC fixes, the reviews of revisions 0 and 2, the owner direction received during revision 1, and the establishment-modes spike) is in the [frozen revision 2.1 copy](../superseded/signaling-rev2.1.md#appendix-a-where-each-fix-lives-in-this-text), with section and case numbers as they were then. A.6 records revision 3 with revision 3 numbers; A.7 records revision 3.1; A.8 records revision 3.2.
+The history of revisions 0 to 2.1 (RTC fixes, the reviews of revisions 0 and 2, the owner direction received during revision 1, and the establishment-modes spike) is in revision 2.1 Appendix A, in git history (`git show bbbbdad:docs/spec/superseded/signaling-rev2.1.md`), with section and case numbers as they were then. A.6 records revision 3 with revision 3 numbers; A.7 records revision 3.1; A.8 records revision 3.2.
 
 ### A.6 Revision 3: owner direction and applied change requests
 

@@ -10,7 +10,6 @@ import { rpcAware, rpcHeaders, encodeRPC } from '../helpers/rpc.mjs';
 
 const harness = `
 import worker, { AdminAuthority, IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject, LifecycleScheduler, EventBusWaiter } from './apps/worker/index.mjs';
-import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
 import {createPushTransport}from'./packages/activity/web-push.mjs';
 export {AdminAuthority,McpAuthorizationObject,PlanCatalogObject,LifecycleScheduler,EventBusWaiter};
 export class TestDirectory extends IdentityDirectory {
@@ -18,7 +17,6 @@ export class TestDirectory extends IdentityDirectory {
   async rows(){return [...await this.ctx.storage.list()];}
   async alarmAt(){return this.ctx.storage.getAlarm();}
   async fireAlarm(){await this.ctx.storage.deleteAlarm();await super.alarm();}
-  async passwordVector(password, encoded){const hasher=createWorkerArgon2Hasher();return {match:await hasher.verify(password,encoded),wrong:await hasher.verify(password+'wrong',encoded)};}
 }
 export class TestAccount extends AccountObject {
   async wave4Composition({mint,event}={}){const c=this.controller.config;return {ports:{event:typeof c.INTEGRATION_EVENT_PORTS?.signer?.sign==='function',egress:typeof c.INTEGRATION_EVENT_PORTS?.egress?.send==='function',snapshot:c.INTEGRATION_EVENT_PORTS?.snapshot?.available===false,mint:typeof c.BROKERING_MINT==='function',discovery:typeof c.INTEGRATION_EGRESS?.send==='function',describe:typeof c.MESSAGING_DESCRIBE==='function',grant:typeof c.INTEGRATION_EVENT_PORTS?.doorbellGrant==='function'},...mint?{mint:await c.BROKERING_MINT(mint)}:{},...event?{event:await c.INTEGRATION_EVENT_PORTS.signer.sign('event',event)}:{}};}
@@ -60,7 +58,7 @@ const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:awai
       RECOVERY_SIGNING_KEY:recoverySigningKey, KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key',...options.bindings },
     durableObjects: { ...options.adminFlags?{ADMIN_AUTHORITY:{className:'AdminAuthority',useSQLite:true}}:{},EVENT_BUS_WAITS:{className:'EventBusWaiter'}, PLAN_CATALOG:{className:'PlanCatalogObject',useSQLite:true}, FEDERATION:{className:'TestFederation',useSQLite:true}, MCP_AUTH:{className:'McpAuthorizationObject',useSQLite:true}, IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true }, LIFECYCLE_SCHEDULER: { className: 'LifecycleScheduler', useSQLite: true } },
     r2Buckets: ['BLOBS', 'ARCHIVES'], ...options.outboundService ? { outboundService: options.outboundService } : {}, serviceBindings: { ASSETS: options.assets ?? (async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } })) } }));
-  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);
+  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});
   accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');
 
 // /bindle/rpc speaks Bindle CBOR (protocol §5): a `value` there is encoded with the real codec and a CBOR response reads

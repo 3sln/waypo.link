@@ -28,7 +28,7 @@ export function normalizeMemberGrants(value){
  */
 export function organizationFederationPort({resolve,enabled=()=>false}){
  return {attach(service){
-  const tokenRecord=service.tokenRecord.bind(service),projectV2=service.projectV2.bind(service),readPreferences=service.readPreferences.bind(service);
+  const tokenRecord=service.tokenRecord.bind(service),projectV2=service.projectV2.bind(service);
   service.tokenRecord=async(tx,record)=>{
    const result=await tokenRecord(tx,record);if(!result.token.member)return result;
    if(!enabled(result.token.subject)||typeof resolve!=='function'||!Number.isSafeInteger(result.token.member.aep)||result.token.member.aep<0)throw Object.assign(new Error('Member authority unavailable.'),{code:'forbidden'});
@@ -51,6 +51,5 @@ export function organizationFederationPort({resolve,enabled=()=>false}){
     entry.effective_methods=[...new Set(Object.values(methods??{}).flat())].sort();
    }return result;};
   service.projectV2=async(tx,input)=>decorate(tx,await projectV2(tx,input),input.token);
-  service.readPreferences=async(tx,token,...args)=>decorate(tx,await readPreferences(tx,token,...args),token);
  }};
 }

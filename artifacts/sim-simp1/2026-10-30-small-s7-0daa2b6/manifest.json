@@ -1,0 +1,1278 @@
+{
+ "runId": "2026-10-30-small-s7-0daa2b6",
+ "scenario": "small",
+ "seed": 7,
+ "parts": [
+  "core"
+ ],
+ "startedAt": "2026-10-30T00:40:04.095Z",
+ "durationMs": 79222,
+ "catalogueVersion": 2,
+ "profile": "sim",
+ "world": {
+  "profile": "sim",
+  "profileFlags": {
+   "SIGNUP_ENABLED": "true",
+   "FEDERATION_ENABLED": "true",
+   "FEDERATION_ENTRY_ENABLED": "true",
+   "CLIENT_METADATA_ENABLED": "true",
+   "INTEGRATIONS_ENABLED": "true",
+   "BROKERING_ENABLED": "true",
+   "APP_CLEAN_REMOVAL_ENABLED": "true",
+   "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+   "ARTEFACT_VERSIONS_ENABLED": "true",
+   "INTENT_LINKS_ENABLED": "true",
+   "INTENT_APP_HANDLERS_ENABLED": "true",
+   "INCREMENTAL_AUTH_ENABLED": "true",
+   "EXTENSIONS_ENABLED": "true",
+   "SESSION_KINDS_ENABLED": "true",
+   "SIGNALING_ENABLED": "true",
+   "SIGNALING_FOREIGN_ENABLED": "true",
+   "DIRECTORY_ENABLED": "true",
+   "EVENT_BUSES_ENABLED": "true",
+   "ORGANIZATIONS_ENABLED": "true",
+   "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+   "ORG_RELATIONS_ENABLED": "true",
+   "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+   "MEMBER_CERTIFICATES_ENABLED": "true",
+   "KEY_DELEGATION_ENABLED": "false",
+   "EMAIL_FLOW_V2": "false",
+   "EMAIL_SIGNUP_ENABLED": "false",
+   "PAID_SIGNUP_ENABLED": "false",
+   "WAITLIST_ENABLED": "false",
+   "BILLING_ENABLED": "false",
+   "MAIL_ENABLED": "false",
+   "PUSH_ENABLED": "false",
+   "LIFECYCLE_ENABLED": "false",
+   "ACCOUNT_DELETION_ENABLED": "false",
+   "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+   "IDENTITY_TRANSFER_IN_ENABLED": "false",
+   "MCP_ENABLED": "false"
+  },
+  "operatorSettings": {
+   "RELEASE_READY": "false",
+   "SIGNUP_CONTACT_REQUIRED": "false",
+   "SIGNUP_IP_WINDOW_MS": "1000",
+   "SIGNUP_IP_DAILY_LIMIT": "1000",
+   "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+   "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+   "SIGNUP_REGION_DAILY_LIMIT": "1000",
+   "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+   "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+   "REGION_POLICY": "allow-unknown",
+   "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+   "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+   "TURNSTILE_SECRET_KEY": "sim-turnstile-secret"
+  },
+  "seams": [
+   "DIRECTORY_DNS_LOOKUP",
+   "DIRECTORY_HTTPS_REQUEST",
+   "PORTABILITY_DNS_LOOKUP",
+   "PORTABILITY_HTTPS_REQUEST",
+   "CLIENT_METADATA_FETCH",
+   "APP_METADATA_FETCH",
+   "SIGNALING_EGRESS",
+   "INTEGRATION_EGRESS"
+  ],
+  "providers": {
+   "alpha": {
+    "origin": "https://alpha.example",
+    "embedOrigin": "https://embed.alpha.example",
+    "adapter": "node (apps/node/server.mjs createNodeServer, in process)",
+    "config": {
+     "APP_ORIGIN": "https://alpha.example",
+     "EMBED_ORIGIN": "https://embed.alpha.example",
+     "BRAND_NAME": "Alpha",
+     "SIGNUP_ENABLED": "true",
+     "FEDERATION_ENABLED": "true",
+     "FEDERATION_ENTRY_ENABLED": "true",
+     "CLIENT_METADATA_ENABLED": "true",
+     "INTEGRATIONS_ENABLED": "true",
+     "BROKERING_ENABLED": "true",
+     "APP_CLEAN_REMOVAL_ENABLED": "true",
+     "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+     "ARTEFACT_VERSIONS_ENABLED": "true",
+     "INTENT_LINKS_ENABLED": "true",
+     "INTENT_APP_HANDLERS_ENABLED": "true",
+     "INCREMENTAL_AUTH_ENABLED": "true",
+     "EXTENSIONS_ENABLED": "true",
+     "SESSION_KINDS_ENABLED": "true",
+     "SIGNALING_ENABLED": "true",
+     "SIGNALING_FOREIGN_ENABLED": "true",
+     "DIRECTORY_ENABLED": "true",
+     "EVENT_BUSES_ENABLED": "true",
+     "ORGANIZATIONS_ENABLED": "true",
+     "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+     "ORG_RELATIONS_ENABLED": "true",
+     "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+     "MEMBER_CERTIFICATES_ENABLED": "true",
+     "KEY_DELEGATION_ENABLED": "true",
+     "EMAIL_FLOW_V2": "false",
+     "EMAIL_SIGNUP_ENABLED": "false",
+     "PAID_SIGNUP_ENABLED": "false",
+     "WAITLIST_ENABLED": "false",
+     "BILLING_ENABLED": "false",
+     "MAIL_ENABLED": "false",
+     "PUSH_ENABLED": "false",
+     "LIFECYCLE_ENABLED": "false",
+     "ACCOUNT_DELETION_ENABLED": "false",
+     "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+     "IDENTITY_TRANSFER_IN_ENABLED": "false",
+     "MCP_ENABLED": "false",
+     "RELEASE_READY": "false",
+     "SIGNUP_CONTACT_REQUIRED": "false",
+     "SIGNUP_IP_WINDOW_MS": "1000",
+     "SIGNUP_IP_DAILY_LIMIT": "1000",
+     "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+     "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+     "SIGNUP_REGION_DAILY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+     "REGION_POLICY": "allow-unknown",
+     "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+     "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+     "TURNSTILE_SECRET_KEY": "sim-turnstile-secret",
+     "SIGNALING_FOREIGN_ISSUERS": "[\"https://beta.example\"]",
+     "ORG_FOREIGN_ISSUERS": "[\"https://beta.example\",\"https://second.example\"]",
+     "FEDERATION_SCHEMAS_KEYS": [
+      "https://3sln.me/artefacts/preferences/app-messages/v1",
+      "https://notes.example/fragments/sync/v1",
+      "https://photos.example/fragments/library/v1",
+      "https://board.example/fragments/boards/v1",
+      "https://board.example/buses/board-changes/v1"
+     ],
+     "ORGANIZATION_PLANS": {},
+     "FEDERATION_CONTRACTS": "{\"https://meet.example/kinds/call/v1\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]},\"https://meet.example/kinds/call/v1/envelope\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]}}",
+     "FEDERATION_CLIENTS": "[{\"id\":\"https://notes.example/bindle/client.json\",\"name\":\"Notes\",\"origin\":\"https://notes.example\",\"redirectUris\":[\"https://notes.example/bindle/callback\"]}]"
+    },
+    "overrides": {},
+    "reviewedClients": [
+     "https://notes.example/bindle/client.json"
+    ]
+   },
+   "beta": {
+    "origin": "https://beta.example",
+    "embedOrigin": "https://embed.beta.example",
+    "adapter": "node (apps/node/server.mjs createNodeServer, in process)",
+    "config": {
+     "APP_ORIGIN": "https://beta.example",
+     "EMBED_ORIGIN": "https://embed.beta.example",
+     "BRAND_NAME": "Beta",
+     "SIGNUP_ENABLED": "true",
+     "FEDERATION_ENABLED": "true",
+     "FEDERATION_ENTRY_ENABLED": "true",
+     "CLIENT_METADATA_ENABLED": "true",
+     "INTEGRATIONS_ENABLED": "true",
+     "BROKERING_ENABLED": "true",
+     "APP_CLEAN_REMOVAL_ENABLED": "true",
+     "SUBJECT_DELETED_EVENTS_ENABLED": "true",
+     "ARTEFACT_VERSIONS_ENABLED": "true",
+     "INTENT_LINKS_ENABLED": "true",
+     "INTENT_APP_HANDLERS_ENABLED": "true",
+     "INCREMENTAL_AUTH_ENABLED": "true",
+     "EXTENSIONS_ENABLED": "true",
+     "SESSION_KINDS_ENABLED": "true",
+     "SIGNALING_ENABLED": "true",
+     "SIGNALING_FOREIGN_ENABLED": "true",
+     "DIRECTORY_ENABLED": "true",
+     "EVENT_BUSES_ENABLED": "true",
+     "ORGANIZATIONS_ENABLED": "true",
+     "ORG_FOREIGN_MEMBERS_ENABLED": "true",
+     "ORG_RELATIONS_ENABLED": "true",
+     "ORG_FOREIGN_RELATIONS_ENABLED": "true",
+     "MEMBER_CERTIFICATES_ENABLED": "true",
+     "KEY_DELEGATION_ENABLED": "true",
+     "EMAIL_FLOW_V2": "false",
+     "EMAIL_SIGNUP_ENABLED": "false",
+     "PAID_SIGNUP_ENABLED": "false",
+     "WAITLIST_ENABLED": "false",
+     "BILLING_ENABLED": "false",
+     "MAIL_ENABLED": "false",
+     "PUSH_ENABLED": "false",
+     "LIFECYCLE_ENABLED": "false",
+     "ACCOUNT_DELETION_ENABLED": "false",
+     "IDENTITY_TRANSFER_OUT_ENABLED": "false",
+     "IDENTITY_TRANSFER_IN_ENABLED": "false",
+     "MCP_ENABLED": "false",
+     "RELEASE_READY": "false",
+     "SIGNUP_CONTACT_REQUIRED": "false",
+     "SIGNUP_IP_WINDOW_MS": "1000",
+     "SIGNUP_IP_DAILY_LIMIT": "1000",
+     "SIGNUP_SUBNET_DAILY_LIMIT": "1000",
+     "SIGNUP_REGION_HOURLY_LIMIT": "1000",
+     "SIGNUP_REGION_DAILY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_HOURLY_LIMIT": "1000",
+     "SIGNUP_GLOBAL_DAILY_LIMIT": "1000",
+     "REGION_POLICY": "allow-unknown",
+     "TRUSTED_CLIENT_IP_HEADER": "x-sim-client-ip",
+     "TURNSTILE_SITE_KEY": "sim-turnstile-site-key",
+     "TURNSTILE_SECRET_KEY": "sim-turnstile-secret",
+     "SIGNALING_FOREIGN_ISSUERS": "[\"https://alpha.example\"]",
+     "ORG_FOREIGN_ISSUERS": "[\"https://alpha.example\",\"https://second.example\"]",
+     "FEDERATION_SCHEMAS_KEYS": [
+      "https://3sln.me/artefacts/preferences/app-messages/v1",
+      "https://notes.example/fragments/sync/v1",
+      "https://photos.example/fragments/library/v1",
+      "https://board.example/fragments/boards/v1",
+      "https://board.example/buses/board-changes/v1"
+     ],
+     "ORGANIZATION_PLANS": {},
+     "FEDERATION_CONTRACTS": "{\"https://meet.example/kinds/call/v1\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]},\"https://meet.example/kinds/call/v1/envelope\":{\"bindle_artefact\":1,\"id\":\"https://meet.example/kinds/call/v1\",\"kind\":\"intent\",\"versions\":[{\"version\":1,\"prev\":null,\"body\":{\"id\":\"https://meet.example/kinds/call/v1\",\"title\":{\"en\":\"Video call\",\"es\":\"Videollamada\"},\"summary\":{\"en\":\"A video call with someone you invite to a meeting.\",\"es\":\"Una videollamada con alguien a quien invitas a una reunión.\"},\"publisher\":\"https://meet.example\",\"effect\":\"join\",\"capability\":false,\"max_bytes\":64,\"data\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"disclosure\":{\"categories\":[\"personal-data\"],\"fields\":{}},\"session\":{\"v\":1,\"parties\":\"other\",\"profiles\":{\"webrtc\":{}},\"bases\":[\"offer\"]}}}]}}",
+     "FEDERATION_CLIENTS": "[]"
+    },
+    "overrides": {},
+    "reviewedClients": []
+   }
+  },
+  "apps": {
+   "notes": {
+    "origin": "https://notes.example",
+    "registration": "client-id metadata at /bindle/client.json"
+   },
+   "photos": {
+    "origin": "https://photos.example",
+    "registration": "client-id metadata at /bindle/client.json"
+   }
+  },
+  "services": {
+   "second": {
+    "hosts": [
+     "second.example"
+    ],
+    "origin": "https://second.example",
+    "implementation": "tests/helpers/second-issuer.mjs (clean-room, fetch-shaped; GET only)"
+   },
+   "board": {
+    "hosts": [
+     "board.example"
+    ],
+    "origin": "https://board.example",
+    "registration": "client-id metadata at /bindle/client.json",
+    "seams": [
+     "ORGANIZATION_PLANS (operator allowlist filled at run time)"
+    ]
+   },
+   "meet": {
+    "hosts": [
+     "meet.example"
+    ],
+    "origin": "https://meet.example",
+    "registration": "client-id metadata at /bindle/client.json",
+    "sessionKind": "https://meet.example/kinds/call/v1",
+    "operatorHeld": "FEDERATION_CONTRACTS (line and line/envelope)"
+   },
+   "parlay": {
+    "hosts": [
+     "messages.example"
+    ],
+    "origin": "https://messages.example",
+    "shell": "apps/parlay/node/server.mjs createNodeShell, in process (PARLAY_ENABLED, INTENT_LINKS_ENABLED)",
+    "ports": "tests/sim/parlay-adapter.mjs",
+    "providerConfig": [
+     "KEY_DELEGATION_ENABLED=true",
+     "DELEGATION_SLOT_OCCUPANT (port)"
+    ]
+   }
+  },
+  "hosts": [
+   "challenges.cloudflare.com",
+   "alpha.example",
+   "embed.alpha.example",
+   "beta.example",
+   "embed.beta.example",
+   "second.example",
+   "board.example",
+   "meet.example",
+   "messages.example",
+   "notes.example",
+   "photos.example"
+  ]
+ },
+ "testOnly": {
+  "passkeys": "soft passkeys per person (tests/helpers/soft-passkey.mjs) behind navigator.credentials; real adapter verification",
+  "turnstile": "third-party stand-in for Cloudflare Turnstile (widget script and siteverify), tokens bound to host and action, single use",
+  "tls": "per-run local CA; browsers ignore certificate errors; servers trust only the run CA",
+  "network": "DNS and socket replaced at the providers' injection seams; screening unchanged",
+  "addresses": "each person browses through their own proxy port carrying a seeded address, passed to providers in the operator trusted client-IP header (TRUSTED_CLIENT_IP_HEADER)",
+  "clock": "real time (see gaps: a frozen browser clock breaks DPoP proof iat checks against real-time providers)"
+ },
+ "caveat": "Self-consistency, not interoperability: every provider here shares authors.",
+ "environment": {
+  "incompleteAssetBuild": false
+ },
+ "ledger": {
+  "digest": "94f2b95275eaa3782cd9c80f742010ba06d8f8508a6522b488780b5897417b33",
+  "entries": [
+   {
+    "actor": "Hugo Moreau",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Dev Malhotra",
+    "kind": "account",
+    "key": "alpha",
+    "value": {
+     "provider": "alpha",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Imani Okafor",
+    "kind": "account",
+    "key": "beta",
+    "value": {
+     "provider": "beta",
+     "passkeys": 1,
+     "recoveryFile": true
+    }
+   },
+   {
+    "actor": "Hugo Moreau",
+    "kind": "note",
+    "key": "Garden plan",
+    "value": {
+     "title": "Garden plan",
+     "words": 21
+    }
+   },
+   {
+    "actor": "Hugo Moreau",
+    "kind": "note",
+    "key": "Recipe: weeknight dal",
+    "value": {
+     "title": "Recipe: weeknight dal",
+     "words": 21
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "note",
+    "key": "Running log",
+    "value": {
+     "title": "Running log",
+     "words": 16
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "note",
+    "key": "Apartment viewing questions",
+    "value": {
+     "title": "Apartment viewing questions",
+     "words": 16
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "note",
+    "key": "Groceries for Saturday",
+    "value": {
+     "title": "Groceries for Saturday",
+     "words": 15
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "note",
+    "key": "Garden plan",
+    "value": {
+     "title": "Garden plan",
+     "words": 21
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "note",
+    "key": "Lisbon trip — packing",
+    "value": {
+     "title": "Lisbon trip — packing",
+     "words": 28
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "note",
+    "key": "Running log",
+    "value": {
+     "title": "Running log",
+     "words": 16
+    }
+   },
+   {
+    "actor": "Hugo Moreau",
+    "kind": "connection",
+    "key": "notes",
+    "value": {
+     "provider": "alpha",
+     "via": "island"
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "connection",
+    "key": "notes",
+    "value": {
+     "provider": "alpha",
+     "via": "island"
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "connection",
+    "key": "notes",
+    "value": {
+     "provider": "beta",
+     "via": "redirect"
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "connection",
+    "key": "notes",
+    "value": {
+     "provider": "beta",
+     "via": "redirect"
+    }
+   },
+   {
+    "actor": "Hugo Moreau",
+    "kind": "note",
+    "key": "Lisbon trip — packing",
+    "value": {
+     "title": "Lisbon trip — packing",
+     "words": 28
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "note",
+    "key": "Book club: Piranesi",
+    "value": {
+     "title": "Book club: Piranesi",
+     "words": 20
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "note",
+    "key": "Recipe: weeknight dal",
+    "value": {
+     "title": "Recipe: weeknight dal",
+     "words": 21
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "note",
+    "key": "Apartment viewing questions",
+    "value": {
+     "title": "Apartment viewing questions",
+     "words": 16
+    }
+   },
+   {
+    "actor": "Hugo Moreau",
+    "kind": "grant",
+    "key": "app-messages",
+    "value": {
+     "via": "incremental",
+     "mode": "redirect"
+    }
+   },
+   {
+    "actor": "Hugo Moreau",
+    "kind": "app-message",
+    "key": "reminder",
+    "value": {
+     "note": "Lisbon trip — packing"
+    }
+   },
+   {
+    "actor": "Farid Haddad",
+    "kind": "removal",
+    "key": "notes",
+    "value": {
+     "provider": "beta",
+     "choice": "keep",
+     "outcome": "completed"
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "grant",
+    "key": "photos-library",
+    "value": {
+     "via": "incremental"
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "photo",
+    "key": "Harbour walk",
+    "value": {
+     "bytes": 2346
+    }
+   },
+   {
+    "actor": "Bruno Costa",
+    "kind": "photo",
+    "key": "Morning ridge",
+    "value": {
+     "bytes": 2202
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "grant",
+    "key": "photos-library",
+    "value": {
+     "via": "incremental"
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "photo",
+    "key": "Harbour walk",
+    "value": {
+     "bytes": 1729
+    }
+   },
+   {
+    "actor": "Kaia Tamm",
+    "kind": "sign-out",
+    "key": "notes",
+    "value": {
+     "kept": 3
+    }
+   }
+  ]
+ },
+ "replay": null,
+ "loadTimings": null,
+ "steps": [
+  {
+   "id": "accounts.signup.alpha.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 2146
+  },
+  {
+   "id": "accounts.signup.alpha.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1454
+  },
+  {
+   "id": "accounts.signup.alpha.3",
+   "actor": "Dev Malhotra",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1350
+  },
+  {
+   "id": "accounts.signup.beta.4",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1519
+  },
+  {
+   "id": "accounts.signup.beta.5",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1492
+  },
+  {
+   "id": "accounts.signup.beta.6",
+   "actor": "Imani Okafor",
+   "via": "browser",
+   "kind": "accounts",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1565
+  },
+  {
+   "id": "notes.local.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 652
+  },
+  {
+   "id": "notes.local.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 384
+  },
+  {
+   "id": "notes.local.3",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 381
+  },
+  {
+   "id": "notes.local.4",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 334
+  },
+  {
+   "id": "notes.sign-in.island.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 4201
+  },
+  {
+   "id": "notes.sign-in.island.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 3355
+  },
+  {
+   "id": "notes.sign-in.redirect.1",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 3269
+  },
+  {
+   "id": "notes.sign-in.redirect.2",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 2515
+  },
+  {
+   "id": "notes.sync.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1006
+  },
+  {
+   "id": "notes.sync.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1017
+  },
+  {
+   "id": "notes.sync.3",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1068
+  },
+  {
+   "id": "notes.sync.4",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 1068
+  },
+  {
+   "id": "notes.reminders.grant-more",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 9340
+  },
+  {
+   "id": "notes.reminders.redirect-exchange",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 2
+  },
+  {
+   "id": "notes.reconnect.1",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 2038
+  },
+  {
+   "id": "notes.reminder.app-message",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 897
+  },
+  {
+   "id": "notes.removal.clean.1",
+   "actor": "Farid Haddad",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 2053
+  },
+  {
+   "id": "photos.guest.1",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "photos",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 535
+  },
+  {
+   "id": "photos.unlock.1",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "photos",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 14220
+  },
+  {
+   "id": "photos.add.1",
+   "actor": "Bruno Costa",
+   "via": "browser",
+   "kind": "photos",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 685
+  },
+  {
+   "id": "photos.guest.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "photos",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 293
+  },
+  {
+   "id": "photos.unlock.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "photos",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 14110
+  },
+  {
+   "id": "photos.add.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "photos",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 343
+  },
+  {
+   "id": "notes.account-menu",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 532
+  },
+  {
+   "id": "notes.sign-out.2",
+   "actor": "Kaia Tamm",
+   "via": "browser",
+   "kind": "notes",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 222
+  },
+  {
+   "id": "notes.islands-for-metadata-clients",
+   "actor": null,
+   "via": "api",
+   "kind": "notes",
+   "expect": {
+    "pending": "The embed shell resolves frame-ancestors from reviewed registrations (FEDERATION_CLIENTS) only, so a client-id-metadata app gets an inert island.",
+    "rule": "components profile §3 / client-id-metadata.v1"
+   },
+   "outcome": "pending-held",
+   "ok": true,
+   "ms": 6,
+   "error": "frame-ancestors for Notes on beta: frame-ancestors 'none'",
+   "at": "tests/sim/scenarios/small.mjs:54:135"
+  },
+  {
+   "id": "notes.session-survives-reload",
+   "actor": "Hugo Moreau",
+   "via": "browser",
+   "kind": "notes",
+   "expect": {
+    "pending": "BindleClient keeps app sessions in memory only and has no restore API; a reload signs the app out.",
+    "rule": "SDK (identity.mjs BindleClient)"
+   },
+   "outcome": "pending-held",
+   "ok": true,
+   "ms": 4119,
+   "error": "page.waitForFunction: Timeout 4000ms exceeded.",
+   "at": "tests/sim/scenarios/small.mjs:58:14"
+  },
+  {
+   "id": "invariant.accounts",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 30
+  },
+  {
+   "id": "invariant.server-to-server",
+   "actor": null,
+   "via": "api",
+   "kind": "invariant",
+   "expect": "pass",
+   "outcome": "pass",
+   "ok": true,
+   "ms": 0
+  }
+ ],
+ "gates": [
+  {
+   "id": "G1",
+   "title": "Step expectations",
+   "status": "pass",
+   "summary": "35/35 steps met their expectation; 2 expected-pending held",
+   "details": []
+  },
+  {
+   "id": "G2",
+   "title": "Page health",
+   "status": "pass",
+   "summary": "11 page messages (12 HTTP ≥400 answers recorded), 0 unexplained, 0 known defects observed",
+   "knownDefects": [],
+   "details": [],
+   "expectedHttp": [
+    {
+     "code": "use_dpop_nonce",
+     "reason": "RFC 9449 §8: the first token request learns the DPoP nonce from a 400 use_dpop_nonce answer; the SDK retries once with it."
+    },
+    {
+     "code": "invite_unverifiable",
+     "reason": "Expected-pending step parlay.cross-provider.invite: Parlay refuses a foreign inviter with 403 invite_unverifiable (messaging CL-24, same-host only); the page shows connectUnverifiable."
+    }
+   ],
+   "allowlist": [
+    {
+     "match": "/console-error https:\\/\\/(alpha|beta)\\.example Failed to load resource: the server responded with a status of 401/",
+     "reason": "Provider pages probe /api/session-scoped endpoints before sign-in; a 401 answer is the signed-out state, logged by Chromium as a resource error."
+    },
+    {
+     "match": "/console-error https:\\/\\/(alpha|beta)\\.example Failed to load resource: the server responded with a status of 404 \\(Not Found\\)$/",
+     "reason": "Optional provider assets (badge sprite or per-account avatar) answer 404 when absent."
+    }
+   ]
+  },
+  {
+   "id": "G3",
+   "title": "Server health and egress",
+   "status": "pass",
+   "summary": "0 5xx answers, 0 egress refusals outside the run's hosts, 0 log findings",
+   "details": {
+    "fivexx": [],
+    "egress": [],
+    "leaks": [],
+    "browserNoise": 0
+   }
+  },
+  {
+   "id": "G4",
+   "title": "Post-run invariants",
+   "status": "pass",
+   "summary": "9/9 invariant steps hold",
+   "details": [
+    {
+     "id": "notes.sync.1",
+     "outcome": "pass"
+    },
+    {
+     "id": "notes.sync.2",
+     "outcome": "pass"
+    },
+    {
+     "id": "notes.sync.3",
+     "outcome": "pass"
+    },
+    {
+     "id": "notes.sync.4",
+     "outcome": "pass"
+    },
+    {
+     "id": "notes.removal.clean.1",
+     "outcome": "pass"
+    },
+    {
+     "id": "photos.add.1",
+     "outcome": "pass"
+    },
+    {
+     "id": "photos.add.2",
+     "outcome": "pass"
+    },
+    {
+     "id": "invariant.accounts",
+     "outcome": "pass"
+    },
+    {
+     "id": "invariant.server-to-server",
+     "outcome": "pass"
+    }
+   ]
+  },
+  {
+   "id": "G5",
+   "title": "Layout at 390 px and colour scheme",
+   "status": "pass",
+   "summary": "0 layout failures, 0 informational",
+   "details": []
+  },
+  {
+   "id": "G6",
+   "title": "Deterministic replay",
+   "status": "info",
+   "summary": "not checked in this run (use --replay)",
+   "details": null
+  },
+  {
+   "id": "G7",
+   "title": "Step budget",
+   "status": "info",
+   "summary": "accounts p95 2146 ms (was 11785); notes p95 4201 ms; photos p95 14220 ms; invariant p95 30 ms (was 40)",
+   "details": {
+    "accounts": {
+     "count": 6,
+     "p95": 2146,
+     "previousP95": 11785
+    },
+    "notes": {
+     "count": 21,
+     "p95": 4201,
+     "previousP95": null
+    },
+    "photos": {
+     "count": 6,
+     "p95": 14220,
+     "previousP95": null
+    },
+    "invariant": {
+     "count": 2,
+     "p95": 30,
+     "previousP95": 40
+    }
+   }
+  }
+ ],
+ "budget": {
+  "accounts": {
+   "count": 6,
+   "p95": 2146,
+   "previousP95": 11785
+  },
+  "notes": {
+   "count": 21,
+   "p95": 4201,
+   "previousP95": null
+  },
+  "photos": {
+   "count": 6,
+   "p95": 14220,
+   "previousP95": null
+  },
+  "invariant": {
+   "count": 2,
+   "p95": 30,
+   "previousP95": 40
+  }
+ },
+ "passed": true,
+ "health": [
+  {
+   "actor": "Hugo Moreau",
+   "origin": "https://notes.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Hugo Moreau",
+   "origin": "https://notes.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://notes.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://notes.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Farid Haddad",
+   "origin": "https://notes.example",
+   "kind": "http-400",
+   "text": "POST https://beta.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Farid Haddad",
+   "origin": "https://notes.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://notes.example",
+   "kind": "http-400",
+   "text": "POST https://beta.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://notes.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Hugo Moreau",
+   "origin": "https://notes.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: "
+  },
+  {
+   "actor": "Hugo Moreau",
+   "origin": "https://notes.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://photos.example",
+   "kind": "http-400",
+   "text": "POST https://beta.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://photos.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://photos.example",
+   "kind": "http-400",
+   "text": "POST https://beta.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: "
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://photos.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://photos.example",
+   "kind": "http-400",
+   "text": "POST https://beta.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Bruno Costa",
+   "origin": "https://photos.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://photos.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://photos.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://photos.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: "
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://photos.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://photos.example",
+   "kind": "http-400",
+   "text": "POST https://alpha.example/oauth/token",
+   "info": true,
+   "error": "use_dpop_nonce: A fresh DPoP nonce is required."
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://photos.example",
+   "kind": "console-error",
+   "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+  },
+  {
+   "actor": "Kaia Tamm",
+   "origin": "https://notes.example",
+   "kind": "http-401",
+   "text": "POST https://embed.alpha.example/embed/api/forget",
+   "info": true
+  }
+ ],
+ "shots": [],
+ "egress": {
+  "violations": [],
+  "tunnels": 291,
+  "serverDials": 3
+ }
+}

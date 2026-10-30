@@ -74,7 +74,7 @@ async function popupSignIn(f,start){
   await f.page.waitForFunction(()=>document.querySelector('bindle-session').session,null,{timeout:10000});
   return popup;
 }
-const signInForm=async(page,handle)=>{await page.getByLabel('Your Bindle identity').fill(handle);await page.getByRole('button',{name:'Continue',exact:true}).click();};
+const signInForm=async(page,handle)=>{await page.getByLabel('Your handle').fill(handle);await page.getByRole('button',{name:'Continue',exact:true}).click();};
 
 for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration: popup, DPoP-bound session with a non-extractable key, provider manage URL, an unreachable embed origin degrades islands to the standard composition`,async t=>{
   // FedCM is declared off here: real Chromium would try the mock config URL. The FedCM path is covered by DOM tests.
@@ -82,7 +82,8 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration:
   await page.goto(app+'/popup');await ready(page);
   const caps=await page.evaluate(()=>document.querySelector('bindle-session').capabilities);
   assert.equal(caps.dpop,true);assert.equal(caps.profile,true);assert.ok(caps.islands.signIn);
-  assert.equal(await page.getByRole('button',{name:'Continue with 3sln.example'}).isVisible(),true);
+  // While the island mounts a same-size placeholder shows (V25); the unreachable embed origin degrades to the standard button.
+  await page.getByRole('button',{name:'Continue with 3sln.example'}).waitFor({timeout:20000});
   await popupSignIn(f,()=>page.getByRole('button',{name:'Continue with 3sln.example'}).click());
   const [entry]=[...mock.entries.values()];assert.match(entry.dpopJkt,/^[A-Za-z0-9_-]{43}$/);assert.equal(entry.loginHint,undefined);
   assert.ok(requests.filter(call=>call.path==='/oauth/token').every(call=>call.dpop),'token requests carry DPoP proofs');
@@ -92,16 +93,16 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration:
   const order=await page.evaluate(()=>window.events.map(event=>event.type).filter(type=>['bindle-session-change','bindle-sign-in-start','bindle-sign-in-end','bindle-account-change'].includes(type)));
   assert.deepEqual(order,['bindle-session-change','bindle-sign-in-start','bindle-session-change','bindle-account-change','bindle-sign-in-end']);
   const trigger=page.getByRole('button',{name:/^Account: Alex Example$/});await trigger.waitFor();
-  await page.locator('bindle-account .avatar.picture').waitFor(); // The account name can render before the image decodes.
+  await page.locator('bindle-account .trigger .avatar.picture').waitFor(); // The account name can render before the image decodes.
   await trigger.click();
-  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example']);
+  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Manage at 3sln.example','Sign out of this app']);
   assert.equal(await page.getByRole('link',{name:'Manage at 3sln.example'}).getAttribute('href'),'https://3sln.example/console/apps');
   // The embed origin is unreachable here: each island times out (3 s after load, or 10 s without one, as Firefox fires
   // no load for a failed frame) and its part degrades for the document.
   await page.waitForFunction(()=>{const s=document.querySelector('bindle-account').state.islands;return s.avatar==='fallback'&&s.switcher==='fallback';},null,{timeout:15000});
   assert.equal(await page.evaluate(()=>document.querySelector('bindle-session').capabilities.islands.avatar),null);
   assert.ok(embedRequests.length>0&&embedRequests.every(url=>url.startsWith('https://embed.3sln.example/?client=')),'only island shells were requested');
-  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example'],'the fallback keeps every action');
+  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Manage at 3sln.example','Sign out of this app'],'the fallback keeps every action');
   await page.screenshot({path:resolve(artifacts,`provider-matrix-full-${engine.name()}.png`)});
   assert.deepEqual(errors,[]);
 });
@@ -109,7 +110,7 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration:
 for(const engine of [chromium,firefox])test(`${engine.name()}: standard declaration: required controls, select-account switch, popover placement and close semantics`,async t=>{
   const f=await fixture(t,{engine,providers:{'3sln.example':{declaration:'standard',profile:true,accounts:[{handle:'alex',displayName:'Alex Example'},{handle:'sam',displayName:'Sam Sample'}]}}});if(!f)return;const {page,mocks,errors}=f,mock=mocks['https://3sln.example'];
   await page.goto(app+'/popup');await ready(page);
-  assert.equal(await page.getByLabel('Your Bindle identity').getAttribute('required'),null,'handle optional with identity-optional login');
+  assert.equal(await page.getByLabel('Your handle').getAttribute('required'),null,'handle optional with identity-optional login');
   await popupSignIn(f,()=>signInForm(page,'alex'));
   assert.equal([...mock.entries.values()][0].loginHint,'alex@3sln.example');
   const trigger=page.getByRole('button',{name:/^Account: /});
@@ -130,7 +131,7 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: standard declarat
   assert.deepEqual(toggles.at(-1),{open:false,reason:'outside'});
   assert.ok(!toggles.some((value,index)=>index>0&&value.open&&toggles[index-1].open),'never reopened without a close');
   await trigger.click();
-  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example'],'no reauth or provider sign-out without the intents');
+  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Manage at 3sln.example','Sign out of this app'],'no reauth or provider sign-out without the intents');
   const popupPromise=f.context.waitForEvent('page');await page.getByRole('button',{name:'Use another account'}).click();
   const popup=await popupPromise;await popup.getByRole('button',{name:'Cancel'}).waitFor();
   assert.equal([...mock.entries.values()].at(-1).intent,'select-account');
@@ -144,16 +145,16 @@ test('chromium: minimal declaration: handle required, redirect only, completes o
   const f=await fixture(t,{providers:{'3sln.example':{declaration:'minimal'}}});if(!f)return;const {page,context,errors}=f;
   await page.goto(app+'/');await ready(page);
   assert.equal(await page.getByRole('button',{name:/^Continue with/}).count(),0);
-  assert.equal(await page.getByLabel('Your Bindle identity').getAttribute('required'),'');
+  assert.equal(await page.getByLabel('Your handle').getAttribute('required'),'');
   let popups=0;context.on('page',()=>popups++);
   await signInForm(page,'alex');
   await page.waitForURL('https://3sln.example/oauth/authorize?request_id=**');assert.equal(popups,0,'no popup when not declared');
   await page.getByRole('button',{name:'Approve'}).click();
   await page.waitForURL(app+'/callback');await page.getByRole('button',{name:/^Account: /}).waitFor({timeout:10000});
   await page.getByRole('button',{name:/^Account: /}).click();
-  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example']);
+  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Manage at 3sln.example','Sign out of this app']);
   await page.getByRole('button',{name:'Use another account'}).click();
-  await page.getByRole('textbox',{name:'Your Bindle identity'}).waitFor();assert.equal(popups,0,'a typed handle comes first (CP-10)');
+  await page.getByRole('textbox',{name:'Your handle'}).waitFor();assert.equal(popups,0,'a typed handle comes first (CP-10)');
   assert.deepEqual(errors,[]);
 });
 
@@ -195,7 +196,7 @@ test('chromium: unsupported and below-floor providers are errors without a windo
     await signInForm(page,`alex@${host}`);
     await page.waitForFunction(()=>document.querySelector('bindle-sign-in').shadowRoot.querySelector('[role=alert]').textContent);
     assert.equal(await page.evaluate(()=>document.querySelector('bindle-sign-in').shadowRoot.querySelector('[role=alert]').textContent),"This provider isn't supported.",host);
-    await page.getByLabel('Your Bindle identity').fill('');
+    await page.getByLabel('Your handle').fill('');
   }
   assert.equal(popups,0);assert.equal(await page.evaluate(()=>window.events.some(event=>event.type==='bindle-email-fallback')),false);
   await signInForm(page,'alex@mail.example');

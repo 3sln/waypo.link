@@ -174,6 +174,14 @@ test('worker: only the leader restores, followers render the fanned-out snapshot
   await workers[1]({id:3,op:'selectable',args:{subject}});assert.equal(events[1].find(e=>e.id===3).value,true);
   await workers[1]({id:4,op:'render',args:{subjects:[subject,null],bucket:64}});const tiles=events[1].find(e=>e.id===4).value;
   assert.equal(tiles.length,2);assert.equal(await rasterKind(tiles[0]),'image/png');assert.equal(await rasterKind(tiles[1]),'image/png');
+  // The avatar part (fallback 'none', ui-elements-audit V2): a bound subject without a picture and an unbound subject
+  // both get the transparent tile, so the element's own avatar shows; switcher tiles keep the monogram.
+  const bytes=async blob=>Buffer.from(await blob.arrayBuffer()).toString('base64');
+  await workers[1]({id:6,op:'render',args:{subjects:[subject,'https://elsewhere.example/people/x',null],bucket:64,fallback:'none'}});const clear=events[1].find(e=>e.id===6).value;
+  const transparent=await bytes(await transparentPNG(64));
+  assert.deepEqual(await Promise.all(clear.map(bytes)),[transparent,transparent,transparent]);
+  assert.notEqual(await bytes(tiles[0]),transparent,'the default fallback stays the monogram');
+  await workers[1]({id:7,op:'render',args:{subjects:[subject],bucket:64,fallback:'picture'}});assert.equal(events[1].find(e=>e.id===7).ok,false,'unknown fallback refused');
   await workers[1]({id:5,op:'forget',args:{subject}});await tick(150);
   assert.deepEqual(last(events[0]),[]);assert.deepEqual(last(events[1]),[]);assert.deepEqual(await listCredentials(store,{issuer,clientId}),[]);
   for(const w of workers)await w({op:'pagehide'});
