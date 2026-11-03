@@ -2,7 +2,9 @@ name: Checks
 on:
   push:
     branches: [main]
+    paths-ignore: ['hosted/waypo/**', '.github/workflows/waypo-hosted.yml']
   pull_request:
+    paths-ignore: ['hosted/waypo/**', '.github/workflows/waypo-hosted.yml']
   workflow_dispatch:
 permissions:
   contents: read

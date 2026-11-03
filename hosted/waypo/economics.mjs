@@ -1,0 +1,8 @@
+// Planning model, not a bill, benchmark, usage allowance or promised margin.
+// Uses marginal public rates after shared included allowances are consumed.
+export const COST_RATES=Object.freeze({workersBaseYearUsd:60,r2GbMonthUsd:.015,r2PutMillionUsd:4.5,r2GetMillionUsd:.36,sqlGbMonthUsd:.20,sqlWriteMillionUsd:1,sqlReadMillionUsd:.001,workerRequestMillionUsd:.30,workerCpuMillionMsUsd:.02});
+export function estimateAnnualAccountCost({payingAccounts,storedGbMonths=0,sqlGbMonths=0,r2Puts=0,r2Gets=0,sqlRowsWritten=0,sqlRowsRead=0,workerRequests=0,workerCpuMs=0,otherComputeUsd=0,contactUsd=0,backupUsd=0,payoutAllocationUsd=0,internationalCard=false}){
+ const values={payingAccounts,storedGbMonths,sqlGbMonths,r2Puts,r2Gets,sqlRowsWritten,sqlRowsRead,workerRequests,workerCpuMs,otherComputeUsd,contactUsd,backupUsd,payoutAllocationUsd};if(Object.values(values).some(value=>typeof value!=='number'||!Number.isFinite(value)||value<0)||payingAccounts<1)throw new TypeError('Explicit nonnegative workload and positive shared payer count required');
+ const processingUsd=10*(internationalCard?.065:.05)+.50,fixedAllocationUsd=COST_RATES.workersBaseYearUsd/payingAccounts,storageUsd=storedGbMonths*.015+sqlGbMonths*.20,objectIoUsd=(r2Puts*4.5+r2Gets*.36)/1e6,journalIoUsd=(sqlRowsWritten+sqlRowsRead*.001)/1e6,workerUsd=(workerRequests*.30+workerCpuMs*.02)/1e6,otherUsd=otherComputeUsd+contactUsd+backupUsd+payoutAllocationUsd,totalCostUsd=processingUsd+fixedAllocationUsd+storageUsd+objectIoUsd+journalIoUsd+workerUsd+otherUsd;
+ return {grossUsd:10,processingUsd,fixedAllocationUsd,storageUsd,objectIoUsd,journalIoUsd,workerUsd,otherUsd,totalCostUsd,remainingBeforeTaxAndSupportUsd:10-totalCostUsd};
+}

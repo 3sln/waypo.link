@@ -1,0 +1,25 @@
+{
+  "name": "@3sln/waypo-hosted",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Isolated 3sln.me composition of the portable Waypo provider",
+  "exports": {
+    "./policy-preset": "./policy-preset.mjs",
+    "./polar-adapter": "./polar-adapter.mjs",
+    "./node": "./node.mjs",
+    "./worker": "./worker.mjs",
+    "./composition": "./composition.mjs"
+  },
+  "dependencies": {
+    "@3sln/waypo": "file:../../../waypo",
+    "@polar-sh/sdk": "1.0.2"
+  },
+  "scripts": {
+    "test": "npm run test:engine",
+    "test:engine": "node --test tests/economics.test.mjs tests/ledger.test.mjs tests/overage-candidate.test.mjs tests/polar-adapter.test.mjs tests/policy-preset.test.mjs",
+    "test:e2e": "node --test tests/hosted-http.test.mjs tests/hosted-worker.test.mjs",
+    "test:all": "node --test tests/*.test.mjs"
+  }
+}

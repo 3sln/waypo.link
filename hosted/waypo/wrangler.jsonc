@@ -1,0 +1,18 @@
+{
+  "name": "3sln-waypo-preview",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-02",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "durable_objects": {"bindings": [{"name": "INSTALLATION", "class_name": "HostedInstallation"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["HostedInstallation"]}],
+  "r2_buckets": [{"binding": "PRIVATE_OBJECTS", "bucket_name": "operator-configured-private-waypo-preview"}],
+  "assets": {"directory": "./node_modules/@3sln/waypo/.output/worker-assets", "binding": "ASSETS", "run_worker_first": true},
+  "vars": {
+    "WAYPO_PREVIEW_ENABLED": "false",
+    "WAYPO_CONFIG": "{\"installationId\":\"3sln-preview\",\"issuer\":\"https://identity.example/api/auth\",\"adminUrl\":\"https://admin.example/\",\"admission\":\"closed\"}",
+    "HOSTED_BILLING_CONFIG": "{\"environment\":\"sandbox\",\"organizationId\":\"operator-configured\",\"productId\":\"operator-configured\",\"enableActions\":false,\"enableCancellation\":false,\"enableTrial\":false,\"executeRetention\":false}"
+  }
+}
