@@ -65,16 +65,19 @@ No external checkout or charge is made. Real Polar annual sandbox settlement,
 production configuration, all lifecycle/browser gates and launch capacity remain
 separate release requirements.
 
-The isolated `Hosted Waypo engine gate` workflow checks out this repository as
-`service` beside the exact Waypo commit in `waypo-ref.txt`, installs both pinned
-dependency sets and runs only the engine gate on changes. Browser/native checks
-and snapshots require explicit manual inputs. The private pinned Waypo composite
-action supplies its exact source with a per-file SHA-256 manifest; its action ref
-must match `waypo-ref.txt`. GitHub's organization-private action sharing supplies
-an automatically scoped read token, so no stored cross-repository personal token,
-billing credential or Cloudflare credential is needed. See the
-[GitHub sharing contract](https://docs.github.com/en/actions/how-tos/reuse-automations/share-with-your-organization).
-The Waypo repository must allow private action use within the organization;
-review that setting if collaborator/access policy changes. This workflow does
-not establish a remote pass until it has actually run. Historical root workflows
-do not validate this new package. Production deployment remains disabled.
+While Waypo is private and this service repository is public, the hosted engine
+and integration workflow runs inside **the private `3sln/waypo` repository**:
+`hosted-composition.yml`. It checks out a reviewed full commit of this public
+repository beside the private reference. No stored cross-repository personal
+token is required, and private source/test output stays in private CI.
+
+Core changes run the hosted engine compatibility gate against the reviewed public
+baseline. Before merging a new hosted package revision, a trusted maintainer must
+dispatch that private workflow with its full `hosted_ref`; the manual default
+tests `waypo-ref.txt`, while candidate mode tests the current Waypo revision.
+Browser/native checks and snapshots require explicit manual inputs. A public
+pull request does not automatically receive a private dependency or a fabricated
+green engine check. Automatic public-PR status integration remains a setup item
+until a narrowly scoped integration or public Waypo release is selected.
+Historical root workflows do not validate this package. Production deployment
+remains disabled.
