@@ -28,8 +28,8 @@ private `{provider,billing}` JSON file when executed directly. Provision the
 provider metadata using Waypo's public SQLite adapter first. Run behind the
 operator's configured TLS ingress. The optional commercial flags
 `enableActions`, `enableCancellation`, `enableTrial`, and `executeRetention` must
-be explicit booleans; actions/trials/destructive retention default off. Keep
-cancellation enabled when disabling new checkouts on an existing live service.
+be explicit booleans; actions/trials/destructive retention default off. An already canonically bound subscription remains cancelable even when new
+billing actions are disabled; flags cannot trap an owner in future renewal.
 New hosted signup still requires actual trusted country/admission/contact ports;
 this package does not invent an approved global market list.
 

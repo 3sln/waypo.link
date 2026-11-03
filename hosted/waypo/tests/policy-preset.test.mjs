@@ -9,3 +9,5 @@ test('3sln commercial preset is explicit, portable-engine independent and defaul
   assert.equal(config.retention.execute, false);
   assert.equal(THREESLN_PERSONAL_PLAN.overageBudget, 0);
 });
+
+test('signup market guard is explicit, transient and never a returning-travel rule',async()=>{const {createHostedSignupGuard}=await import('../composition.mjs');assert.equal(await createHostedSignupGuard()({country:'US',purpose:'new-account-signup'}),false);const guard=createHostedSignupGuard({allowedSignupCountries:['US']});assert.equal(await guard({country:'US',purpose:'new-account-signup'}),true);assert.equal(await guard({country:'US',purpose:'returning-signin'}),false);assert.equal(await guard({country:'CA',purpose:'new-account-signup'}),false);assert.throws(()=>createHostedSignupGuard({allowedSignupCountries:['XX']}));});

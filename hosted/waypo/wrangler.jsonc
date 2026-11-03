@@ -12,7 +12,7 @@
   "assets": {"directory": "./node_modules/@3sln/waypo/.output/worker-assets", "binding": "ASSETS", "run_worker_first": true},
   "vars": {
     "WAYPO_PREVIEW_ENABLED": "false",
-    "WAYPO_CONFIG": "{\"installationId\":\"3sln-preview\",\"issuer\":\"https://identity.example/api/auth\",\"adminUrl\":\"https://admin.example/\",\"admission\":\"closed\"}",
+    "WAYPO_CONFIG": "{\"installationId\":\"3sln-preview\",\"name\":\"3sln.me\",\"issuer\":\"https://identity.example/api/auth\",\"adminUrl\":\"https://admin.example/\",\"admission\":\"closed\"}",
     "HOSTED_BILLING_CONFIG": "{\"environment\":\"sandbox\",\"organizationId\":\"operator-configured\",\"productId\":\"operator-configured\",\"enableActions\":false,\"enableCancellation\":false,\"enableTrial\":false,\"executeRetention\":false}"
   }
 }
