@@ -26,14 +26,6 @@ jobs:
         with:
           path: service
           persist-credentials: false
-      - name: Require scoped access to the private reference implementation
-        env:
-          WAYPO_READ_TOKEN: ${{ secrets.WAYPO_REPOSITORY_READ_TOKEN }}
-        run: |
-          if [ -z "$WAYPO_READ_TOKEN" ]; then
-            echo 'Configure WAYPO_REPOSITORY_READ_TOKEN with contents:read access to 3sln/waypo. No production or billing credentials are needed.' >&2
-            exit 1
-          fi
       - name: Read the pinned Waypo revision
         id: reference
         working-directory: service
@@ -44,13 +36,10 @@ jobs:
           if (!/^[a-f0-9]{40}$/.test(ref)) throw Error('A full Waypo commit is required');
           appendFileSync(process.env.GITHUB_OUTPUT, `ref=${ref}\n`);
           JS
-      - uses: actions/checkout@v4
+      - uses: 3sln/waypo/.github/actions/prepare-waypo@27078c5dc4dba6762d4027946cf2c488b1614076
         with:
-          repository: 3sln/waypo
-          ref: ${{ steps.reference.outputs.ref }}
-          token: ${{ secrets.WAYPO_REPOSITORY_READ_TOKEN }}
-          path: waypo
-          persist-credentials: false
+          expected-ref: ${{ steps.reference.outputs.ref }}
+          destination: waypo
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

@@ -68,10 +68,13 @@ separate release requirements.
 The isolated `Hosted Waypo engine gate` workflow checks out this repository as
 `service` beside the exact Waypo commit in `waypo-ref.txt`, installs both pinned
 dependency sets and runs only the engine gate on changes. Browser/native checks
-and snapshots require explicit manual inputs. Because both repositories are
-private, configure `WAYPO_REPOSITORY_READ_TOKEN` with contents-read access only
-to `3sln/waypo`; the ordinary repository `GITHUB_TOKEN` cannot fetch the other
-private repository. No billing/Cloudflare/production credentials are needed.
-Missing scoped access fails explicitly. This workflow does not establish a remote
-pass until it has actually run. Historical root workflows do not validate this
-new package. Production deployment remains disabled.
+and snapshots require explicit manual inputs. The private pinned Waypo composite
+action supplies its exact source with a per-file SHA-256 manifest; its action ref
+must match `waypo-ref.txt`. GitHub's organization-private action sharing supplies
+an automatically scoped read token, so no stored cross-repository personal token,
+billing credential or Cloudflare credential is needed. See the
+[GitHub sharing contract](https://docs.github.com/en/actions/how-tos/reuse-automations/share-with-your-organization).
+The Waypo repository must allow private action use within the organization;
+review that setting if collaborator/access policy changes. This workflow does
+not establish a remote pass until it has actually run. Historical root workflows
+do not validate this new package. Production deployment remains disabled.
