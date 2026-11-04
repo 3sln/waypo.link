@@ -7,6 +7,7 @@
 ## Start building
 
 - [Application integration](implementation/app-integration.md): issuer binding, browser sessions and optional services.
+- [Independent optional OIDC extensions](design/oidc-extensions.md): separate notification, synchronization, signaling, account-selection and action-approval contracts.
 - [Private self-hosting](implementation/self-hosting.md): evaluate the Node provider without a Waypo.link, Cloudflare or billing account.
 - [Architecture](design/architecture.md): protocol, implementation and hosting boundaries.
 - [Implementation map](implementation/plan.md) and [release gates](release-gates.md): what is verified and what remains open.
