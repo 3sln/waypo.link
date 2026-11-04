@@ -6,6 +6,6 @@ The coordinator may delegate protocol/security/architecture/frontend/backend/tes
 
 Use the 3sln stack for frontend work. Vendored snapshots include source provenance and MIT licenses. Read the actual APIs before changing stack integration.
 
-The primary app uses real identity verification and durable local Worker/Node adapters; production release remains disabled. A separate loopback-only in-memory demonstration is retained under dev:demo. Never expose its demo routes as production APIs. Distinguish implemented local behavior, configured external services and production-verified capabilities; do not infer delivery or provider conformance from a populated key or screenshot. Follow production gates in docs/spec/security.md, docs/3sln/release-gates.md and DEVLOG.md.
+The primary app uses real identity verification and durable local Worker/Node adapters; production release remains disabled. Distinguish implemented local behavior, configured external services and production-verified capabilities; do not infer delivery or provider conformance from a populated key or screenshot. Follow the adjacent Waypo release gates, public readiness documentation and DEVLOG.md.
 
 Run `npm test` for SDK/core/server changes. Browser behavior additionally needs DOM/browser verification. Record environment limitations honestly. Keep examples under reserved .example domains until publication authority is agreed.

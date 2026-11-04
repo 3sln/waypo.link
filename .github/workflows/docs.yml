@@ -1,0 +1,21 @@
+name: Public documentation
+on:
+  push:
+  pull_request:
+jobs:
+  documentation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm --prefix site ci
+      - run: npm run build:docs
+      - run: npm run check:docs
+      - name: Generated documentation is current
+        run: git diff --exit-code -- hosted/waypo/documentation-assets.mjs

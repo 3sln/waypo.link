@@ -1,5 +1,5 @@
 {
-  "name": "3sln-waypo-preview",
+  "name": "waypo-link-preview",
   "main": "worker.mjs",
   "compatibility_date": "2026-11-02",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -12,7 +12,7 @@
   "assets": {"directory": "./node_modules/@3sln/waypo/.output/worker-assets", "binding": "ASSETS", "run_worker_first": true},
   "vars": {
     "WAYPO_PREVIEW_ENABLED": "false",
-    "WAYPO_CONFIG": "{\"installationId\":\"3sln-preview\",\"name\":\"3sln.me\",\"issuer\":\"https://identity.example/api/auth\",\"adminUrl\":\"https://admin.example/\",\"admission\":\"closed\"}",
+    "WAYPO_CONFIG": "{\"installationId\":\"waypo-link-preview\",\"name\":\"Waypo.link\",\"issuer\":\"https://waypo.link/api/auth\",\"adminUrl\":\"https://waypo.link/manage/\",\"admission\":\"closed\"}",
     "HOSTED_BILLING_CONFIG": "{\"environment\":\"sandbox\",\"organizationId\":\"operator-configured\",\"productId\":\"operator-configured\",\"enableActions\":false,\"enableCancellation\":false,\"enableTrial\":false,\"executeRetention\":false}"
   }
 }

@@ -1,0 +1,67 @@
+// Opt-in example only. Preview remains disabled; no routes or live sends are authorized.
+// Do not combine EMAIL with an explicit EMAIL_TRANSPORT service binding.
+// Native sending also requires explicit WAYPO_CONFIG.emailHuman.required:true,
+// bounded limits, challengeOrigin and production turnstile.siteKey;
+// set WAYPO_TURNSTILE_SECRET privately. No dummy/test verifier protects production.
+{
+  "name": "waypo-link-email-example",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-02",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "INSTALLATION",
+        "class_name": "HostedInstallation"
+      },
+      {
+        "name": "EMAIL_BUDGET",
+        "class_name": "HostedEmailBudget",
+        "script_name": "operator-managed-shared-email-budget"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "HostedInstallation"
+      ]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PRIVATE_OBJECTS",
+      "bucket_name": "operator-configured-private-waypo-preview"
+    }
+  ],
+  "assets": {
+    "directory": "./node_modules/@3sln/waypo/.output/worker-assets",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": {
+    "WAYPO_PREVIEW_ENABLED": "false",
+    // Copy the exact reviewed shared ledger config here; set its same key as a secret.
+    "HOSTED_EMAIL_BUDGET_CONFIG": "operator-must-configure-explicit-billingScope-policy-and-gcIntervalMs",
+    "WAYPO_CONFIG": "{\"installationId\":\"waypo-link-preview\",\"name\":\"Waypo.link\",\"issuer\":\"https://waypo.link/api/auth\",\"adminUrl\":\"https://waypo.link/manage/\",\"admission\":\"closed\"}",
+    "HOSTED_BILLING_CONFIG": "{\"environment\":\"sandbox\",\"organizationId\":\"operator-configured\",\"productId\":\"operator-configured\",\"enableActions\":false,\"enableCancellation\":false,\"enableTrial\":false,\"executeRetention\":false}"
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "login@login.waypo.link",
+        "account@account.waypo.link",
+        "notifications@notify.waypo.link"
+      ],
+      "remote": false
+    }
+  ]
+}
