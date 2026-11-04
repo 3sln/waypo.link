@@ -1,0 +1,13 @@
+{
+  "name": "@3sln/waypo-link-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/build-docs.mjs",
+    "preview": "node preview.mjs",
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "marked": "18.1.3"
+  }
+}

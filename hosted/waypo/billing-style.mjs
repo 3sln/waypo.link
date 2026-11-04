@@ -1,6 +1,7 @@
-export default `:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17313b;background:#edf4f3;font-synthesis:none;line-height:1.5}
+export default `:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17332D;background:#F7F5EE;font-synthesis:none;line-height:1.5}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top right,#cceae5 0,transparent 48%),#edf4f3}
+.wordmark img{display:block;width:154px;height:auto}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top right,#BDE9D5 0,transparent 48%),#F7F5EE}
 a{color:#08685f;text-underline-offset:4px}
 a:hover{text-decoration-thickness:2px}
 a:focus-visible,button:focus-visible{outline:3px solid #ba6409;outline-offset:4px}
@@ -29,7 +30,7 @@ dd{font-weight:550;font-size:14px}
 .actions{display:grid;gap:10px;margin-top:22px}
 button{font:inherit;font-size:14px;font-weight:650;border:1px solid #b9d2cb;border-radius:10px;padding:12px 16px;min-height:46px;cursor:pointer;background:#fff;color:#175f57;text-align:center;transition:background .15s}
 button:hover:not(:disabled){background:#eaf6f2}
-button.primary{background:#126e61;color:#fff;border-color:#126e61}
+button.primary{background:#174B3E;color:#fff;border-color:#174B3E}
 button.primary:hover:not(:disabled){background:#0b584e}
 button:disabled{background:#f1f3f2;color:#84908e;border-color:#e0e6e3;cursor:not-allowed}
 .rule{border:0;border-top:1px solid #e4ebe8;margin:22px 0}

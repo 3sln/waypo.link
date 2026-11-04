@@ -1,6 +1,0 @@
-{
- "id": "https://spec.bindle.example/extensions/client-id-metadata/v1",
- "title": "App metadata documents",
- "description": "Use apps that identify themselves with a published metadata document.",
- "options": {}
-}

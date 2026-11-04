@@ -1,6 +1,0 @@
-{
- "id": "https://spec.bindle.example/extensions/subject-deleted/v1",
- "title": "Deletion notices",
- "description": "Tell your connected integrations when your account is deleted.",
- "options": {}
-}

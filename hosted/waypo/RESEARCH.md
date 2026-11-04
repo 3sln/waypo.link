@@ -1,4 +1,4 @@
-# Optional 3sln hosted billing research
+# Optional Waypo.link hosted billing research
 
 Checked 2026-11-02. This package is isolated from the portable Waypo provider and
 is not connected to a production checkout or billing account.

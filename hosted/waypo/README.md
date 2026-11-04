@@ -1,10 +1,10 @@
-# 3sln.me Waypo composition
+# Waypo.link Waypo composition
 
 This isolated package composes Waypo's public Node/Worker, policy and SQLite
 ports. It imports no historical Bindle app graph and changes no legacy app,
 migration, environment file or package. Production release remains disabled.
 
-The 3sln.me personal plan is $10 yearly with 10 decimal GB of account-wide
+The Waypo.link personal plan is $10 yearly with 10 decimal GB of account-wide
 storage. Prices and configured Polar products live here, never in the OSS policy
 engine. Basic identity and independently self-hosted Waypo need neither this
 package nor a Polar account. Trial capacity is a provisional 30-day/1-GB candidate
@@ -23,7 +23,7 @@ Build Waypo assets with its existing Worker asset tool before Wrangler dry-run.
 The maintained SDK and the complete branded Worker compile together; compilation
 is not a deployed production service.
 
-`node.mjs` exports `create3slnNodeApplication` and `start3slnNode`, and accepts a
+`node.mjs` exports `createWaypoLinkNodeApplication` and `startWaypoLinkNode`, and accepts a
 private `{provider,billing}` JSON file when executed directly. Provision the
 provider metadata using Waypo's public SQLite adapter first. Run behind the
 operator's configured TLS ingress. The optional commercial flags

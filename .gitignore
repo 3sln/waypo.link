@@ -11,3 +11,6 @@ dist/
 artifacts/browser/
 .data/
 artifacts/sim/
+
+.artifacts/
+*.log

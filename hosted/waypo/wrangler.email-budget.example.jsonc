@@ -1,0 +1,15 @@
+// Private shared account ledger example only. No routes/live deployment authorized.
+// All installations under the same vendor bill MUST bind this same namespace.
+{
+ "name":"operator-managed-shared-email-budget",
+ "main":"email-budget-worker.mjs",
+ "compatibility_date":"2026-11-02",
+ "compatibility_flags":["nodejs_compat"],
+ "workers_dev":false,"preview_urls":false,"routes":[],
+ "durable_objects":{"bindings":[{"name":"EMAIL_BUDGET","class_name":"HostedEmailBudget"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["HostedEmailBudget"]}],
+ // Deliberately invalid placeholder: supply reviewed policy, no commercial defaults.
+ "vars":{"HOSTED_EMAIL_BUDGET_CONFIG":"operator-must-configure-explicit-billingScope-policy-and-gcIntervalMs"}
+ // Set HOSTED_EMAIL_BUDGET_KEY using an operator-managed32–64byte random secret,
+ // canonical base64url, identical in this ledger and every authorized sender.
+}
