@@ -40,6 +40,8 @@ Polar documents annual usage aggregation with renewal, combined with the base or
 
 The annual model exposes up to a term of unpaid usage. Define low-final-balance writeoff/carry rules and a maximum debt horizon; do not promise a final payment will collect. Cancellation, immediate termination, refunds, chargebacks, failed renewal and failed usage orders need distinct idempotent transitions. Native paidThrough remains evidence of funded time, not proof of collectible future usage. [Polar failed renewals](https://polar.sh/docs/features/subscriptions/failed-payments).
 
+Related internal analysis: [Service work cost audit](SERVICE-WORK-COSTS.md) separates published fleet costs from unmeasured sync amplification and proposed usage limits.
+
 ## Fee and retained-byte risk
 
 Official Starter fees are 5%+$0.50 per transaction; international cards add 1.5%, with payout/dispute costs separate. A qualifying older organization may retain 4%+$0.40 plus 0.5% subscriptions, but eligibility is unverified. Check the actual organization plan before signoff. [Polar pricing](https://polar.sh/resources/pricing).
