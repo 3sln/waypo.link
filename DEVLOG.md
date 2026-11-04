@@ -63,3 +63,8 @@ Initial34, terminal37 and pre-intent37/runtime6 source snapshots and screenshots
 
 
 Final visual review additionally found that clearing data left account-specific disabled button labels behind. Clear now resets renewal and checkout labels to generic defaults; DOM/browser assertions cover hidden, owner-switch and logout label clearing. The eight prior PNGs and source freeze remain preserved outside the repository.
+
+
+## 2026-11-04 — Readable decimal storage presentation (review pending)
+
+Billing status now formats usage, allowance and remaining space in decimal B/KB/MB/GB/TB (for example, `0 B of 10 GB` and `10 GB remaining`). The plan retains the explicit `10 GB (10,000,000,000 bytes)` basis. DOM/browser checks verify trial one-GB, paid ten-GB and full ten-GB labels. This is display-only; entitlement, meter policy and the core pin are unchanged. The prior PR4 source,41/6 evidence and eight PNGs remain preserved outside the repository.
