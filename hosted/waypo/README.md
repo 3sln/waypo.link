@@ -4,12 +4,34 @@ This isolated package composes Waypo's public Node/Worker, policy and SQLite
 ports. It imports no historical Bindle app graph and changes no legacy app,
 migration, environment file or package. Production release remains disabled.
 
-The Waypo.link personal plan is $10 yearly with 10 decimal GB of account-wide
+The deferred Waypo.link personal-plan candidate is $10 yearly with 10 decimal GB of account-wide
 storage. Prices and configured Polar products live here, never in the OSS policy
 engine. Basic identity and independently self-hosted Waypo need neither this
 package nor a Polar account. Trial capacity is a provisional 30-day/1-GB candidate
 and defaults off. Overages remain disabled; see the two unresolved cap/renewal
 alternatives in `RESEARCH.md`.
+
+## Initial no-billing launch mode
+
+Owner direction on2026-11-05: initial Waypo.link service is free, with configurable500,000,000-byte account-wide storage and free signaling under abuse safeguards. Billing, paid plans, trials and overages are deferred. Production remains disabled; global free-account admission/cost ceilings and the other release gates are still required.
+
+Worker deployments select exactly one explicit mode. The committed, closed and disabled preview uses `HOSTED_FREE_CONFIG`:
+
+```json
+{"mode":"free","environment":"production","freeStorageBytes":500000000,"executeRetention":false,"allowedSignupCountries":[]}
+```
+
+No Polar organization/product/customer, access token or webhook secret is needed in this mode. No checkout, billing page, billing mutation or webhook is available; retired billing URLs return404. `HOSTED_FREE_CONFIG` and `HOSTED_BILLING_CONFIG` cannot coexist. Existing paid composition remains available only under a separate explicitly configured billing mode for future work. Node composition's second argument accepts the same explicit free-settings object; the command-line file retains its historical `billing` property name for that settings object, but a free-mode value requires no billing resources.
+
+Free mode projects `policy.freeServices:{storageBytes,signaling:true}` into the portable policy engine. This is deployment policy, not a protocol/discovery extension or client-supplied entitlement. Finite storage bounds are1byte through1TB of configured baseline; fleet physical/work/account admission remains a separate required bound. Contact, enforcement, human inactivity and quota checks remain authoritative. A verified paid/trial term can supply a larger allowance; expiry falls back to the free baseline. Covered unarchived funding warnings are canceled; an existing archive is never silently restored. Signaling remains independent of storage funding while identity/contact/enforcement restrictions still apply.
+
+The normal provider account UI shows core usage/capacity, full-storage guidance and export; free mode supplies no commercial presentation or purchase links. Delete unwanted documents/files in their owning apps. This does not yet supply a provider-wide interactive document deletion browser or the previously discussed large-file streaming path.
+
+Local candidate evidence against the adjacent current core: hosted primary44/44; actual durable Node account/email/session and headless full500MB UI; native Worker authentication/entitlement/session persistence across restart; and complete hosted integration8/8 preserving deferred paid fixtures. Full-storage UI usage is injected through the trusted usage ledger, not500MB of physical objects. Optional screenshots are in ignored `.artifacts/free-hosted/`.
+
+**Compatibility gate:** `waypo-ref.txt` still pins the earlier reviewed core. These free-mode changes require the new core `freeServices` policy seam; no pin update or current production-pair compatibility is implied. Select/review a current immutable core revision and qualify the exact pair before deployment. Default country list remains empty, public routes off, preview flag false, destructive retention off. No live email/push/Polar or public Cloudflare proof is supplied by local fixtures.
+
+## Deferred billing composition
 
 `worker.mjs` exports the branded `HostedInstallation` Durable Object and normal
 Worker entry. `wrangler.jsonc` has no public routes/workers.dev/previews, and its

@@ -11,3 +11,11 @@ export function createWaypoLinkPolicyConfiguration({issuer, revision = 1, execut
     quota,
   };
 }
+
+// Initial launch mode; paid plans remain a separate, deferred configuration.
+export const WAYPO_LINK_FREE_STORAGE_BYTES=500_000_000;
+export function createWaypoLinkFreePolicyConfiguration({issuer,revision=1,executeRetention=false,freeStorageBytes=WAYPO_LINK_FREE_STORAGE_BYTES}={}){
+ if(!Number.isSafeInteger(freeStorageBytes)||freeStorageBytes<1||freeStorageBytes>1_000_000_000_000)throw TypeError('Finite free storage capacity required');
+ const config=createWaypoLinkPolicyConfiguration({issuer,revision,executeRetention});
+ return {...config,plans:{},freeServices:{storageBytes:freeStorageBytes,signaling:true}};
+}

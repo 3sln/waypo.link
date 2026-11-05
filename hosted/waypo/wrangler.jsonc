@@ -13,6 +13,6 @@
   "vars": {
     "WAYPO_PREVIEW_ENABLED": "false",
     "WAYPO_CONFIG": "{\"installationId\":\"waypo-link-preview\",\"name\":\"Waypo.link\",\"issuer\":\"https://waypo.link/api/auth\",\"adminUrl\":\"https://waypo.link/manage/\",\"admission\":\"closed\"}",
-    "HOSTED_BILLING_CONFIG": "{\"environment\":\"sandbox\",\"organizationId\":\"operator-configured\",\"productId\":\"operator-configured\",\"enableActions\":false,\"enableCancellation\":false,\"enableTrial\":false,\"executeRetention\":false}"
+    "HOSTED_FREE_CONFIG": "{\"mode\":\"free\",\"environment\":\"production\",\"freeStorageBytes\":500000000,\"executeRetention\":false,\"allowedSignupCountries\":[]}"
   }
 }

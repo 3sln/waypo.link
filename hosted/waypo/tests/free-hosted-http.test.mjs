@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm,readFile,mkdir} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createServer} from 'node:net';
+import {DatabaseSync} from 'node:sqlite';
+import {createServer as createHttpServer} from 'node:http';
+import {chromium} from '../../../../waypo/node_modules/playwright/index.mjs';
+import {createWaypoLinkNodeApplication} from '../node.mjs';
+import {provisionNodeInstallation,openNodeSqliteStore} from '@3sln/waypo/adapters/node/sqlite';
+const freePort=()=>new Promise((resolve,reject)=>{const server=createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const port=server.address().port;server.close(()=>resolve(port));});});
+test('actual durable Node free composition authenticates without Polar and exposes no billing surface',{timeout:60000},async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'waypo-free-hosted-')),port=await freePort(),origin='http://localhost:'+port,issuer=origin+'/api/auth',database=join(directory,'identity.sqlite'),mailFile=join(directory,'mail.jsonl');let app,browser,server;
+ t.after(async()=>{await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));await app?.close();await rm(directory,{recursive:true,force:true});});await provisionNodeInstallation({filename:database,installationId:'free-hosted-test'});
+ app=await createWaypoLinkNodeApplication({issuer,adminUrl:origin+'/admin/',installationId:'free-hosted-test',database,authSecret:'fixture-only-free-hosted-native-secret-longer-than32',admission:'closed',allowInsecureLoopback:true,localMail:true,localMailFile:mailFile,services:{sync:true,signaling:true}},{mode:'free',environment:'sandbox'});
+ const metadata=openNodeSqliteStore({filename:database});try{await metadata.transaction(async tx=>{const marker=await tx.get('bootstrap/installation');await tx.put('bootstrap/installation',{...marker,status:'initialized'});});}finally{await metadata.close();}const authContext=await app.provider.auth.$context,user=await authContext.adapter.create({model:'user',data:{id:'free-node-owner',name:'Free account owner',email:'free-owner@mail.example',emailVerified:true,createdAt:new Date(),updatedAt:new Date()},forceAllowId:true});await app.policyBridge.ensureAccount(user);
+ const jar=new Map(),request=async(path,input)=>{const response=await app.handle(new Request(origin+path,{method:input?'POST':'GET',headers:{Origin:origin,...input?{'Content-Type':'application/json'}:{},Cookie:[...jar].map(([name,value])=>name+'='+value).join('; ')},...input?{body:JSON.stringify(input)}:{}}));for(const item of response.headers.getSetCookie()){const [name,...parts]=item.split(';')[0].split('=');jar.set(name,parts.join('='));}return response;};
+ assert.equal((await request('/api/waypo/email/start',{email:user.email})).status,200);const mail=JSON.parse((await readFile(mailFile,'utf8')).trim().split('\n').at(-1));assert.equal((await request('/api/waypo/email/approve',Object.fromEntries(new URLSearchParams(new URL(mail.url).hash.slice(1))))).status,200);
+ const state=(await(await request('/api/waypo/account-policy')).json()).state;assert.equal(state.storageBytes,500000000);assert.equal(state.maySignal,true);assert.equal(state.maySyncWrite,true);const config=await(await request('/api/config')).json();assert.deepEqual(config.userLinks,[]);
+ for(const path of ['/account/billing','/api/hosted/billing/status','/api/hosted/billing/checkout','/api/hosted/polar/webhook'])assert.equal((await request(path)).status,404,path);
+ const services=await(await request('/api/waypo/service-status')).json();assert.equal(services.provider,null);assert.equal(services.storage.limitBytes,500000000);assert.equal(services.services.signaling.permitted,true);
+ // The signed-in browser uses the actual maintained cookie/session and
+ // durable provider. No credential verification or account UI is mocked.
+ server=createHttpServer(async(req,res)=>{try{const response=await app.handle(new Request(origin+req.url,{headers:req.headers}));const headers=Object.fromEntries([...response.headers].filter(([key])=>key!=='set-cookie'));if(response.headers.getSetCookie().length)headers['Set-Cookie']=response.headers.getSetCookie();res.writeHead(response.status,headers);res.end(Buffer.from(await response.arrayBuffer()));}catch{res.writeHead(500);res.end();}});await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
+ browser=await chromium.launch({headless:true});const context=await browser.newContext(),page=await context.newPage();await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());await context.addCookies([...jar].map(([name,value])=>({name,value,url:origin,httpOnly:true,sameSite:'Lax'})));
+ await page.goto(origin+'/login');await page.getByText('0 B of 500 MB shared storage',{exact:true}).waitFor();assert.equal(await page.getByText(/Plan status:/).count(),0);assert.equal(await page.getByRole('link',{name:/billing|purchase|upgrade/i}).count(),0);assert.equal(await page.getByRole('button',{name:/checkout|subscribe|purchase/i}).count(),0);
+ const usageStore=openNodeSqliteStore({filename:database});try{await usageStore.transaction(tx=>app.policyBridge.recordServiceUsage(tx,{issuer,subject:user.id,usedBytes:500000000}));}finally{await usageStore.close();}
+ await page.reload();await page.getByText('Storage is full. Export or remove data in the app that created it before retrying.',{exact:true}).waitFor();await page.getByText('500 MB of 500 MB shared storage',{exact:true}).waitFor();
+ for(const [label,viewport]of [['desktop',{width:1280,height:900}],['mobile',{width:390,height:844}]]){await page.setViewportSize(viewport);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true,label+' overflow');if(process.env.E2E_SNAPSHOTS==='true'){const output=process.env.E2E_SNAPSHOT_DIR??join(process.cwd(),'.artifacts/free-hosted');await mkdir(output,{recursive:true});await page.screenshot({path:join(output,'free-full-'+label+'.png'),fullPage:true});}}
+ const inspection=new DatabaseSync(database,{readOnly:true});try{assert.equal(inspection.prepare("SELECT count(*) AS count FROM waypo_state WHERE key LIKE 'hosted/%'").get().count,0,'no customer/ledger rows');}finally{inspection.close();}
+});
