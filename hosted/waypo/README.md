@@ -13,13 +13,15 @@ alternatives in `RESEARCH.md`.
 
 ## Initial no-billing launch mode
 
-Owner direction on2026-11-05: initial Waypo.link service is free, with configurable500,000,000-byte account-wide storage and free signaling under abuse safeguards. Billing, paid plans, trials and overages are deferred. Production remains disabled; global free-account admission/cost ceilings and the other release gates are still required.
+Owner direction on2026-11-05: initial Waypo.link service is free, with configurable500,000,000-byte account-wide storage and free signaling under abuse safeguards. Billing, paid plans, trials and overages are deferred. Production remains disabled; finite native account admission is now mandatory in this mode; comprehensive work/dollar ceilings and the other release gates are still required.
 
 Worker deployments select exactly one explicit mode. The committed, closed and disabled preview uses `HOSTED_FREE_CONFIG`:
 
 ```json
-{"mode":"free","environment":"production","freeStorageBytes":500000000,"executeRetention":false,"allowedSignupCountries":[]}
+{"mode":"free","environment":"production","freeStorageBytes":500000000,"accountAdmission":{"revision":1,"maxPublicAccounts":1,"maxProtectedAccounts":48,"acceptingNewAccounts":false},"executeRetention":false,"allowedSignupCountries":[]}
 ```
+
+The example is deliberately closed to new public accounts. Select an affordable finite `maxPublicAccounts`, enable `acceptingNewAccounts` only when ready, and increment its policy revision for changes. The separate protected reserve is available only to internally verified deployment enrollment. Retained identities count until native deletion; decreasing a cap never evicts existing users, and paid-to-free transitions allocate no new slot. This bounds identities, not all operation costs. See the adjacent core's `docs/implementation/account-admission.md` for atomicity, bounded existing-install activation and policy-revision behavior.
 
 No Polar organization/product/customer, access token or webhook secret is needed in this mode. No checkout, billing page, billing mutation or webhook is available; retired billing URLs return404. `HOSTED_FREE_CONFIG` and `HOSTED_BILLING_CONFIG` cannot coexist. Existing paid composition remains available only under a separate explicitly configured billing mode for future work. Node composition's second argument accepts the same explicit free-settings object; the command-line file retains its historical `billing` property name for that settings object, but a free-mode value requires no billing resources.
 
