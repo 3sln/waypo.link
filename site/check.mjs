@@ -7,3 +7,5 @@ let count=0;for(const [path,asset]of Object.entries(assets)){if(!asset.type.star
 
 for(const path of ['/login','/account-select','/notifications','/recover'])assert.equal(documentationResponse(new Request('https://waypo.link'+path)),null);
 const landing=decode(assets['/']);assert.match(landing,/500 MB/);assert.match(landing,/href="\/login"/);assert.match(landing,/https:\/\/waypo.link\//);assert.match(landing,/twitter:image:alt/);assert.doesNotMatch(landing,/checkout|\$10|free trial/i);
+
+assert.equal(documentationResponse(new Request('https://admin.waypo.link/')),null);assert.equal(documentationResponse(new Request('https://other.example/docs')),null);
