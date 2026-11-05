@@ -6,15 +6,29 @@ Waypo is the open-source provider behind Waypo.link. A private installation can 
 
 ## What you operate
 
-You supply a stable HTTPS origin, provider configuration, durable database and object storage, backups, and a way to deliver required account messages. Passkeys and OIDC callbacks are bound to deployment identity: choose the public origin deliberately before enrolling real users.
+You supply a stable HTTPS origin, provider configuration, durable database and private file storage, backups, and a way to deliver required account messages. Passkeys and OIDC callbacks are bound to deployment identity: choose the public origin deliberately before enrolling real users.
 
-The Node adapter supports durable self-hosting. Cloudflare is another deployment option, not a prerequisite. Use Node 24 for the currently tested reference installation. Start with the exact commands and configuration in the [installation guide](implementation/self-hosting.md), and review the [durable adapter constraints](implementation/durable-adapters.md).
+The Node adapter can keep app objects in a private directory on your own disk; no separate object-storage service is required. The Node adapter supports durable self-hosting. Cloudflare is another deployment option, not a prerequisite. Use Node 24 for the currently tested reference installation. Start with the exact commands and configuration in the [installation guide](implementation/self-hosting.md), and review the [durable adapter constraints](implementation/durable-adapters.md).
 
 ## Keep registration private
 
-Disable public signup when you do not need it. Deployment-controlled, expiring bootstrap access establishes initial administration; it is not a permanent administrator credential. Create the intended accounts or invitations and grant only the administrative permissions each operator needs. See [administration](implementation/administration.md) for bootstrap and grant details.
+Disable public signup when you do not need it. Setup begins with the browser you intend to use. It shows a fingerprint that you approve through your private deployment configuration. Keep that same browser open: it must prove it still holds the matching private key. This opens a temporary setup session, not a permanent administrator account. The deployment approval lasts at most an hour; the setup session lasts at most fifteen minutes and can expire sooner. You then create or sign in to an ordinary account, verify its passkey, and explicitly accept administrative authority. The detailed guide includes a command that selects a fresh approval generation and expiry safely. Create the intended accounts or invitations and grant only the administrative permissions each operator needs. See [administration](implementation/administration.md) for bootstrap and grant details.
 
 Keep the administrative app separate from the ordinary account experience. Protect deployment secrets and automation tokens independently of browser login. Plan how to revoke an operator and recover the installation before you need to do either.
+
+## If setup expires or access is lost
+
+If initial setup expires before you finish, issue a newer approval for the intended browser using the installation guide. Once setup is completed, its approval is permanently consumed: restarting or copying the old fingerprint cannot reopen it.
+
+Recovery is a separate, deliberate operator process. Keep your databases, private files, and encryption keys. Do not reset the installation. If no usable account remains, first approve enrollment of a replacement ordinary account; then separately approve exactly which accounts may restore administrative authority. The same approved browser must continue proving possession, and the candidate must verify its passkey and explicitly accept. Ordinary enrollment alone grants no administrative access.
+
+Use the [step-by-step installation and recovery reference](implementation/self-hosting.md) for exact commands, deadlines, and configuration shapes. Local browser tests cover the current flow, but further native-session handoff qualification and production restoration checks remain open. This is not a completed security-audit claim.
+
+## Keep a public installation affordable
+
+If you open registration, set both a maximum number of retained accounts and a limit on how quickly new accounts can be attempted. The first prevents unlimited accumulation; the second slows bursts before account creation. Existing users can still sign in when new registration is paused or full. A paid-to-free transition does not create another account.
+
+These controls do not cover every charge: requests, messages, storage, and background work need their own budgets and emergency shutdown plan. Start closed until those controls are configured. Operators can read the separate [account-capacity reference](implementation/account-admission.md) and [creation-rate reference](implementation/account-creation-rate.md). Rate controls require Node 22.16 or later; Node 24 is recommended.
 
 ## Decide which services to enable
 
@@ -25,3 +39,7 @@ Your admission policy, quotas, contact requirements, and retention policy are op
 ## Before real users depend on it
 
 Exercise backup restoration, account recovery, permission revocation, storage pressure, and notification delivery in your actual environment. Monitor abuse and capacity without retaining unnecessary user data. Review [release gates](release-gates.md) and the [implementation map](implementation/plan.md) for unresolved limits and evidence boundaries.
+
+## Documentation version
+
+This overview includes source-development controls from Waypo `55e49b6`. The hosted dependency pin is unchanged. Consult the implementation reference before assuming a control is available in an older checkout or hosted deployment.

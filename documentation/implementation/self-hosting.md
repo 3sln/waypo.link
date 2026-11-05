@@ -1,12 +1,13 @@
 # Private installation evaluation
 
-> **Status:** Development documentation. Production release remains disabled.
+> Source-development reference: refreshed from open-source Waypo commit `55e49b6`. The hosted dependency pin has not been advanced by this documentation change. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
+
 
 Waypo is incomplete and production release is disabled. This guide describes the implemented Node installation boundary, not approval to expose it publicly. No Waypo.link, Polar or Cloudflare account is required. Use the [implementation map](plan.md) for verification status and [durable adapter guide](durable-adapters.md) for persistence and recovery constraints.
 
 ## Local installation
 
-Use Node 24 for the currently tested reference installation, then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned, reviewed OAuth patch; do not skip them. Create a private configuration without printing its secret:
+Install Node 24 (minimum 22.13 for deployments without account-creation rate controls), then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned, reviewed OAuth patch; do not skip them. Create a private configuration without printing its secret:
 
 ```sh
 node --input-type=module <<'JS'
@@ -44,20 +45,107 @@ WAYPO_CONFIG=.data/private/config.json npm run dev
 
 Provisioning refuses an existing database path. Do not delete or reprovision an existing installation to recover access. The runtime creates a separate native authentication database beside the installation database; both are needed for a consistent backup.
 
+## Private disk storage and operator limits
+
+The Node provider stores metadata in its SQLite databases and immutable document snapshots/attachments in an ordinary private directory. No object-storage service is needed. Enable sync and select a directory on your own disk; keep it outside the website document root. The default directory is the metadata database path plus `.objects`.
+
+These are additions to your private configuration, not a complete replacement:
+
+```json
+{
+  "services": {
+    "sync": true,
+    "attachments": true,
+    "signaling": true,
+    "objectsDirectory": ".data/private/app-objects",
+    "limits": {
+      "documents": 128,
+      "documentBytes": 1048576,
+      "updateBytes": 131072,
+      "structLength": 2097152
+    }
+  },
+  "policy": {
+    "mode": "self-hosted",
+    "revision": 2,
+    "quota": {
+      "selfHostedStorageBytes": 100000000000,
+      "fleetStorageBytes": 1000000000000
+    }
+  }
+}
+```
+
+The example grants each account 100 decimal GB of logical data, independently of Waypo.link's 500 MB hosted offer. The policy quota is authoritative; `services.limits.accountBytes` is only the standalone engine fallback when no policy capacity port is present. Increase the policy revision when changing a live policy. Configure your own disk-headroom and request/work budgets before exposing the installation to other people; logical quotas are not a disk reservation or a guaranteed dollar ceiling.
+
+`services.limits` accepts known finite integer overrides. The same settings reach the service engine, HTTP request bounds and retained cleanup on Node and Worker. Unknown names, `null`, infinity, negative values and unsupported upper bounds fail startup rather than silently disabling protection. No field accepts an unlimited sentinel. Ordinary account policy and app authorization remain in force.
+
+| Setting | Default | Current implementation ceiling |
+| --- | --- | --- |
+| Documents/account across apps | 64 | 1,024, also constrained by serialized metadata capacity |
+| Document snapshot | 128 KiB | 4 MiB |
+| Individual update | 64 KiB | 128 KiB with journaling; 4 MiB with `journalUpdates: 0` |
+| Attachment | 4 MiB | 4 MiB: buffered-object/encryption safety limit |
+| Attachments/account | 4,096 | 4,096: current fixed paged catalog |
+| Update structures / total structure length | 4,096 / 262,144 | 65,536 / 8,388,608 |
+
+The complete allowed fields and ceilings are in `packages/services/limits.mjs`. Stage, garbage, receipt and journal controls are finite too. Raising a document count does not enlarge the underlying portable metadata row: new growth stops with `account_metadata_capacity` at 240 KiB, leaving headroom for maintenance. That permanent capacity response means clean up/split data or improve paging; retrying the same write does not help. Larger independent account quotas do not alter that boundary.
+
+The bundled SDK has matching optional local limits, so an app can use a larger configured document without patching the SDK:
+
+```js
+const document = createSyncedDocument({
+  namespace, documentId: 'settings', kv, transport,
+  limits: {documentBytes: 1048576, updateBytes: 131072, structLength: 2097152}
+});
+```
+
+All devices opening that larger document need compatible limits. The defaults remain unchanged for existing apps. The SDK keeps its finite 1 MiB offline outbox and caps individual updates at 128 KiB; make large edits as bounded transactions. Changing a limit does not change CRDT semantics or the wire format. Lowering limits below already saved state can require local recovery; the SDK refuses to discard that state and retains `exportStoredState()` for recovery. Server limit changes likewise do not delete existing objects.
+
+The 4 MiB attachment ceiling is not a commercial restriction: this version buffers whole objects and has not yet implemented streaming/multipart large files. Raising a number alone would create an unsafe memory promise. Compression/compaction and the generic document SDK are not a general blob store. Back up the metadata database, native authentication database, private objects and every required encryption-key version together. Optional object encryption is available through the deployment keyring; retain its keys when disabling sync. Existing object storage and garbage collection remain available while sync is disabled; a fresh disabled installation creates no object directory.
+
+Configured `accountCreationRate` controls require Node 22.16 or later (Node 24 recommended), because they inspect the real SQLite transaction boundary before contacting the global credit authority. Startup refuses an older or unsupported connection instead of treating a missing flag as permission. A private deployment that omits those controls keeps the older Node baseline.
+
 ## Temporary setup and authority
 
 Open `http://localhost:9512` in a passkey-capable browser and select **Show browser fingerprint**. The browser creates a local approval key and displays its fingerprint. Opening the page confers no access. Copy that fingerprint into a deployment-controlled `approval` object in the private configuration:
 
-```json
-{
-  "generation": 1,
-  "fingerprint": "p256-sha256:THE_EXACT_DISPLAYED_FINGERPRINT_SUFFIX",
-  "issuedAt": 0,
-  "expiresAt": 0
+Stop the local runtime while editing its private configuration. The following command reads the existing installation marker, selects a generation newer than every recorded approval and writes a 30-minute approval. It refuses an initialized installation; it never resets setup or modifies the database. Set the two environment values yourself; the fingerprint is public, but must come from the browser you intend to approve.
+
+```sh
+WAYPO_CONFIG=.data/private/config.json \
+WAYPO_BOOTSTRAP_FINGERPRINT='p256-sha256:PASTE_THE_BROWSER_FINGERPRINT' \
+node --input-type=module <<'JS'
+import {readFile, writeFile, rename} from 'node:fs/promises';
+import {openNodeSqliteStore} from './packages/adapters/node/sqlite.mjs';
+import {BOOTSTRAP_KEYS} from './packages/identity-core/index.mjs';
+const path = process.env.WAYPO_CONFIG;
+const config = JSON.parse(await readFile(path, 'utf8'));
+const fingerprint = process.env.WAYPO_BOOTSTRAP_FINGERPRINT;
+if (!/^p256-sha256:[A-Za-z0-9_-]{43}$/.test(fingerprint ?? '')) {
+  throw Error('Paste the exact fingerprint shown by the setup browser');
 }
+const store = openNodeSqliteStore({filename: config.database});
+let generation;
+try {
+  generation = await store.transaction(async tx => {
+    const marker = await tx.get(BOOTSTRAP_KEYS.installation);
+    if (marker?.id !== config.installationId || marker.status !== 'locked') {
+      throw Error('Only an existing, locked installation can enter initial setup');
+    }
+    return Math.max(marker.consumedGeneration ?? 0,
+      marker.approvalBinding?.generation ?? 0, config.approval?.generation ?? 0) + 1;
+  });
+} finally { await store.close(); }
+const issuedAt = Date.now();
+config.approval = {generation, fingerprint, issuedAt, expiresAt: issuedAt + 30 * 60 * 1000};
+await writeFile(path + '.next', JSON.stringify(config, null, 2), {mode: 0o600, flag: 'wx'});
+await rename(path + '.next', path);
+console.log('Approval generation', generation, 'expires', new Date(config.approval.expiresAt).toISOString());
+JS
 ```
 
-Use current Unix milliseconds for `issuedAt`, and a short future deadline for `expiresAt` (the browser E2E uses thirty minutes). Restart the runtime, return to the original browser and open the temporary bootstrap login. The displayed fingerprint must be copied exactly, including its prefix; the illustrative suffix above is not a valid approval.
+Restart the runtime and return to the original browser. The browser proves possession of its private key to open the temporary bootstrap login. The fingerprint alone cannot sign that proof. An approval lasts at most one hour; its bootstrap session lasts at most fifteen minutes and cannot outlive the approval. If setup expires before the final authority handoff, repeat the command with the current browser fingerprint and a newer generation. If setup has finished, use the separate recovery process below instead.
 
 With `allowPrivateOperatorEnrollment` explicitly enabled, the approved bootstrap browser can create an ordinary identity using a user-verified passkey without email delivery. Enter a **Public display name**, select **Begin passkey account**, then **Prepare account passkey** and **Create account and accept this passkey**. Registration is followed by **Verify passkey for this setup** and **Accept policy authority and finish setup**: a separate fresh passkey assertion and explicit acceptance of policy authority. The temporary bootstrap session itself is never an administrator. Public registration remains closed. This deployment exception does not make email or push optional for the hosted public service.
 
@@ -103,11 +191,11 @@ Open `deployment-recovery` beneath the configured administration URL, and select
 1. If no usable ordinary identity remains, set `deploymentEnrollmentApproval` in the private deployment configuration using the exact browser fingerprint, a new generation, current governance revision and deadline of at most one hour. Keep public admission closed, disable `allowPrivateOperatorEnrollment` and remove the original bootstrap approval. Restart. The approved browser selects **Open deployment-approved enrollment**, creates and explicitly accepts a user-verified passkey, and obtains an ordinary identity. The enrollment lease lasts ten minutes and does not confer administrative authority. Copy the actual account reference shown by the page.
 2. Remove that enrollment approval. Separately configure `deploymentRecoveryApproval` with its own new generation, the same browser fingerprint, the exact current revision, a deadline of at most one hour, a reviewed reason and the exact replacement `authoritySubjects` list (at most 48). Restart. The original browser proves its key, reviews the exact replacement set and consequences, selects **Verify passkey for this recovery**, then explicitly accepts the recovered policy authority.
 
-The two private configuration shapes are shown below; replace every illustrative field with the actual current installation values. Approval generations are durable and independent; use a newer generation when replacing an observed or consumed approval. If an ordinary identity is still usable, skip enrollment and perform only the separate authority approval. Each browser/UV recovery flow expires within two minutes and never extends the operator approval deadline. Signing out before native command acceptance denies the operation; signing out after acceptance does not undo that exact accepted command. Current account, policy, approval and deadline restrictions still apply.
+The exact two configuration shapes are in the [configuration shapes below](#deployment-recovery-configuration-shapes). Approval generations are durable and independent; use a newer generation when replacing an observed or consumed approval. If an ordinary identity is still usable, skip enrollment and perform only the separate authority approval. Each browser/UV recovery flow expires within two minutes and never extends the operator approval deadline. Signing out before native command acceptance denies the operation; signing out after acceptance does not undo that exact accepted command. Current account, policy, approval and deadline restrictions still apply.
 
 Excluded former policy-authority roles are disabled. Pending governance/staff/account invitations, operations and personal opaque credentials are cancelled. Installation-owned service principals and their credentials survive. Recovery does not erase/restore ordinary app data, move billing or silently transfer identity. Remove both deployment approvals after completion.
 
-For Worker operators, the browser/runtime behavior is proven locally. The [operator inspection guide](operator-inspection.md) describes the separate bounded, authenticated maintenance helper for reading governance revision and approval generations. Its presence does not establish production deployment approval or remote verification. Do not expose a permanent public inspection route or copy a fixture-only RPC into production.
+For Worker operators, `tools/worker-recovery-inspect.mjs` supplies a narrowly scoped, temporary authenticated helper for reading governance revision and approval generations; see the [operator inspection guide](operator-inspection.md). Its local RPC and dry-run behavior is tested. The actual remote create/inspect/delete lifecycle is not yet qualified for release. The helper has a maximum five-minute lifetime and is not a permanent public inspection endpoint. Do not replace it with a fixture-only RPC or expose database inspection publicly.
 
 ## Deployment responsibilities
 
@@ -117,6 +205,15 @@ Keep database files, authentication secrets, object-encryption keys and configur
 
 The separate admin and user apps have their own manifests. An installation can keep public signup closed while serving its existing users. A private installation does not need the hosted billing extension, signup-country policy or Turnstile when its chosen admission policy does not require them.
 
+Evidence: coordinator exercised this minimal configuration on separate loopback ports with a freshly provisioned temporary database: health, locked bootstrap status, enabled private-operator configuration and the actual setup HTML all returned 200; runtime and temporary files were then removed. The identity owner separately records the five-step browser enrollment result in private opt-in browser evidence, including a valid UV-absent rejection and explicit authority handoff. Full production restoration, public TLS configuration and operator deployment remain release gates.
+
+### Optional service presentation extension
+
+Core self-hosting needs no billing provider. Without an extension, the user account and relevant consent pages show configured core capacity and permissions; `provider` is `null` and no commercial offer is invented.
+
+A constructor-owned provider extension may implement `describeAccountServices({request, owner})`. `owner` is frozen `{issuer, subject, sessionId}` from the native owner session. The hook must only read/project existing canonical rows: viewing a page must not create billing customers, bindings, reservations or policy accounts. Core checks the native owner/session again after awaited reads. Provider descriptions are advisory; core policy supplies all service authority.
+
+The optional result is `null` or a strict JSON object (at most 4096 encoded bytes): `{version:1, ownerId, funding:{status,endsAt,renewal}, terms:{storage,signaling}, offer, manageUrl}`. Funding status is `none|trial|funded|expired|past_due|revoked|unknown`; `endsAt` is a finite nonnegative millisecond timestamp or `null`; renewal is `scheduled|canceled|unknown`. Terms are nullable text (240 bytes each); offer is `null` or `{summary,trialSummary}` with the same text limit and nullable trial summary. `manageUrl` is `null` or a same-origin URL without credentials, query or fragment. The bounded HTTP envelope (8192 bytes) includes core capacity, configured services, owner ID and observation time, and never includes session IDs. Invalid or unavailable presentation fails closed to optional-status-unavailable, without signing the owner out.
 
 ## Deployment recovery configuration shapes
 
@@ -140,14 +237,3 @@ These are illustrative JavaScript objects, not ready-to-run configuration. Use t
 ```
 
 Generation namespaces are independent. Replacing an observed or consumed approval requires a newer generation. Remove approvals after completion. This changes policy authority on the existing installation; it does not reset bootstrap or restore deleted account data.
-
-
-## Guarded email initiation
-
-Email admission is an optional deployment capability for private OSS installations, not an OIDC registration requirement. With `emailHuman.required:true`, the public email form requests a short-lived stateless admission ticket, completes the isolated check, then submits the ticket and proof before any account lookup or email-flow creation. Configure the explicit admission limits (`ttlMs`, `maxPending`, `maxPerRecipient`, `maxPerBrowser`, `verifyLeaseMs`) and a purpose-bound verifier; there is no separate core GC cadence setting. Exact stored expiries drive durable cleanup.
-
-The challenge must use a different configured hostname. Its cookie-free shell has an exact trusted main or admin parent binding; it receives only public widget configuration and an operation nonce, never the recipient address, ticket or identity cookie. Tickets/proofs stay in parent memory and are discarded on edits, restart, expiry, reload or account changes. Missing required readiness fails closed. A successful start is an opaque receipt: it does not establish account existence or promise delivery. Check the inbox only if that address can receive sign-in mail.
-
-Local Node and native Worker UI gates use an explicitly synthetic isolated widget and mocked strict Siteverify transport, alongside real email-approval and signed-passkey flows. They establish binding, privacy and runtime behavior, not real vendor human detection or live delivery. Other trusted verifier transports can be composed without requiring a Cloudflare account; do not treat a request-supplied success boolean as verification.
-
-Waypo.link additionally requires shared native email-send admission for its hosted native binding. That service policy is distinct from portable human admission and does not impose commercial quotas or prices on self-hosted providers. See [hosted email](hosted-email.md). This isolated hosted candidate pins core revision `2c842d48683beaa1879f41eefb58dd32d485c154`; the child passed clean core CI and was merged in `ed854b3`. Local hosted primary and runtime checks passed against the exact pin; final private paired CI remains a pre-merge gate.
