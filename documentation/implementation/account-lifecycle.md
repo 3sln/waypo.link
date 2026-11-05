@@ -1,5 +1,8 @@
 # Hosted account policy engine
 
+> Current hosted launch policy: free 500 MB account-wide, free abuse-guarded signaling, and no billing. The paid/trial lifecycle paths below describe optional implementation mechanisms, not an active Waypo.link offer. Production retention and deletion still require operational verification.
+
+
 > **Status:** Development documentation. Production release remains disabled.
 
 2026-11-02. Production execution remains disabled. `packages/policies/index.mjs`
@@ -80,9 +83,7 @@ not grant entitlement. Trial checkout, vendor products and prices live in the
 separate deployment composition. Overages remain zero unless a separately
 implemented explicit spending policy exists.
 
-The owner-selected Waypo.link ten-USD/year, ten-GB preset now lives only in the new
-isolated `Waypo.link/hosted/waypo/policy-preset.mjs` composition. Other operators can
-configure their own allowances without patching Waypo or using Polar.
+The earlier ten-USD/year, ten-GB hosted preset is historical and inactive. The current hosted free policy is independently configured; other operators choose their own allowances without patching Waypo or using a billing vendor.
 
 Account and fleet reservations atomically bound logical bytes, in-flight capacity
 and hourly work units. Reservations have fixed expiry, bounded counts, exact
@@ -205,7 +206,7 @@ creator audit references do not count as human ownership dependencies.
 Entitlements are feature specific. `mayNotify` permits bounded notifications for
 free identities independently of paid storage or resource-funding cleanup;
 `maySyncWrite` requires current configured storage funding; `maySignal` requires
-current paid/trial funding or explicit self-hosted policy. Notification consumption
+an enabling operator policy (the initial hosted free policy explicitly enables signaling); older paid/trial funding paths are inactive. Notification consumption
 uses its own zero-byte reservation kind while retaining account/fleet work limits.
 No free sponsored inbound signaling allowance has been enabled. Login, contact
 repair, check-in, appeal and export do not depend on storage quota. The compatibility

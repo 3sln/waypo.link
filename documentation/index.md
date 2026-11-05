@@ -1,28 +1,33 @@
-# Identity that leaves room to choose
+# A place to start
 
-**Waypo** is the open source identity project and configurable reference provider. **Waypo.link** is the separately operated hosted service. Hosting policy and billing are service concerns, not requirements for running Waypo yourself.
+Waypo.link gives supporting apps a shared sign-in and optional app storage, notifications, and direct device connection setup. **Waypo** is the open-source project behind the separately operated **Waypo.link** service.
 
-> **Development status:** Production release is disabled. These documents describe current local behavior and clearly marked design proposals, not a live commercial offering.
+> Development preview: public launch checks are still in progress. These guides describe the intended initial free offering and locally implemented capabilities, not a production-readiness guarantee. Technical extension documents remain provisional.
 
-## Start building
+## Use your account
 
-- [Application integration](implementation/app-integration.md): issuer binding, browser sessions and optional services.
-- [Independent optional OIDC extensions](design/oidc-extensions.md): separate notification, synchronization, signaling, account-selection and action-approval contracts.
-- [Private self-hosting](implementation/self-hosting.md): evaluate the Node provider without a Waypo.link, Cloudflare or billing account.
-- [Architecture](design/architecture.md): protocol, implementation and hosting boundaries.
-- [Implementation map](implementation/plan.md) and [release gates](release-gates.md): what is verified and what remains open.
-- [Requirements](requirements.md): the intended product and interoperability scope.
-- [Synchronized state semantics](design/sync-semantics.md): the generic SDK, compatibility profiles and migration rules.
-- [Offline accounts](design/offline-accounts.md): saved identity selection and safe reconnection.
-- [Notifications and protected actions](design/notifications.md): privacy, rich messages, deadlines and interoperable approvals.
-- [Hosted email](implementation/hosted-email.md): sender domains, private binding and delivery evidence limits.
+[Get started](get-started.md) explains signing in and connecting an app. [Manage your account](using-your-account.md) covers app permissions, storage, recovery, and offline use.
 
-## Hosted service identity
+The initial hosted plan is free, with **500 MB shared across connected apps**. Signaling is free under abuse safeguards. There is no billing at initial launch.
 
-The permanent hosted web issuer is `https://waypo.link/api/auth`. Public documentation lives at `https://waypo.link/docs`. `login.waypo.link`, `account.waypo.link`, and `notify.waypo.link` are email sending domains for login links, security and account notices, and notifications respectively; they are not separate web origins.
+## Build an app
 
-Self-hosted providers configure their own issuer and branding. Applications must compare the exact trusted issuer; a shared logo or name is never proof of authority.
+Start with the [developer introduction](developers/get-started.md), then use the detailed [application integration guide](implementation/app-integration.md). Sign-in uses OpenID Connect; notifications, sync, signaling, account selection, and action approval are [independent optional extensions](design/oidc-extensions.md).
 
-## Read the source
+## Run your own provider
 
-Every page has a source link and a downloadable Markdown copy. The public site sources live in the [Waypo.link repository](https://github.com/3sln/waypo.link). Protocol extensions remain provisional unless a page explicitly states otherwise.
+Read the [self-hosting overview](self-hosting.md) before the [installation guide](implementation/self-hosting.md). You can operate a private provider without public registration, a Waypo.link account, Cloudflare, or a billing vendor.
+
+## Find the technical detail
+
+- [Architecture and boundaries](design/architecture.md)
+- [Synchronized state semantics](design/sync-semantics.md)
+- [Offline accounts](design/offline-accounts.md)
+- [Notifications and protected actions](design/notifications.md)
+- [Implementation and verification status](implementation/plan.md)
+- [Release gates](release-gates.md)
+- [Requirements](requirements.md)
+
+The permanent hosted issuer is `https://waypo.link/api/auth`. The `login.waypo.link`, `account.waypo.link`, and `notify.waypo.link` domains send email; they are not separate sign-in websites. An app must verify the exact provider issuer, never infer trust from a logo.
+
+Every page has a downloadable Markdown copy and a source link. The [hosted site repository](https://github.com/3sln/waypo.link) and [open-source provider](https://github.com/3sln/waypo) are separate projects.

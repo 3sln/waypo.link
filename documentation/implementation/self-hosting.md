@@ -6,7 +6,7 @@ Waypo is incomplete and production release is disabled. This guide describes the
 
 ## Local installation
 
-Install Node 24 (minimum 22.13), then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned, reviewed OAuth patch; do not skip them. Create a private configuration without printing its secret:
+Use Node 24 for the currently tested reference installation, then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned, reviewed OAuth patch; do not skip them. Create a private configuration without printing its secret:
 
 ```sh
 node --input-type=module <<'JS'
