@@ -22,7 +22,7 @@ If initial setup expires before you finish, issue a newer approval for the inten
 
 Recovery is a separate, deliberate operator process. Keep your databases, private files, and encryption keys. Do not reset the installation. If no usable account remains, first approve enrollment of a replacement ordinary account; then separately approve exactly which accounts may restore administrative authority. The same approved browser must continue proving possession, and the candidate must verify its passkey and explicitly accept. Ordinary enrollment alone grants no administrative access.
 
-Use the [step-by-step installation and recovery reference](implementation/self-hosting.md) for exact commands, deadlines, and configuration shapes. Local browser tests cover the current flow, but further native-session handoff qualification and production restoration checks remain open. This is not a completed security-audit claim.
+Use the [step-by-step installation and recovery reference](implementation/self-hosting.md) for exact commands, deadlines, and configuration shapes. Local Node and Worker browser tests cover browser-key possession and native-session handoff. Keep using the approved browser: its temporary cookie alone cannot complete setup. Signing out before the server accepts the authority handoff stops it; a handoff already accepted may finish after a later sign-out. Use **Restart authority verification** if you need to sign in and verify the passkey again. Production restoration and broader security checks remain open. This is not a completed security-audit claim.
 
 ## Keep a public installation affordable
 
@@ -42,4 +42,4 @@ Exercise backup restoration, account recovery, permission revocation, storage pr
 
 ## Documentation version
 
-This overview includes source-development controls from Waypo `55e49b6`. The hosted dependency pin is unchanged. Consult the implementation reference before assuming a control is available in an older checkout or hosted deployment.
+This overview includes source-development controls from Waypo `8a492f6`. The hosted source pin selects this revision for locally qualified integration; this does not mean the service is deployed. Consult the implementation reference before assuming a control is available in an older checkout or hosted deployment.

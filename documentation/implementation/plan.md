@@ -1,6 +1,6 @@
 # Implementation map
 
-Waypo is under development. Production release remains disabled. Public self-hosting and admission references were refreshed from source commit `55e49b6`; the hosted dependency pin was not advanced. Native-session handoff follow-up qualification and fundamental cost/security release gates remain open.
+Waypo is under development. Production release remains disabled. Public self-hosting and admission references were refreshed from source commit `8a492f6`, now selected by the hosted source pin for local pair qualification. Native-session handoff has local Node/Worker browser evidence; fundamental cost/security and production release gates remain open.
 
 | Capability | Current evidence and limit |
 | --- | --- |

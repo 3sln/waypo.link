@@ -33,7 +33,7 @@ The normal provider account UI shows core usage/capacity, full-storage guidance 
 
 Local candidate evidence against the adjacent current core: hosted primary44/44; actual durable Node account/email/session and headless full500MB UI; native Worker authentication/entitlement/session persistence across restart; and complete hosted integration8/8 preserving deferred paid fixtures. Full-storage UI usage is injected through the trusted usage ledger, not500MB of physical objects. Optional screenshots are in ignored `.artifacts/free-hosted/`.
 
-**Compatibility gate:** `waypo-ref.txt` still pins the earlier reviewed core. These free-mode changes require the new core `freeServices` policy seam; no pin update or current production-pair compatibility is implied. Select/review a current immutable core revision and qualify the exact pair before deployment. Default country list remains empty, public routes off, preview flag false, destructive retention off. No live email/push/Polar or public Cloudflare proof is supplied by local fixtures.
+**Local compatibility:** `waypo-ref.txt` selects reviewed core `8a492f632a5a070888379ae0edeafcb2fd7e2be9`. Hosted primary and Node/Worker integration tests plus a Worker dry build qualify this exact local source pair. This is not a deployed service or blanket security approval. Default country list remains empty, public routes off, preview flag false, destructive retention off. Current placement remains one installation actor, not dynamic per-account sharding. Live email/push, restoration, comprehensive cost controls and public Cloudflare rollout remain separate gates.
 
 ## Deferred billing composition
 

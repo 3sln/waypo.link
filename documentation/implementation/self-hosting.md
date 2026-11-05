@@ -1,6 +1,6 @@
 # Private installation evaluation
 
-> Source-development reference: refreshed from open-source Waypo commit `55e49b6`. The hosted dependency pin has not been advanced by this documentation change. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
+> Source-development reference: refreshed from open-source Waypo commit `8a492f6`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
 
 
 Waypo is incomplete and production release is disabled. This guide describes the implemented Node installation boundary, not approval to expose it publicly. No Waypo.link, Polar or Cloudflare account is required. Use the [implementation map](plan.md) for verification status and [durable adapter guide](durable-adapters.md) for persistence and recovery constraints.
@@ -237,3 +237,7 @@ These are illustrative JavaScript objects, not ready-to-run configuration. Use t
 ```
 
 Generation namespaces are independent. Replacing an observed or consumed approval requires a newer generation. Remove approvals after completion. This changes policy authority on the existing installation; it does not reset bootstrap or restore deleted account data.
+
+### Initial setup session safety
+
+The approved browser continues proving possession of its local approval key for sensitive setup requests; the temporary cookie alone is insufficient. Keep using that browser until setup finishes. Clearing its local key requires a new deployment approval, rather than silently trusting the cookie. Fresh passkey verification is tied to the actual provider session. Signing out before the server accepts the authority handoff prevents completion; use **Restart authority verification**, sign in with the existing passkey and verify it again. A handoff already accepted by the server may finish after a later sign-out. Initial setup and the separate deployment recovery process have distinct trust rules; initial setup never resets an initialized installation.
