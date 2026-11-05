@@ -56,9 +56,26 @@ The JWT uses only protected `alg:ES256`, `typ:waypo-action-approval+jwt`, and a 
 
 ## Expected-issuer discovery and pure verification
 
-`createActionApprovalDiscovery({readJson})` uses only an injected safe public JSON transport; there is no global-fetch fallback. The discovery URL is `issuer-origin + '/.well-known/waypo-action-approval' + issuer-path` (omit the root `/` path). For the example issuer it is `https://id.example/.well-known/waypo-action-approval/api/auth`. This path is a proposed extension and is not mounted by this core.
+`createActionApprovalDiscovery({readJson})` uses only an injected safe public JSON transport; there is no global-fetch fallback. It reads the standard OIDC metadata URL formed by removing trailing slashes from the authenticated expected issuer and appending `/.well-known/openid-configuration`. For the example issuer that is `https://id.example/api/auth/.well-known/openid-configuration`. A bare-origin issuer uses `https://id.example/.well-known/openid-configuration`. There is no separate approval metadata endpoint or fallback.
 
-The descriptor is `{version:1,issuer,purpose:'waypo-action-approval-v1',jwks_uri,algorithms:['ES256']}`. Exact issuer matching and a same-origin HTTPS purpose JWKS are required. Keys are public EC P-256 verification keys with unique kid, alg ES256, use sig and key_ops verify. Private material, key URL headers, embedded JWKs, extra protected JOSE headers and foreign JWKS origins reject. The transport contract must enforce actual public DNS/connection checks, redirect refusal, credential omission, response caps, five-second timeouts and cache isolation. Passing ordinary arbitrary `fetch` does not establish those properties.
+The OIDC document must identify that exact issuer and contain canonical public HTTPS authorization, token and identity-key locations. The independent extension is:
+
+```json
+{
+  "waypo_action_approval": {
+    "version": "1",
+    "verification": "required",
+    "approval_profile": "waypo-action-approval-v1",
+    "jwks_uri": "https://id.example/api/waypo/action-approval/jwks"
+  }
+}
+```
+
+Only that extension selects approval keys. A missing, malformed, unsupported or downgraded extension fails approval discovery; unrelated optional extensions are ignored. The purpose JWKS must be canonical HTTPS on the selected issuer's origin, without credentials, query or fragment, and its URI must differ from the OIDC document's identity `jwks_uri`. The resolver never fetches identity keys as an approval fallback. Distinct URIs do not independently prove that an operator chose distinct key material; separate approval signing material remains a provider integration requirement.
+
+Discovery adapts the extension to the verifier's private in-memory descriptor `{version:1,issuer,purpose:'waypo-action-approval-v1',jwks_uri,algorithms:['ES256']}`. `actionApprovalMetadata` constructs that descriptor for trusted provider wiring or tests; it is not a discovery document or public metadata endpoint.
+
+Purpose keys are public EC P-256 verification keys with unique kid, alg ES256, use sig and key_ops verify. Private material, key URL headers, embedded JWKs, extra protected JOSE headers and foreign purpose-JWKS origins reject. The injected transport must enforce actual public DNS/connection checks, redirect refusal, credential omission, a 64 KiB OIDC document cap, a 16 KiB purpose-key cap, five-second request/body timeouts and cache isolation. The private normalized descriptor remains bounded to 4 KiB. Passing ordinary arbitrary `fetch` does not establish those transport properties.
 
 `createActionApprovalVerifier({discovery,clock,crypto}).verify({proof,expected,binding})` is pure with respect to replay state and app effects. It checks expected identity/binding, purpose/header/key/signature, required claims, exact string audience, short expiry and real-time UV freshness, including a final clock check after asynchronous work. The app must construct the binding from its trusted action definition and actual endpoint/method/submitted fields; blindly echoing a client-supplied binding/digest does not check the action being executed. It never discovers keys using unverified proof iss/jku/jwk fields. The returned claims/binding are deeply frozen and internally branded, so serialized/caller-constructed claims cannot enter the optional ledger without verification.
 

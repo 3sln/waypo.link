@@ -21,7 +21,7 @@ Browser components use purpose-bound handoff; an app receives only its own app c
 
 ## Optional capability flow
 
-Public capability discovery advertises endpoints/versions, not account presence, devices, subscriptions or grants. Login alone does not authorize notifications, signaling or storage. Explicit capability consent creates revocable scoped authority independent of a transient first-party browser cookie. Server-side checks cover live account/grant state, credential lineage, quotas and replay. Distinguish browser sign-out from app disconnect and global security revocation.
+Normal OIDC provider metadata independently advertises each optional capability’s endpoints and versions, not account presence, devices, subscriptions or grants. The [extension guide](oidc-extensions.md) is navigation only; there is no enclosing service registry or aggregate capability protocol. Login alone does not authorize notifications, signaling or storage. Explicit capability consent creates revocable scoped authority independent of a transient first-party browser cookie. Server-side checks cover live account/grant state, credential lineage, quotas and replay. Distinguish browser sign-out from app disconnect and global security revocation.
 
 Notification flow: app submits within its approved scope → provider checks authority/budget → user-controlled routing/suppression/digest → bounded delivery outbox → configured channel. Mandatory security and retention notices remain a separate purpose that app routing cannot suppress.
 

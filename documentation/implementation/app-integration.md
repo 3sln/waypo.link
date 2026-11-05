@@ -1,6 +1,6 @@
 # Integrating an application
 
-> **Status:** Development documentation. Production release remains disabled.
+> **Status:** Development contract for the in-progress OIDC metadata migration. The hosted reference-package pin has not been advanced; this page does not claim deployed support. Production release remains disabled.
 
 Waypo provides an OIDC identity issuer and optional app-scoped personal services. An app does not need a Waypo.link account, a shared client secret or manual registration with each provider. This guide describes the current reference profile; the implementation and release evidence remains in [the completion map](plan.md). The package is not published yet.
 
@@ -54,7 +54,7 @@ The independent sample server (in the Waypo source repository) shows the actual 
 
 ## Optional services and synchronization
 
-After verifying the selected OIDC issuer, use the public discovery helpers in `@3sln/waypo/sdk/discovery`. The [service profile](../design/service-discovery.md) defines the exact discovery document, endpoint validation and scope rules. Request only services the app understands. A missing feature, refused scope or expired plan should produce a useful identity-only or local-only state.
+After verifying the selected OIDC issuer, use the public discovery helpers in `@3sln/waypo/sdk/discovery`. The [independent OIDC extensions](../design/oidc-extensions.md) describe each capability’s own metadata, endpoints and authority rules. There is no separate services-discovery request or aggregate capability protocol. Request only services the app understands. A missing feature, refused scope or expired plan should produce a useful identity-only or local-only state.
 
 For background operations, request the relevant consent and renewable authority rather than depending on the provider's browser cookie. Keep tokens within their intended app/account boundary. A backend proxy should expose only discovered operations, validate its own CSRF boundary and reject stale account-context requests before forwarding them. Switching accounts in another tab must never send the previous account's queued edits using the new account's credentials.
 
@@ -65,8 +65,22 @@ Storage subscriptions are invalidation hints, not document content or authorizat
 
 ## Protected notification actions
 
-Treat `notifications.protected_post` as an optional versioned capability, not a universal OIDC feature. The configured reference profile is `{version:'1', verification:'required', approval_profile:'waypo-action-approval-v1'}`. Absence or mismatch fails closed for protected descriptors while ordinary identity and supported link notifications remain available.
+Read `waypo_action_approval` as an independent optional object in the validated OIDC provider configuration, not a child of notification metadata or a universal OIDC feature. The SDK projects this independent capability as `features.action_approval`; that in-memory SDK view is not another wire discovery protocol. See the [action-approval extension](../design/action-approval-extension.md). The configured reference descriptor includes `{version:'1', verification:'required', approval_profile:'waypo-action-approval-v1', jwks_uri: purposeKeyUrl}`; that key URL is independently advertised and must differ from the identity-token key location. Absence or mismatch fails closed for protected descriptors while ordinary identity and supported link notifications remain available.
 
 The provider-owned confirmation page shows the exact app and ordered fields, requires a fresh action-bound passkey assertion, and submits the short-lived proof directly to the app from foreground UI. No broad app bearer is retained solely for approval. The receiving app must anchor verification to its already authenticated expected issuer, app-specific subject and stored action, validate purpose-specific discovery/keys and the exact binding, then atomically apply idempotency and its own authorization. A provider attestation is not independent proof that an untrusted provider performed UV. See the [approval core contract](action-approval-core.md).
 
 The reference helper omits credentials, rejects redirects and does not retry uncertain submissions. Only a validated successful result can offer an explicit app-owned new-tab link; owner changes discard private results. An already published proof remains a short-lived capability, not an instantly revocable server session. Node and native Worker browser gates cover the configured reference path; production and the next hosted/core compatibility-pin check remain pending.
+
+
+Offline account presentation is app-owned. The optional account-selection extension can return a previously verified local context through `onChooseSavedAccounts`; mounting the provider chooser does not persist identities or authenticate a new account offline. Keep cached contexts and outboxes isolated by verified issuer, subject and client. See [offline accounts](../design/offline-accounts.md) for the service-worker handoff and reconnect checks.
+
+
+Treat HTTP429 as temporary backpressure, not logout or evidence that an identity is invalid. Preserve the verified local account context and queued work, stop service effects until authority can be revalidated, and honor Retry-After (including the maintained provider’s X-Retry-After) across focus/online wakes. The reference native session-read limiter currently permits one hundred accepted calls per path/trusted-peer bucket before requiring a ten-second quiet interval. Accepted calls update that interval, so this is not a one-hundred-calls-per-wall-clock-window allowance. NAT clients or an unavailable trusted peer address can share a bucket. These are implementation admission limits, not protocol semantics or a commercial capacity guarantee.
+
+### Identity without optional app services
+
+The provider consent page can offer **Continue with sign-in only** when the original request includes `openid` and optional scopes. That choice intersects the original scopes with `openid profile email`, removes background refresh and service scopes, and explicitly omits extra requested UserInfo claim names. The original signed authorization query, state, nonce and PKCE binding remain unchanged. Full **Allow** preserves the original request. Applications must inspect the returned scopes and support a reduced grant rather than assume service access or refresh authority.
+
+Scope-derived profile/email disclosures still apply. Original ID-token sign-in requirements, including essential `acr`, remain enforced by the maintained provider. The reduced choice is withheld for resource profiles or essential explicit claims it cannot promise to honor; full approval and decline remain available. Permission approval does not purchase capacity or override account policy. A provider settings link opens separately and never automatically submits consent after returning.
+
+`GET /api/waypo/service-status` supplies bounded, owner-session-only presentation with `Cache-Control: no-store`. Its capacity and permission flags come from core policy. The optional provider extension can describe existing account funding and terms, but that description never grants authority. An unavailable status read leaves the cached signed-in identity intact. The endpoint exposes no billing customer/subscription identifiers or payment details and is not a client funding API.
