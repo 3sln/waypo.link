@@ -119,10 +119,32 @@ must replace them with explicitly reviewed capacity limits. Completeness proves
 neither affordability nor production readiness. The initial free entitlement
 remains 500 MB shared storage and free signaling, without billing.
 
-Native hosted email-only owner proof remains explicitly disabled by core
-`config.policy?.mode !== 'hosted'` guards in `packages/auth/provider.mjs`.
-This configuration integration does not remove that restriction or close the
-hosted email-only Native proof release gate. Local email login transport tests
-are separate from owner proof readiness. Production and preview remain disabled.
+This isolated security-mail candidate replaces blanket hosted owner-proof denial
+with an issuer-bound in-process transport capability plus independently required
+production-mode session-security Turnstile readiness. Caller JSON, generic email
+readiness, cloned transports and arbitrary budget callbacks cannot enable it.
+Only the hosted constructor with a validated finite shared-budget admission hook
+registers the frozen transport. Security dispatch uses that exact transport.
+Node accepts it only through trusted server options, excluding simultaneous local
+or HTTPS email configuration; Worker constructs it inside the installation DO.
+The two fixed account-sender templates accept only their exact main-origin
+`/passkeys/approve` or `/sessions/approve` operation/token URL and eight-digit code.
+
+Budget and actual native send waits have bounded caller deadlines. One pending
+budget RPC per exact namespace and one unsettled native send per exact binding
+remain occupied until actual settlement; deadline expiry never refunds a debit,
+releases uncertain native work, automatically retries, or promises delivery.
+These are isolate-local pending bounds, not a claim of global dynamic sharding.
+
+Local production-component browser tests use genuine bootstrap, real native
+storage/migration, mailbox-possession proof and signed virtual-authenticator UV.
+Only external Siteverify/widget/email acceptance and ingress country are synthetic;
+`.example` origins map privately to local TLS and unrelated origins are blocked.
+No identity/session/proof rows are seeded. The private budget-exhaustion control
+uses actual portable policy charges, not ledger writes. The explicit1000ms mail
+cooldown and other profile values are engineering fixtures, never launch values.
+Vendor conformance, physical authenticators, mailbox delivery and production are
+unverified. Independent review and frozen source-pair qualification remain gates;
+production/preview/routes remain disabled.
 
 The committed source pairing is `2f8c11bcf1ce0643e331b35c00f808c11f61f7bf`: reviewed Native product `569910a` plus documentation-only release-gate/status integration. The coordinator qualifies the adjacent package at this exact pin with the hosted engine/runtime checks and local Worker dry build. This pairing does not close hosted budgeted email/Turnstile owner proof or first-passkey enrollment.
