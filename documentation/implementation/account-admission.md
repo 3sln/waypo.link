@@ -1,6 +1,6 @@
 # Finite account admission
 
-> Source-development reference: refreshed from open-source Waypo commit `188eb16`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
+> Source-development reference: refreshed from open-source Waypo commit `654b974`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
 
 
 Account admission is an optional provider implementation policy, separate from OIDC, app registration, and storage entitlements. Waypo.link's free composition requires it explicitly. Private self-hosters may omit it, or choose their own finite limits. There is no automatically selected financially safe account count.

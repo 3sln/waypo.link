@@ -1,6 +1,6 @@
 # Provider period work wallet
 
-> Source-development reference: open-source Waypo commit `188eb16` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
+> Source-development reference: open-source Waypo commit `654b974` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
 
 This is an implementation policy, not an identity or service protocol extension. It counts operator-defined integer work credits; no conversion to currency, approved public cap, or financial guarantee is implied.
 
@@ -29,3 +29,11 @@ Worker `provisionFromOperator` retains its existing new-only contract: the under
 For Node, provision the existing installation database first, then run `npm run provision:work-period -- --config /private/provider.json --acknowledge-initialize-work-period-budget`. The private JSON may be a provider configuration or the hosted `{provider, billing}` wrapper. This command only opens an existing protected database, reads its installation binding, and creates the first anchored ledger; it does not start a server, create an account, authorize an admin, or print the config/secrets. There is no startup fallback or retry that zeros spending. Policy changes use the separate trusted transactional CAS migration API described above.
 
 Actual Node and Worker startup/adoption/restart tests verify503 before adoption, successful explicit setup, preserved anchor after restart and503 after deleting an activated ledger. Hosted example values remain closed engineering fixtures, not approved economic limits.
+
+## Changing limits without SQL edits
+
+Prepare the new policy with the same installation/issuer binding and a new revision, and retain a private JSON copy of the exact previous `{revision,daily,monthly}` policy. Deploy/restart with the new configuration first: covered work and readiness fail closed with `work_period_policy_changed` until explicit migration. Existing short-lived prepaid grants may finish within their previously charged expiry; no new credits are minted by changing configuration.
+
+On Node run `npm run provision:work-period -- --config /private/new-provider.json --expected-policy /private/previous-work-policy.json --acknowledge-migrate-work-period-budget`. On Worker call the protected deployment RPC `migrateWorkPeriodBudgetFromOperator(previousPolicy)` after deploying the new configuration. Neither operation is an unauthenticated HTTP endpoint. Both compare the exact stored old policy and atomically replace only the policy while preserving current daily/monthly spending and high-water time. A stale expected policy, missing activated ledger or wrong installation fails closed; retrying an already completed migration does not repeat or reset it. Lower ceilings may leave no ordinary credit, while any remaining included essential reserve is still subject to the shared total.
+
+The Node CLI and actual Worker adapter tests migrate a seven-unit ledger into an eight-unit daily ceiling, confirm the seven units remain spent, refuse ordinary work beyond the lowered allowance, and permit at most the one remaining essential unit. No operator SQL editing is required.
