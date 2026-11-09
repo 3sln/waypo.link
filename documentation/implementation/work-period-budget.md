@@ -1,6 +1,6 @@
 # Provider period work wallet
 
-> Source-development reference: open-source Waypo commit `654b974` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
+> Source-development reference: open-source Waypo commit `aa5d6e0` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
 
 This is an implementation policy, not an identity or service protocol extension. It counts operator-defined integer work credits; no conversion to currency, approved public cap, or financial guarantee is implied.
 
