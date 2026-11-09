@@ -1,6 +1,6 @@
 # Provider period work wallet
 
-> Source-development reference: open-source Waypo commit `a57ac7d` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
+> Source-development reference: open-source Waypo commit `9b7578b` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
 
 This is an implementation policy, not an identity or service protocol extension. It counts operator-defined integer work credits; no conversion to currency, approved public cap, or financial guarantee is implied.
 
@@ -24,7 +24,7 @@ The policy is opt-in in portable core. Hosted configuration requires a complete 
 
 ## Explicit operator setup
 
-For a new Worker installation, the protected `provisionFromOperator()` RPC provisions the installation marker then initializes the wallet when configured. If setup stops between those commits, or when adopting the wallet into an existing installation, the operator calls protected `adoptWorkPeriodBudgetFromOperator()` explicitly. Neither method is an HTTP route. Adoption refuses an existing anchor even if its ledger is missing; restoring consistent durable state or deliberately reviewed migration is required.
+Worker `provisionFromOperator` retains its existing new-only contract: the underlying store rejects any nonempty installation, including a repeated healthy provisioning request; this never reinitializes a wallet. For a new Worker installation, the protected `provisionFromOperator()` RPC provisions the installation marker then initializes the wallet when configured. If setup stops between those commits, or when adopting the wallet into an existing installation, the operator calls protected `adoptWorkPeriodBudgetFromOperator()` explicitly. Neither method is an HTTP route. Adoption refuses an existing anchor even if its ledger is missing; restoring consistent durable state or deliberately reviewed migration is required.
 
 For Node, provision the existing installation database first, then run `npm run provision:work-period -- --config /private/provider.json --acknowledge-initialize-work-period-budget`. The private JSON may be a provider configuration or the hosted `{provider, billing}` wrapper. This command only opens an existing protected database, reads its installation binding, and creates the first anchored ledger; it does not start a server, create an account, authorize an admin, or print the config/secrets. There is no startup fallback or retry that zeros spending. Policy changes use the separate trusted transactional CAS migration API described above.
 

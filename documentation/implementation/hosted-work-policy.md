@@ -1,6 +1,6 @@
 # Explicit work policies for hosted compositions
 
-> Source-development reference: open-source Waypo commit `a57ac7d` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
+> Source-development reference: open-source Waypo commit `9b7578b` selected by this isolated hosted candidate. Public operation remains disabled; work units and example policies are not financial approval.
 
 This is provider implementation/deployment policy, not an OIDC or Waypo extension requirement. Private self-hosted installations retain opt-in work admission. Hosted compositions call `validateHostedWorkConfiguration(config)` from `@3sln/waypo/configuration` before runtime resource allocation.
 

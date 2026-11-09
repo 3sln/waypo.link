@@ -1,6 +1,6 @@
 # Waypo.link
 
-The branded hosted deployment of [Waypo](https://github.com/3sln/waypo), with Polar billing and public protocol, integration and self-hosting documentation. The portable open-source provider lives in the adjacent `../waypo` project; it works without this deployment or Polar.
+The branded hosted deployment of [Waypo](https://github.com/3sln/waypo), with public protocol, integration and self-hosting documentation. The initial service profile is free; legacy Polar billing support remains deferred. The portable open-source provider lives in the adjacent `../waypo` project; it works without this deployment or Polar.
 
 - `hosted/waypo/`: Node and Cloudflare Workers composition, branding and billing.
 - `documentation/`: public documentation source served under `/docs`.
