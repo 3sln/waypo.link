@@ -1,13 +1,13 @@
 # Private installation evaluation
 
-> Source-development reference: refreshed from open-source Waypo commit `8a492f6`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
+> Source-development reference: refreshed from open-source Waypo commit `2f8c11b`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
 
 
 Waypo is incomplete and production release is disabled. This guide describes the implemented Node installation boundary, not approval to expose it publicly. No Waypo.link, Polar or Cloudflare account is required. Use the [implementation map](plan.md) for verification status and [durable adapter guide](durable-adapters.md) for persistence and recovery constraints.
 
 ## Local installation
 
-Install Node 24 (minimum 22.13 for deployments without account-creation rate controls), then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned, reviewed OAuth patch; do not skip them. Create a private configuration without printing its secret:
+Install Node 24, then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned Native compatibility patches; do not skip them. Create a private configuration without printing its secret:
 
 ```sh
 node --input-type=module <<'JS'
@@ -104,7 +104,7 @@ All devices opening that larger document need compatible limits. The defaults re
 
 The 4 MiB attachment ceiling is not a commercial restriction: this version buffers whole objects and has not yet implemented streaming/multipart large files. Raising a number alone would create an unsafe memory promise. Compression/compaction and the generic document SDK are not a general blob store. Back up the metadata database, native authentication database, private objects and every required encryption-key version together. Optional object encryption is available through the deployment keyring; retain its keys when disabling sync. Existing object storage and garbage collection remain available while sync is disabled; a fresh disabled installation creates no object directory.
 
-Configured `accountCreationRate` controls require Node 22.16 or later (Node 24 recommended), because they inspect the real SQLite transaction boundary before contacting the global credit authority. Startup refuses an older or unsupported connection instead of treating a missing flag as permission. A private deployment that omits those controls keeps the older Node baseline.
+This source revision targets Node 24. Native identity guards inspect the actual SQLite transaction boundary; startup refuses an unsupported connection instead of treating a missing transaction flag as permission. The account-creation credit authority is contacted outside that transaction.
 
 ## Temporary setup and authority
 
@@ -241,3 +241,14 @@ Generation namespaces are independent. Replacing an observed or consumed approva
 ### Initial setup session safety
 
 The approved browser continues proving possession of its local approval key for sensitive setup requests; the temporary cookie alone is insufficient. Keep using that browser until setup finishes. Clearing its local key requires a new deployment approval, rather than silently trusting the cookie. Fresh passkey verification is tied to the actual provider session. Signing out before the server accepts the authority handoff prevents completion; use **Restart authority verification**, sign in with the existing passkey and verify it again. A handoff already accepted by the server may finish after a later sign-out. Initial setup and the separate deployment recovery process have distinct trust rules; initial setup never resets an initialized installation.
+
+
+## Optional identity capacity policies
+
+Private self-hosted installations may omit the Native credential capacity profile. Waypo.link requires explicit `nativeCredentials`, `nativeRetainedLimits`, `nativeStorageCapacity` and enabled `sessionSecurity` policies. These are implementation controls, independent of an app's storage allowance and protocol grants.
+
+`nativeRetainedLimits` selects finite installation and per-owner session/key counts. Expiring or retiring a session does not refund its physical row until garbage collection removes it. Selected limits enter the stored policy fingerprint; changing configuration cannot silently reset counters.
+
+`nativeStorageCapacity` selects `maxBytes`, reserved `headroomBytes` and a bounded `retryMs`. The Node adapter conservatively measures allocated SQLite pages, including reusable free pages; deletion may require offline operator reclamation before the measured size falls. The Worker uses its native allocated-size getter. Publication above the ordinary threshold receives temporary capacity backoff, while bounded maintenance can use the reserve. This is not an exact limit on every database write. Keep the original databases and keys; do not reset the installation to reclaim quota.
+
+From an existing valid session, an owner can review and freshly verify a selected session revocation without minting another ordinary session. That narrow management path does not supply login when every session is lost, grant applications additional access, or promise recovery after absolute storage exhaustion. Hosted email-only management proof and governed administrator reauthentication have separate qualification requirements.

@@ -33,7 +33,7 @@ The normal provider account UI shows core usage/capacity, full-storage guidance 
 
 Local candidate evidence against the adjacent current core: hosted primary44/44; actual durable Node account/email/session and headless full500MB UI; native Worker authentication/entitlement/session persistence across restart; and complete hosted integration8/8 preserving deferred paid fixtures. Full-storage UI usage is injected through the trusted usage ledger, not500MB of physical objects. Optional screenshots are in ignored `.artifacts/free-hosted/`.
 
-**Local compatibility:** `waypo-ref.txt` selects reviewed core `8a492f632a5a070888379ae0edeafcb2fd7e2be9`. Hosted primary and Node/Worker integration tests plus a Worker dry build qualify this exact local source pair. This is not a deployed service or blanket security approval. Default country list remains empty, public routes off, preview flag false, destructive retention off. Current placement remains one installation actor, not dynamic per-account sharding. Live email/push, restoration, comprehensive cost controls and public Cloudflare rollout remain separate gates.
+**Local compatibility:** `waypo-ref.txt` selects reviewed core `2f8c11bcf1ce0643e331b35c00f808c11f61f7bf`. Local qualification of this exact source pair uses hosted primary and Node/Worker integration tests plus a Worker dry build. This is not a deployed service or blanket security approval. Default country list remains empty, public routes off, preview flag false, destructive retention off. Current placement remains one installation actor, not dynamic per-account sharding. Live email/push, restoration, comprehensive cost controls and public Cloudflare rollout remain separate gates.
 
 ## Deferred billing composition
 
@@ -107,3 +107,22 @@ green engine check. Automatic public-PR status integration remains a setup item
 until a narrowly scoped integration or public Waypo release is selected.
 Historical root workflows do not validate this package. Production deployment
 remains disabled.
+
+Hosted composition requires explicit `nativeCredentials`, all four
+`nativeRetainedLimits`, `nativeStorageCapacity` (`maxBytes`, `headroomBytes`,
+`retryMs`), and enabled `sessionSecurity` with a complete finite `mailPolicy`.
+The portable core `validateHostedNativeCapacityConfiguration` validates these
+before Node creation or Worker environment composition. Private self-hosted core
+configuration remains opt-in. No hosted Native policy defaults are selected here.
+The closed Wrangler examples contain labeled engineering values only; operators
+must replace them with explicitly reviewed capacity limits. Completeness proves
+neither affordability nor production readiness. The initial free entitlement
+remains 500 MB shared storage and free signaling, without billing.
+
+Native hosted email-only owner proof remains explicitly disabled by core
+`config.policy?.mode !== 'hosted'` guards in `packages/auth/provider.mjs`.
+This configuration integration does not remove that restriction or close the
+hosted email-only Native proof release gate. Local email login transport tests
+are separate from owner proof readiness. Production and preview remain disabled.
+
+The committed source pairing is `2f8c11bcf1ce0643e331b35c00f808c11f61f7bf`: reviewed Native product `569910a` plus documentation-only release-gate/status integration. The coordinator qualifies the adjacent package at this exact pin with the hosted engine/runtime checks and local Worker dry build. This pairing does not close hosted budgeted email/Turnstile owner proof or first-passkey enrollment.

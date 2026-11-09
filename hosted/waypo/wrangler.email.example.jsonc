@@ -1,3 +1,5 @@
+// Native capacity numbers below are engineering examples only, not financially safe defaults.
+// Operators must explicitly review and replace all limits before any activation.
 // Opt-in example only. Preview remains disabled; no routes or live sends are authorized.
 // Do not combine EMAIL with an explicit EMAIL_TRANSPORT service binding.
 // Native sending also requires explicit WAYPO_CONFIG.emailHuman.required:true,
@@ -50,7 +52,7 @@
     "WAYPO_PREVIEW_ENABLED": "false",
     // Copy the exact reviewed shared ledger config here; set its same key as a secret.
     "HOSTED_EMAIL_BUDGET_CONFIG": "operator-must-configure-explicit-billingScope-policy-and-gcIntervalMs",
-    "WAYPO_CONFIG": "{\"installationId\":\"waypo-link-preview\",\"name\":\"Waypo.link\",\"issuer\":\"https://waypo.link/api/auth\",\"adminUrl\":\"https://waypo.link/manage/\",\"admission\":\"closed\"}",
+    "WAYPO_CONFIG": "{\"installationId\":\"waypo-link-preview\",\"name\":\"Waypo.link\",\"issuer\":\"https://waypo.link/api/auth\",\"adminUrl\":\"https://waypo.link/manage/\",\"admission\":\"closed\",\"nativeCredentials\":{\"revision\":\"engineering-example-v1\",\"installationAccessRows\":65536,\"installationRefreshRows\":65536,\"installationFamilies\":65536,\"accountAccessRows\":64,\"accountRefreshRows\":64,\"clientAccessRows\":64,\"clientRefreshRows\":64,\"accountFamilies\":32,\"clientFamilies\":32,\"retryMs\":60000},\"nativeRetainedLimits\":{\"sessionInstallation\":65536,\"sessionOwner\":64,\"keyInstallation\":65536,\"keyOwner\":32},\"nativeStorageCapacity\":{\"maxBytes\":100000000,\"headroomBytes\":8000000,\"retryMs\":1000},\"sessionSecurity\":{\"enabled\":true,\"revision\":\"engineering-example-v1\",\"maxOwners\":128,\"reviewBytes\":16384,\"proofBytes\":2048,\"humanBytes\":2048,\"mailPolicy\":{\"owner\":{\"maxSends\":6,\"windowMs\":600000,\"cooldownMs\":60000},\"review\":{\"maxSends\":3,\"minResendMs\":60000,\"maxCodeAttempts\":8}}}}",
     "HOSTED_BILLING_CONFIG": "{\"environment\":\"sandbox\",\"organizationId\":\"operator-configured\",\"productId\":\"operator-configured\",\"enableActions\":false,\"enableCancellation\":false,\"enableTrial\":false,\"executeRetention\":false}"
   },
   "send_email": [

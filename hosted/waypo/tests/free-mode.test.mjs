@@ -1,10 +1,11 @@
+import {nativeCapacityProfile} from './native-capacity.fixture.mjs';
 import {freeCreationRate} from './free-rate.fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {composeWaypoLinkProviderConfiguration,hostedWorkerEnvironment,createWaypoLinkExtensionFactory,validateHostedFreeSettings} from '../composition.mjs';
 import {createPolicyEngine,createPolicyEventsPort,AccountPolicyQuery,RunFundingMaintenanceAction} from '@3sln/waypo/engines/policies';
 import {TransactionStore} from '../../../../waypo/tests/engine/helpers/transaction-store.mjs';
-const issuer='https://identity.example/api/auth',settings={mode:'free',environment:'sandbox',accountCreationRate:freeCreationRate(),accountAdmission:{revision:1,maxPublicAccounts:16,maxProtectedAccounts:2,acceptingNewAccounts:true}},provider={issuer,installationId:'free-test',adminUrl:'https://identity.example/admin/',authSecret:'test-only-free-mode-secret-longer-than32'};
+const issuer='https://identity.example/api/auth',settings={mode:'free',environment:'sandbox',accountCreationRate:freeCreationRate(),accountAdmission:{revision:1,maxPublicAccounts:16,maxProtectedAccounts:2,acceptingNewAccounts:true}},provider={...nativeCapacityProfile(),issuer,installationId:'free-test',adminUrl:'https://identity.example/admin/',authSecret:'test-only-free-mode-secret-longer-than32'};
 test('free hosted mode is explicit, finite, requires no Polar configuration and cannot silently coexist with billing',()=>{
  const env={WAYPO_CONFIG:JSON.stringify(provider),HOSTED_FREE_CONFIG:JSON.stringify(settings)};
  Object.defineProperties(env,{POLAR_ACCESS_TOKEN:{get(){throw Error('Polar token touched');}},POLAR_WEBHOOK_SECRET:{get(){throw Error('Polar secret touched');}}});
