@@ -17,5 +17,7 @@ export const WAYPO_LINK_FREE_STORAGE_BYTES=500_000_000;
 export function createWaypoLinkFreePolicyConfiguration({issuer,revision=1,executeRetention=false,freeStorageBytes=WAYPO_LINK_FREE_STORAGE_BYTES}={}){
  if(!Number.isSafeInteger(freeStorageBytes)||freeStorageBytes<1||freeStorageBytes>1_000_000_000_000)throw TypeError('Finite free storage capacity required');
  const config=createWaypoLinkPolicyConfiguration({issuer,revision,executeRetention});
- return {...config,plans:{},freeServices:{storageBytes:freeStorageBytes,signaling:true}};
+ // Retention grace threshold is separate from the storage quota. The free
+ // 500MB profile must be able to earn storage-based grace before filling up.
+ return {...config,retention:{...config.retention,substantialBytes:100_000_000,substantialHumanDays:14},plans:{},freeServices:{storageBytes:freeStorageBytes,signaling:true}};
 }
