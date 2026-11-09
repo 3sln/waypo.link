@@ -42,7 +42,7 @@ Exercise backup restoration, account recovery, permission revocation, storage pr
 
 ## Documentation version
 
-This overview includes source-development controls from Waypo `9b7578b`. The hosted source pin selects this revision for locally qualified integration; this does not mean the service is deployed. Consult the implementation reference before assuming a control is available in an older checkout or hosted deployment.
+This overview includes source-development controls from Waypo `188eb16`. The hosted source pin selects this revision for locally qualified integration; this does not mean the service is deployed. Consult the implementation reference before assuming a control is available in an older checkout or hosted deployment.
 
 Hosted compositions additionally require explicit [work admission policies](implementation/hosted-work-policy.md); private self-hosted deployments keep these controls opt-in.
 
