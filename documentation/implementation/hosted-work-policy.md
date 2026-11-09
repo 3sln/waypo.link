@@ -1,0 +1,15 @@
+# Explicit work policies for hosted compositions
+
+> Source-development reference: combined open-source Waypo commit `ea5685a`, selected by this local hosted candidate. Production release remains disabled. This configuration contract is not a financial approval or proof that all cost paths are covered.
+
+This is provider implementation/deployment policy, not an OIDC or Waypo extension requirement. Private self-hosted installations retain opt-in work admission. Hosted compositions call `validateHostedWorkConfiguration(config)` from `@3sln/waypo/configuration` before runtime resource allocation.
+
+Every hosted identity configuration must supply a complete finite `tokenWork` policy, even when registration is closed. Closed registration still exposes sign-in and token endpoints for existing accounts. When `services.sync`, `notifications` or `signaling` is enabled, a complete `services.workBudget` policy is also required. Attachments and subscriptions require enabled sync. Service flags are booleans, never strings. Disabled optional modules may omit the service work policy; any supplied policy is validated even when its module is disabled.
+
+The exported pure `validateTokenWorkConfiguration` and `validateServiceWorkConfiguration` functions are the same validators used by their runtime factories. They reject unknown policy/bucket/weight fields, non-finite or out-of-range values, missing dimensions, and a work cost that cannot fit its bucket. Validation returns normalized copies without allocating engines, stores or network transports. Service active-app/idle defaults remain finite when omitted; null or explicitly malformed values are rejected.
+
+Token policy fields: `revision`, `reservationUnits`, `costs` (`lookup`, `refresh`), `maxFamilies`, `inactiveFamilyMs`, and `lookup`, `account`, `family`, `fleet` buckets. Each bucket has `capacity` and `refillPerMinute`.
+
+Service policy fields: `revision`, `reservationUnits`, all seven documented service `costs`, and `account`, `app`, `fleet`, `ingress` buckets. `maxActiveApps` and `inactiveAppMs` may be supplied explicitly. The runtime service/token modules remain responsible for prepaid credit ownership, revocation checks, policy migration behavior and Retry-After.
+
+Completeness is a startup safety contract, not cost approval. Valid finite buckets do not implement a daily/monthly fleet wallet, stop raw inbound Worker charges, cover every owner/admin/support endpoint, or prove adequate Native retained-row/storage capacity. Engineering examples in a closed hosted configuration must not be presented as approved public launch limits. Initial free storage and signaling remain independent of billing.
