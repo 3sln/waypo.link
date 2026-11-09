@@ -33,7 +33,7 @@ The normal provider account UI shows core usage/capacity, full-storage guidance 
 
 Local candidate evidence against the adjacent current core: hosted primary44/44; actual durable Node account/email/session and headless full500MB UI; native Worker authentication/entitlement/session persistence across restart; and complete hosted integration8/8 preserving deferred paid fixtures. Full-storage UI usage is injected through the trusted usage ledger, not500MB of physical objects. Optional screenshots are in ignored `.artifacts/free-hosted/`.
 
-**Local compatibility:** `waypo-ref.txt` selects reviewed core `2f8c11bcf1ce0643e331b35c00f808c11f61f7bf`. Local qualification of this exact source pair uses hosted primary and Node/Worker integration tests plus a Worker dry build. This is not a deployed service or blanket security approval. Default country list remains empty, public routes off, preview flag false, destructive retention off. Current placement remains one installation actor, not dynamic per-account sharding. Live email/push, restoration, comprehensive cost controls and public Cloudflare rollout remain separate gates.
+**Local compatibility:** `waypo-ref.txt` selects reviewed core `f916cac6ca1136f6e89b6c02161153960fdcc3c7`. Local qualification of this exact source pair uses hosted primary and Node/Worker integration tests plus a Worker dry build. This is not a deployed service or blanket security approval. Default country list remains empty, public routes off, preview flag false, destructive retention off. Current placement remains one installation actor, not dynamic per-account sharding. Live email/push, restoration, comprehensive cost controls and public Cloudflare rollout remain separate gates.
 
 ## Deferred billing composition
 
@@ -144,7 +144,7 @@ No identity/session/proof rows are seeded. The private budget-exhaustion control
 uses actual portable policy charges, not ledger writes. The explicit1000ms mail
 cooldown and other profile values are engineering fixtures, never launch values.
 Vendor conformance, physical authenticators, mailbox delivery and production are
-unverified. Independent review and frozen source-pair qualification remain gates;
+unverified. Internal independent review and local frozen-pair qualification are recorded in the core security-mail evidence report;
 production/preview/routes remain disabled.
 
-The committed source pairing is `2f8c11bcf1ce0643e331b35c00f808c11f61f7bf`: reviewed Native product `569910a` plus documentation-only release-gate/status integration. The coordinator qualifies the adjacent package at this exact pin with the hosted engine/runtime checks and local Worker dry build. This pairing does not close hosted budgeted email/Turnstile owner proof or first-passkey enrollment.
+The committed source pairing is `f916cac6ca1136f6e89b6c02161153960fdcc3c7`: reviewed Native security-mail product `75a422a` plus documentation-only evidence/status integration. Configured Node and Workers owner-proof/first-key flows are locally qualified with synthetic external email/Siteverify. Real vendor delivery, physical authenticators, lost-session and governed administrator recovery, economic launch policies and production rollout remain separate.
