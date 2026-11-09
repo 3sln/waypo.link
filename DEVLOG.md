@@ -168,3 +168,5 @@ Final exact hosted candidate `0daefad`: primary58/58, integration10/10 and Wrang
 ## 2026-11-09 — Pair the disabled browser recovery integration
 
 Isolated hosted pin now references core1a0c9bc (reviewed B provider composition merged with c9020ef sharding/inactivity, plus quiet recovery-help copy). No hosted runtime/policy/binding changes and no recovery opt-in, billing, public signup or deployment enablement. Core exact combined engine1275/1275 and Worker browser5/5 with12 screenshots pass; hosted paired qualification pending. Existing email-only capacity recovery limitation remains explicit.
+
+Exact paired hosted98cc2c7 qualification completed:68/68 with unchanged core/hosted source and physical dependencies, owned42→0. Pin advances only to corecb44666 documentation/eligibility-clarification commit; runtime byte-identical qualified1a0c9bc. First-use Miniflare cache failure preserved before warmed green replay. Core composed Node and Worker browser profiles both5/5 with12 screenshots, frozen source/dependencies rehashed unchanged. No public activation implied.
