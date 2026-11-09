@@ -18,8 +18,8 @@
   },
   "scripts": {
     "test": "npm run test:engine",
-    "test:engine": "node --test tests/branding.test.mjs tests/economics.test.mjs tests/ledger.test.mjs tests/overage-candidate.test.mjs tests/polar-adapter.test.mjs tests/policy-preset.test.mjs tests/email-transport.test.mjs tests/email-transport-budget.test.mjs tests/email-binding.test.mjs tests/free-mode.test.mjs tests/native-capacity.test.mjs tests/security-mail-capability.test.mjs tests/security-mail-transport.test.mjs tests/work-policy.test.mjs",
-    "test:e2e": "node --test tests/hosted-http.test.mjs tests/hosted-worker.test.mjs tests/documentation-mount.test.mjs tests/email-worker.test.mjs tests/email-budget-worker.test.mjs tests/free-hosted-http.test.mjs tests/free-hosted-worker.test.mjs tests/account-data.worker.test.mjs",
+    "test:engine": "node --test tests/signup-email-policy.test.mjs tests/branding.test.mjs tests/economics.test.mjs tests/ledger.test.mjs tests/overage-candidate.test.mjs tests/polar-adapter.test.mjs tests/policy-preset.test.mjs tests/email-transport.test.mjs tests/email-transport-budget.test.mjs tests/email-binding.test.mjs tests/free-mode.test.mjs tests/native-capacity.test.mjs tests/security-mail-capability.test.mjs tests/security-mail-transport.test.mjs tests/work-policy.test.mjs",
+    "test:e2e": "node --test tests/signup-email.node.test.mjs tests/signup-email.worker.test.mjs tests/hosted-http.test.mjs tests/hosted-worker.test.mjs tests/documentation-mount.test.mjs tests/email-worker.test.mjs tests/email-budget-worker.test.mjs tests/free-hosted-http.test.mjs tests/free-hosted-worker.test.mjs tests/account-data.worker.test.mjs",
     "test:all": "node --test tests/*.test.mjs",
     "test:security-mail:node": "E2E_PASSKEY_HUMAN_BACKEND=node node tests/security-mail.browser.mjs",
     "test:security-mail:worker": "E2E_PASSKEY_HUMAN_BACKEND=worker node tests/security-mail.browser.mjs",
