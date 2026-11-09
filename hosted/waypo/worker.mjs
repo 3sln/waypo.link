@@ -1,10 +1,15 @@
 export {HostedEmailBudget} from './email-budget-object.mjs';
 import {documentationResponse} from './documentation.mjs';
 // Isolated composition: public Waypo ports only; no historical hosted app graph.
-import WaypoWorker,{WaypoInstallation} from '@3sln/waypo/worker';
+import WaypoWorker,{WaypoInstallation,WaypoAccountData} from '@3sln/waypo/worker';
 import {hostedWorkerEnvironment,createWaypoLinkExtensionFactory,createHostedSignupGuard} from './composition.mjs';
 export class HostedInstallation extends WaypoInstallation{
  constructor(ctx,env,{siteverifyTransport}={}){const composed=hostedWorkerEnvironment(env);super(ctx,composed.env,{siteverifyTransport,regionEligibility:createHostedSignupGuard(composed.settings),createProviderExtension:createWaypoLinkExtensionFactory(composed.settings)});}
+}
+// Data actors receive the same composed policy/entitlements as the control actor.
+// Exporting this class does not enable its binding or automatic retention.
+export class HostedAccountData extends WaypoAccountData{
+ constructor(ctx,env){super(ctx,hostedWorkerEnvironment(env).env);}
 }
 // Only the configured public issuer origin may serve marketing/documentation.
 // This intentionally does not instantiate the provider or touch native storage.
