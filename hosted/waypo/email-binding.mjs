@@ -1,3 +1,5 @@
+import {registerBudgetedHostedSecurityMailTransport,EmailDeliveryFault} from '@3sln/waypo/email-delivery';
+import {isHostedEmailBudgetAdmission} from './email-budget-binding.mjs';
 import {createHostedEmailTransport} from './email-transport.mjs';
 export const PRIVATE_EMAIL_URL='https://mail-transport.invalid/send';
 export const EMAIL_REQUEST_LIMIT=128*1024;
@@ -11,11 +13,13 @@ async function readInput(request){const length=request.headers.get('content-leng
 export function createHostedEmailBinding({emailBinding,configuration,beforeEmailAttempt,requireEmailBudget=false}={}){
  if(typeof emailBinding?.send!=='function')throw TypeError('Actual Email Sending binding required');
  const mainOrigin=new URL(configuration.issuer).origin,adminOrigin=new URL(configuration.adminUrl).origin,deliver=createHostedEmailTransport({emailBinding,origin:mainOrigin,trustedLoginOrigins:[...new Set([mainOrigin,adminOrigin])],beforeEmailAttempt,requireEmailBudget});
- return Object.freeze({async fetch(request){
+ const binding=Object.freeze({async deliverEmail(input){const outcome=await deliver(input);if(outcome?.status!=='accepted')throw new EmailDeliveryFault();return outcome;},async fetch(request){
   if(!(request instanceof Request)||request.url!==PRIVATE_EMAIL_URL)return failure('email_route_unavailable',404);
   if(request.method!=='POST')return failure('email_method_unavailable',405);
   if(request.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')return failure('email_json_required',415);
   let input;try{input=await readInput(request);}catch(error){let oversized=false;try{oversized=error?.code==='email_request_size';}catch{}return failure(oversized?'email_request_size':'invalid_email_request',oversized?413:400);}
   try{return json(await deliver(input));}catch{return failure('invalid_hosted_email',400);}
  }});
+ if(requireEmailBudget&&isHostedEmailBudgetAdmission(beforeEmailAttempt))registerBudgetedHostedSecurityMailTransport(binding,{issuer:configuration.issuer});
+ return binding;
 }
