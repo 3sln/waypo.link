@@ -29,3 +29,9 @@ Your app should work clearly when a user declines a feature, reaches storage cap
 ## 5. Test across providers
 
 Use sample apps and two independently configured providers to exercise issuer binding, grants, revocation, and reconnect behavior. Source packages and test harnesses are in the [Waypo repository](https://github.com/3sln/waypo). This guide does not imply a published SDK release or production certification.
+
+## Store files independently of synchronized state
+
+Discover the optional [`waypo_blobs` extension](../design/blob-storage-extension.md) and request `blobs:read` and/or `blobs:write` only when the app needs them. New apps should use app-private blob keys for files; synchronized documents may contain those keys but are not required. A provider may offer files without CRDT state or state without files. Handle absent capability and declined permission.
+
+The frontend `createBlobStorage` SDK uses your authenticated transport and conditional versions. Create a fresh key before publishing a document reference; those operations are not one transaction. Handle missing/changed keys and clean up files explicitly. A stored version is not a historical download pin. The reference currently buffers files up to4MiB; the [larger-file streaming plan](../design/blob-streaming-next.md) is provisional work, not implemented support.

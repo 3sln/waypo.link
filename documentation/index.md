@@ -12,7 +12,7 @@ The initial hosted plan is free, with **500 MB shared across connected apps**. S
 
 ## Build an app
 
-Start with the [developer introduction](developers/get-started.md), then use the detailed [application integration guide](implementation/app-integration.md). Sign-in uses OpenID Connect; notifications, sync, signaling, account selection, and action approval are [independent optional extensions](design/oidc-extensions.md).
+Start with the [developer introduction](developers/get-started.md), then use the detailed [application integration guide](implementation/app-integration.md). Sign-in uses OpenID Connect; app-private files, notifications, sync, signaling, account selection, and action approval are [independent optional extensions](design/oidc-extensions.md).
 
 ## Run your own provider
 

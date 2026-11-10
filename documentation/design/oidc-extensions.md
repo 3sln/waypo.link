@@ -7,6 +7,7 @@ Implementation direction approved 2026-11-04. This page is a navigation and inte
 | Capability | OIDC metadata member | Contract |
 | --- | --- | --- |
 | App notifications | `waypo_notifications` | [Notifications extension](notifications-extension.md) |
+| App-private files | `waypo_blobs` | [Blob storage extension](blob-storage-extension.md) |
 | App-private synchronized state | `waypo_sync` | [Synchronization extension](sync-extension.md) |
 | Peer connection setup | `waypo_signaling` | [Signaling extension](signaling-extension.md) |
 | Provider-owned account selection | `waypo_account_selection` | [Account-selection extension](account-selection-extension.md) |
