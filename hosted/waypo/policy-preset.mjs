@@ -23,3 +23,7 @@ export function createWaypoLinkFreePolicyConfiguration({issuer,revision=1,execut
  // 500MB profile must be able to earn storage-based grace before filling up.
  return {...config,retention:{...config.retention,substantialBytes:100_000_000,substantialHumanDays:14},plans:{},freeServices:{storageBytes:freeStorageBytes,signaling:true}};
 }
+
+// Explicit operator-selected initial text-feedback profile. Never applied by
+// generic composition; these finite resource guards are not a financial promise.
+export const WAYPO_LINK_INITIAL_TEXT_SUPPORT=Object.freeze({mode:'enabled',media:false,limits:Object.freeze({tickets:4096,userTickets:32,messages:256,notes:128,media:4,uploadBytes:5242880,ticketBytes:10485760,deploymentBytes:67108864,stages:4,audit:128,criticalAudit:1024,proposals:16,ticketTextBytes:524288,deploymentTextBytes:134217728,stageMs:600000,retentionMs:2592000000})});
