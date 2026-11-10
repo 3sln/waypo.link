@@ -51,3 +51,5 @@ Enabled hosted services require explicit daily/monthly work ceilings and protect
 ## Recovering ordinary browser access
 
 Optional [browser-access recovery](implementation/browser-recovery.md) lets an ordinary account review and sign out an old provider browser before signing in again. Passkey and verified-email paths require finite Native reservations and exact, fresh confirmation. Email recovery is a separate opt-in with required human verification and configured delivery. It does not reopen setup, replace administrator recovery, or revoke app grants. Leave it disabled until the complete deployment passes its documented gates.
+
+Support defaults to disabled. Optional text feedback/casework and its finite counts, paged storage, migration and staff permissions are described in [support storage](implementation/support-paged-repository.md). [Media work policy](implementation/support-media-work.md) is a separate opt-in: a Worker flag alone does not provide a decoder. The hosted service will keep media off and enable text support only after its paired/UI qualification; public signup is not changed by these guides.
