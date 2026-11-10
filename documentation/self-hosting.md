@@ -47,3 +47,7 @@ This overview includes source-development controls from Waypo `21ecbc3`. The hos
 Hosted compositions additionally require explicit [work admission policies](implementation/hosted-work-policy.md); private self-hosted deployments keep these controls opt-in.
 
 Enabled hosted services require explicit daily/monthly work ceilings and protected operator activation; ordinary startup never creates or resets a ledger. See [period work setup and adoption](implementation/work-period-budget.md).
+
+## Recovering ordinary browser access
+
+Optional [browser-access recovery](implementation/browser-recovery.md) lets an ordinary account review and sign out an old provider browser before signing in again. Passkey and verified-email paths require finite Native reservations and exact, fresh confirmation. Email recovery is a separate opt-in with required human verification and configured delivery. It does not reopen setup, replace administrator recovery, or revoke app grants. Leave it disabled until the complete deployment passes its documented gates.

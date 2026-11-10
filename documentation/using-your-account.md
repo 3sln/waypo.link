@@ -24,6 +24,8 @@ An app that already has local data can continue using a saved account identity o
 
 ## Recovery and account notices
 
+If you cannot sign in, use **Trouble signing in?** on your provider’s sign-in page. Optional [browser recovery](browser-recovery.md) can sign out one old provider browser using a passkey or verified email. It leaves app access connected and requires a separate ordinary login afterward.
+
 Keep your contact channel working and store any recovery file somewhere safe outside the device you are recovering. Follow the provider's recovery instructions. Security-question answers are not strong cryptographic secrets; do not treat a recovery file as harmless merely because it is encrypted.
 
 Free accounts are subject to inactivity checks, notices, and grace periods. Respond to legitimate account notices through the provider rather than sharing sign-in links or credentials with someone claiming to be support. The [lifecycle reference](implementation/account-lifecycle.md) explains the implemented policy mechanisms and verification limits.

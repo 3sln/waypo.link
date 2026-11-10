@@ -6,7 +6,7 @@ Waypo.link gives supporting apps a shared sign-in and optional app storage, noti
 
 ## Use your account
 
-[Get started](get-started.md) explains signing in and connecting an app. [Manage your account](using-your-account.md) covers app permissions, storage, recovery, and offline use.
+[Get started](get-started.md) explains signing in and connecting an app. [Manage your account](using-your-account.md) covers app permissions, storage, recovery, and offline use. [Trouble signing in?](browser-recovery.md) explains optional browser-access recovery.
 
 The initial hosted plan is free, with **500 MB shared across connected apps**. Signaling is free under abuse safeguards. There is no billing at initial launch.
 
