@@ -15,4 +15,4 @@ Production release remains disabled. Passing local tests or configuring bindings
 
 The retired Bindle application graph has been removed from the active project. Its uncommitted files and notes were preserved in a private local migration archive; repository history remains intact.
 
-Candidate reconciliation: this isolated tree pins Waypo to `2c842d48683beaa1879f41eefb58dd32d485c154`. The core child passed clean CI and was merged in `ed854b3`. Local hosted primary31 and runtime6 checks passed against this exact pin; the final private paired CI remains a pre-merge gate. This is not a production release claim.
+Paired local qualification: this tree pins Waypo to `21ecbc35efc56ae9ac86e04062b70d85a6c313dc` (reviewed runtime source `c34f0e7`, followed by a ledger-only qualification commit). Core engine1307/1307, hosted engine65/65, full hosted Node/Worker prerelease12/12, public documentation checks and local Wrangler dry-run passed. The hosted disposable-email policy leaves existing sign-in and default self-host admission unchanged. Production/public operation remains disabled; these checks do not establish live email delivery.

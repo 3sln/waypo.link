@@ -1,6 +1,6 @@
 # Global account-creation rate blocks
 
-> Source-development reference: refreshed from open-source Waypo commit `aa5d6e0`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
+> Source-development reference: refreshed from open-source Waypo commit `21ecbc3`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
 
 
 This optional provider implementation policy regulates how quickly new identities can be attempted. It is separate from the retained-account capacity cap, each account's storage allowance, and ordinary login rate protection. Waypo.link's free mode requires all three relevant account settings explicitly: `accountAdmission`, `accountCreationRate`, and the free storage allowance. Self-hosters choose their own policy.

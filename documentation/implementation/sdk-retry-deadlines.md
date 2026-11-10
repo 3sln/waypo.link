@@ -1,6 +1,6 @@
 # SDK provider retry deadlines
 
-> Source-development reference: core `aa5d6e0` in this isolated hosted candidate. Production/public operation remains disabled.
+> Source-development reference: core `21ecbc3` in this isolated hosted candidate. Production/public operation remains disabled.
 
 A provider's daily/monthly work refusal can require up to 31 days of backoff. That network deadline is distinct from a local timer interval. SDK/sample adapters retain the absolute deadline, schedule local wakeups no longer than seven days, and check the deadline again before making a provider request. A timer wakeup, focus/reconnect, online event or local edit does not confer fresh provider authority or bypass the stored floor.
 

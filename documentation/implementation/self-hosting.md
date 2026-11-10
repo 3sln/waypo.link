@@ -1,6 +1,6 @@
 # Private installation evaluation
 
-> Source-development reference: refreshed from open-source Waypo commit `aa5d6e0`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
+> Source-development reference: refreshed from open-source Waypo commit `21ecbc3`. The hosted source pin now selects this reviewed revision for local pair qualification; production remains disabled. These controls are not a claim about the currently deployed service, a completed security audit, or production qualification.
 
 
 Waypo is incomplete and production release is disabled. This guide describes the implemented Node installation boundary, not approval to expose it publicly. No Waypo.link, Polar or Cloudflare account is required. Use the [implementation map](plan.md) for verification status and [durable adapter guide](durable-adapters.md) for persistence and recovery constraints.
