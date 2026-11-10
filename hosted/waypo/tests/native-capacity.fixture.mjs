@@ -1,7 +1,8 @@
-import {tokenWorkProfile} from './work-policy.fixture.mjs';
+import {tokenWorkProfile,serviceWorkProfile,periodWorkProfile} from './work-policy.fixture.mjs';
 // Engineering test values only; never an economic or deployment recommendation.
 export function nativeCapacityProfile(){return {
  tokenWork:tokenWorkProfile(),
+ services:{workBudget:serviceWorkProfile(),workPeriodBudget:periodWorkProfile()},
  nativeCredentials:{revision:'fixture-v1',installationAccessRows:65536,installationRefreshRows:65536,installationFamilies:65536,accountAccessRows:64,accountRefreshRows:64,clientAccessRows:64,clientRefreshRows:64,accountFamilies:32,clientFamilies:32,retryMs:60000},
  nativeRetainedLimits:{sessionInstallation:65536,sessionOwner:64,keyInstallation:65536,keyOwner:32},
  nativeStorageCapacity:{maxBytes:100000000,headroomBytes:8000000,retryMs:1000},
