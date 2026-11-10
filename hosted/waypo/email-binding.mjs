@@ -20,6 +20,6 @@ export function createHostedEmailBinding({emailBinding,configuration,beforeEmail
   let input;try{input=await readInput(request);}catch(error){let oversized=false;try{oversized=error?.code==='email_request_size';}catch{}return failure(oversized?'email_request_size':'invalid_email_request',oversized?413:400);}
   try{return json(await deliver(input));}catch{return failure('invalid_hosted_email',400);}
  }});
- if(requireEmailBudget&&isHostedEmailBudgetAdmission(beforeEmailAttempt))registerBudgetedHostedSecurityMailTransport(binding,{issuer:configuration.issuer});
+ if(requireEmailBudget&&isHostedEmailBudgetAdmission(beforeEmailAttempt))registerBudgetedHostedSecurityMailTransport(binding,{issuer:configuration.issuer,purposes:['identity-passkey-addition','identity-session-security','identity-session-recovery']});
  return binding;
 }

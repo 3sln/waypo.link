@@ -4,6 +4,7 @@
 // This leaf mounts no private bridge and provisions/sends nothing on creation.
 export const HOSTED_EMAIL_PURPOSES=Object.freeze({
  'identity-login':'login',
+ 'identity-session-recovery':'login',
  'account-lifecycle':'account',
  'identity-passkey-addition':'account',
  'identity-session-security':'account',
@@ -24,15 +25,26 @@ function securityUrl(value,mainOrigin,purpose){
  const pairs=[...new URLSearchParams(url.hash.slice(1))],params=new URLSearchParams(pairs);
  if(url.pathname!==path||url.search||pairs.length!==2||params.getAll('operation').length!==1||params.getAll('token').length!==1||!['operation','token'].every(key=>/^[A-Za-z0-9_-]{43}$/u.test(params.get(key)??''))||url.hash!=='#'+new URLSearchParams({operation:params.get('operation'),token:params.get('token')}).toString())fail();return href;
 }
+function recoveryMessage(input,mainOrigin){
+ const href=providerUrl(input.url,[mainOrigin]),url=new URL(href),pairs=[...new URLSearchParams(url.hash.slice(1))],params=new URLSearchParams(pairs),integer=value=>Number.isSafeInteger(value)&&value>=0&&value<=253402300799999;
+ if(url.pathname!=='/recover-browser'||url.search||pairs.length!==2||params.getAll('operation').length!==1||params.getAll('token').length!==1||!/^[A-Za-z0-9_-]{43}$/.test(params.get('operation')??'')||!/^[A-Za-z0-9_-]{32,256}$/.test(params.get('token')??'')||url.hash!=='#'+new URLSearchParams({operation:params.get('operation'),token:params.get('token')}).toString()||!integer(input.createdAt))fail();
+ const footer='This does not sign you in. Application access stays connected. To sign in separately, open '+mainOrigin+'/login. If you did not request this email, ignore it.';
+ if(input.recoveryKind==='discovery'){if(input.browser!==undefined)fail();return {subject:'Review signed-in browsers for your Waypo.link account',text:'Review the browsers currently signed in to your Waypo.link account:\n\n'+href+'\n\n'+footer};}
+ if(input.recoveryKind!=='retire-browser'||!input.browser||typeof input.browser!=='object'||Array.isArray(input.browser)||Object.keys(input.browser).sort().join(',')!=='createdAt,expiresAt,label')fail();
+ const browser=input.browser;if(typeof browser.label!=='string'||browser.label.length>80||!integer(browser.createdAt)||!integer(browser.expiresAt)||browser.createdAt>input.createdAt||browser.expiresAt<=input.createdAt||browser.createdAt>=browser.expiresAt)fail();text(browser.label,320);
+ return {subject:'Confirm signing out one Waypo.link browser',text:'Confirm signing out this provider browser only:\n\nBrowser: '+browser.label+'\nSigned in: '+new Date(browser.createdAt).toISOString()+'\nSign-in expires: '+new Date(browser.expiresAt).toISOString()+'\n\n'+href+'\n\nOther provider browsers and application access stay connected. '+footer};
+}
 function plainMessage(input,mainOrigin){if(input.url!==undefined)providerUrl(input.url,[mainOrigin]);const subject=text(input.subject??input.title,512),body=text(input.text??input.body,32768,{multiline:true});return {subject,text:body};}
 function render(message,{mainOrigin,loginOrigins}){
  let input;try{input=structuredClone(message);}catch{fail();}
  if(!input||typeof input!=='object'||Array.isArray(input)||!Object.hasOwn(HOSTED_EMAIL_PURPOSES,input.purpose))fail();
- const common=['to','purpose','createdAt','jobId','idempotencyKey'],login=input.purpose==='identity-login',security=['identity-passkey-addition','identity-session-security'].includes(input.purpose),app=HOSTED_EMAIL_PURPOSES[input.purpose]==='notify',allowed=[...common,...(login||security)?['url','code']:['url','title','subject','body','text',...app?['senderOrigin']:[]]];
+ const recovery=input.purpose==='identity-session-recovery';
+ const common=['to','purpose','createdAt','jobId','idempotencyKey'],login=input.purpose==='identity-login',security=['identity-passkey-addition','identity-session-security'].includes(input.purpose),app=HOSTED_EMAIL_PURPOSES[input.purpose]==='notify',allowed=[...common,...recovery?['url','recoveryKind','browser']:(login||security)?['url','code']:['url','title','subject','body','text',...app?['senderOrigin']:[]]];
  if(Object.keys(input).some(key=>!allowed.includes(key)))fail();
  const to=address(input.to);if(input.createdAt!==undefined&&(!Number.isSafeInteger(input.createdAt)||input.createdAt<0))fail();for(const key of ['jobId','idempotencyKey'])if(input[key]!==undefined)text(input[key],128);
  for(const key of ['subject','title'])if(input[key]!==undefined)text(input[key],512);for(const key of ['text','body'])if(input[key]!==undefined)text(input[key],32768,{multiline:true});
- let content;if(security){const url=securityUrl(input.url,mainOrigin,input.purpose);if(typeof input.code!=='string'||!/^\d{8}$/u.test(input.code))fail();const action=input.purpose==='identity-passkey-addition'?'add a passkey':'manage your sessions';content={subject:'Confirm your Waypo.link account security request',text:`Confirm your request to ${action}:\n\n${url}\n\nVerification code: ${input.code}\n\nUse the browser that requested this change. If you did not request this, ignore this email.`};}
+ let content;if(recovery)content=recoveryMessage(input,mainOrigin);
+ else if(security){const url=securityUrl(input.url,mainOrigin,input.purpose);if(typeof input.code!=='string'||!/^\d{8}$/u.test(input.code))fail();const action=input.purpose==='identity-passkey-addition'?'add a passkey':'manage your sessions';content={subject:'Confirm your Waypo.link account security request',text:`Confirm your request to ${action}:\n\n${url}\n\nVerification code: ${input.code}\n\nUse the browser that requested this change. If you did not request this, ignore this email.`};}
  else if(login){const url=providerUrl(input.url,loginOrigins,{login:true});if(typeof input.code!=='string'||!/^\d{8}$/u.test(input.code))fail();content={subject:'Your Waypo.link sign-in link',text:`Continue signing in to Waypo.link:\n\n${url}\n\nVerification code: ${input.code}\n\nThe link and code expire ten minutes after the request. If you did not request this, you can ignore this email.`};}
  else if(app){const senderOrigin=origin(input.senderOrigin),title=text(input.subject??input.title,512),body=text(input.text??input.body,32768,{multiline:true});if(input.url!==undefined)providerUrl(input.url,[mainOrigin]);content={subject:text(`App notification from ${new URL(senderOrigin).hostname}: ${title}`,768),text:`App sender: ${senderOrigin}\n\n${body}`};}
  else content=plainMessage(input,mainOrigin);
