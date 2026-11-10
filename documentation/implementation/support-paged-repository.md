@@ -1,6 +1,6 @@
 # Bounded support storage and migration
 
-> Source-development reference: open-source combined candidate `c8698ac`, selected by this isolated hosted source pin. Production/public operation remains disabled; paired engine and authenticated UI/hosted qualification remain separate gates.
+> Source-development reference: open-source combined candidate `85bc5f4`, selected by this isolated hosted source pin. Production/public operation remains disabled; paired engine and authenticated UI/hosted qualification remain separate gates.
 
 This is optional provider implementation policy, not an identity/notification/storage protocol extension or a price plan. Support remains disableable. The hosted Worker has no media validator and does not acquire media capability from this repository change. Hosted text feedback/staff casework must be enabled separately after paired/UI qualification; public signup is unchanged.
 

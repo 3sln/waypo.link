@@ -1,6 +1,6 @@
 # Support media work admission
 
-> Source-development reference: open-source combined candidate `c8698ac`, selected by this isolated hosted source pin. Production/public operation remains disabled; paired engine and authenticated UI/hosted qualification remain separate gates.
+> Source-development reference: open-source combined candidate `85bc5f4`, selected by this isolated hosted source pin. Production/public operation remains disabled; paired engine and authenticated UI/hosted qualification remain separate gates.
 
 Support media is optional provider implementation functionality. It is independent of the public app storage allowance and is unavailable without a configured media validator. Worker composition currently supplies no validator; enabling a configuration flag does not establish a safe Worker decoder. Self-hosted support remains disableable.
 
