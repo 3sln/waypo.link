@@ -1,0 +1,13 @@
+// Trusted test infrastructure: use the package actually selected by this hosted
+// installation. No adjacent checkout name or node_modules path is authoritative.
+import {resolve} from 'node:path';
+import {createRequire} from 'node:module';import {readFile} from 'node:fs/promises';import {fileURLToPath,pathToFileURL} from 'node:url';import {createHash} from 'node:crypto';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+const nodeEntry=new URL(import.meta.resolve('@3sln/waypo/node')),root=new URL('../../',nodeEntry),selectedRequire=createRequire(new URL('package.json',root)),metadata=JSON.parse(await readFile(new URL('package.json',root),'utf8'));
+if(metadata.name!=='@3sln/waypo')throw Error('Selected Waypo package required');
+export function selectedCoreFile(relative){if(typeof relative!=='string'||relative.startsWith('/')||relative.split('/').includes('..'))throw TypeError('Selected-core-relative fixture path required');return new URL(relative,root);}
+const compiler=await import(pathToFileURL(selectedRequire.resolve('esbuild')).href);export const stop=compiler.stop;
+export async function build(options){const result=await compiler.build({...options,metafile:true}),inputs=Object.keys(result.metafile.inputs).map(path=>resolve(options.absWorkingDir??process.cwd(),path)),worker=fileURLToPath(new URL(import.meta.resolve('@3sln/waypo/worker')));if(!inputs.includes(worker)&&!inputs.includes(fileURLToPath(nodeEntry)))throw Error('Compiled proof did not contain the selected Waypo package entrypoint');return result;}
+export const {Miniflare,Log,LogLevel,convertV4MiniflareOptions}=await import(pathToFileURL(selectedRequire.resolve('miniflare')).href);
+export const {jwtVerify,createLocalJWKSet}=await import(pathToFileURL(selectedRequire.resolve('jose')).href);
+export async function selectedCoreReceipt(){let commit=null;try{commit=(await promisify(execFile)('git',['-C',fileURLToPath(root),'rev-parse','HEAD'])).stdout.trim();}catch{}if(process.env.WAYPO_TEST_CORE_COMMIT&&commit!==process.env.WAYPO_TEST_CORE_COMMIT)throw Error('Selected core commit does not match trusted test selection');const digest=async url=>createHash('sha256').update(await readFile(url)).digest('hex');return {package:metadata.name,version:metadata.version,root:fileURLToPath(root),commit,nodeSha256:await digest(nodeEntry),workerSha256:await digest(new URL(import.meta.resolve('@3sln/waypo/worker')))};}
+export async function selectedCoreTool(name){if(!['playwright','esbuild','miniflare','jose'].includes(name))throw TypeError('Reviewed selected-core test tool required');return import(pathToFileURL(selectedRequire.resolve(name)).href);}
