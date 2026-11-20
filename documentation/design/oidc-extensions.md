@@ -8,10 +8,12 @@ Implementation direction approved 2026-11-04. This page is a navigation and inte
 | --- | --- | --- |
 | App notifications | `waypo_notifications` | [Notifications extension](notifications-extension.md) |
 | App-private files | `waypo_blobs` | [Blob storage extension](blob-storage-extension.md) |
-| App-private synchronized state | `waypo_sync` | [Synchronization extension](sync-extension.md) |
+| App-private ordered logs | `waypo_logs` | [Ordered-log extension](log-storage-extension.md) |
 | Peer connection setup | `waypo_signaling` | [Signaling extension](signaling-extension.md) |
 | Provider-owned account selection | `waypo_account_selection` | [Account-selection extension](account-selection-extension.md) |
 | User-verified action approval | `waypo_action_approval` | [Action-approval extension](action-approval-extension.md) |
+
+The earlier `waypo_sync` document contract is historical and is not an alias for logs or blob permissions. Apps implement synchronization or a CRDT over the independent primitives when desired.
 
 These are documented Waypo extension names, not claims of IANA registration or an existing general notification standard. They introduce no dependency on the hosted Waypo.link service, billing vendor, administration model, library or other optional extension. The reference implementation may require related modules to implement a particular operation; it advertises only what its actual composed ports support.
 

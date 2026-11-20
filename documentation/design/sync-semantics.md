@@ -1,5 +1,7 @@
 # Synchronized document semantics and codec boundaries
 
+> **Historical prerelease design:** Provider-owned CRDT documents were replaced by [ordered logs](log-storage-extension.md) and independent blobs. The document/epoch/patch contracts below describe the earlier candidate, not current app integration or a compatibility alias. Apps may implement their own CRDT on the new primitives.
+
 Status: engineering contract proposal and source audit, 2026-11-03. Production remains disabled. The currently selected reference implementation is Yjs 13.6.33; this document does not claim that a second CRDT, a universal operation protocol, or an automatic cross-engine migration exists. The bounded SDK codec extraction is coordinated separately. Examples marked proposed describe a compatibility direction, not an additional implemented SDK.
 
 ## What engine independence means

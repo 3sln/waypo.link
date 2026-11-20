@@ -12,7 +12,7 @@ The initial hosted plan is free, with **500 MB shared across connected apps**. S
 
 ## Build an app
 
-Start with the [developer introduction](developers/get-started.md), then use the detailed [application integration guide](implementation/app-integration.md). Sign-in uses OpenID Connect; app-private files, notifications, sync, signaling, account selection, and action approval are [independent optional extensions](design/oidc-extensions.md).
+Start with the [developer introduction](developers/get-started.md), then use the detailed [application integration guide](implementation/app-integration.md). Sign-in uses OpenID Connect; app-private files, ordered logs, notifications, signaling, account selection, and action approval are [independent optional extensions](design/oidc-extensions.md).
 
 ## Run your own provider
 
@@ -21,7 +21,7 @@ Read the [self-hosting overview](self-hosting.md) before the [installation guide
 ## Find the technical detail
 
 - [Architecture and boundaries](design/architecture.md)
-- [Synchronized state semantics](design/sync-semantics.md)
+- [Ordered-log semantics](design/log-semantics.md)
 - [Offline accounts](design/offline-accounts.md)
 - [Notifications and protected actions](design/notifications.md)
 - [Implementation and verification status](implementation/plan.md)

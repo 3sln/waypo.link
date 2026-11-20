@@ -5,6 +5,8 @@
 
 Waypo is incomplete and production release is disabled. This guide describes the implemented Node installation boundary, not approval to expose it publicly. No Waypo.link, Polar or Cloudflare account is required. Use the [implementation map](plan.md) for verification status and [durable adapter guide](durable-adapters.md) for persistence and recovery constraints.
 
+> Storage redesign: new installations use independent [ordered logs](../design/log-storage-extension.md) and [blobs](../design/blob-storage-extension.md), with explicit physical capacity and work reserves. The older document/patch/CRDT tuning examples below describe a historical candidate; do not use them to enable the new profile or infer compatibility. Identity/bootstrap guidance remains separately applicable.
+
 ## Local installation
 
 Install Node 24, then run `npm ci` and `npm test` in the repository. Install scripts apply the pinned Native compatibility patches; do not skip them. Create a private configuration without printing its secret:

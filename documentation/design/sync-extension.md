@@ -1,5 +1,7 @@
 # OIDC app-private synchronization extension
 
+> **Historical prerelease design:** Provider-owned CRDT documents were replaced by [ordered logs](log-storage-extension.md) and independent blobs. The document/epoch/patch contracts below describe the earlier candidate, not current app integration or a compatibility alias. Apps may implement their own CRDT on the new primitives.
+
 > **Status:** Development contract for the in-progress OIDC metadata migration. The hosted reference-package pin has not been advanced; this page does not claim deployed support. Production release remains disabled.
 
 Metadata member: `waypo_sync`. Supported version: `"1"`. It describes synchronized app-private documents and their optional attachment/invalidation profiles. Notifications, signaling, provider account selection and action approval are not required.
