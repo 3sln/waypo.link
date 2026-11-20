@@ -31,9 +31,21 @@ export function createBillingBindingCapacity({issuer,environment,organizationId,
  const {maxBindings}=billingLimits(limits),anchorKey='hosted/polar/bindings-anchor-v1',counterKey='hosted/polar/bindings-stock-v1';
  return async function reserve(tx){
   const anchor=await tx.get(anchorKey),counter=await tx.get(counterKey);
-  if(Boolean(anchor)!==Boolean(counter)||anchor&&(anchor.v!==1||anchor.issuer!==issuer||anchor.environment!==environment||anchor.organizationId!==organizationId||counter.v!==1||!Number.isSafeInteger(counter.count)||counter.count<0))throw Error('billing_capacity_unavailable');
+  if(!anchor||!counter||anchor&&(anchor.v!==1||anchor.issuer!==issuer||anchor.environment!==environment||anchor.organizationId!==organizationId||counter.v!==1||!Number.isSafeInteger(counter.count)||counter.count<0))throw Error('billing_capacity_unavailable');
   const count=counter?.count??0;if(count>=maxBindings)throw Error('billing_capacity_budget');
-  if(!anchor)await tx.put(anchorKey,{v:1,issuer,environment,organizationId});
   await tx.put(counterKey,{v:1,count:count+1});
  };
+}
+
+// Trusted operator composition only. The adapter must execute the exact bounded
+// prefix probe inside this SAME transaction; never accept a caller's count/proof.
+export function createEmptyBillingCapacityProvisioner({store,firstBinding,issuer,environment,organizationId}){
+ if(typeof store?.transaction!=='function'||typeof firstBinding!=='function')throw TypeError('Transactional operator catalog probe required');
+ return ()=>store.transaction(async tx=>{
+  const anchorKey='hosted/polar/bindings-anchor-v1',counterKey='hosted/polar/bindings-stock-v1',anchor=await tx.get(anchorKey),counter=await tx.get(counterKey);
+  if(anchor||counter){if(!anchor||!counter||anchor.v!==1||anchor.issuer!==issuer||anchor.environment!==environment||anchor.organizationId!==organizationId||counter.v!==1||!Number.isSafeInteger(counter.count)||counter.count<0)throw Error('billing_capacity_unavailable');return {provisioned:false,count:counter.count};}
+  const found=await firstBinding(tx,{prefix:'hosted/polar/waypo_',limit:1});
+  if(found!==null)throw Error('billing_existing_catalog_requires_migration');
+  await tx.put(anchorKey,{v:1,issuer,environment,organizationId});await tx.put(counterKey,{v:1,count:0});return {provisioned:true,count:0};
+ });
 }

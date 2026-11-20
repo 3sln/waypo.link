@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {billingLimits,createBillingVendorBudget,createBillingBindingCapacity} from '../billing-controls.mjs';
+import {billingLimits,createBillingVendorBudget,createBillingBindingCapacity,createEmptyBillingCapacityProvisioner} from '../billing-controls.mjs';
 import {TransactionStore} from '../../../../waypo/tests/engine/helpers/transaction-store.mjs';
 test('vendor budget prepays attempts, survives restart/limits changes and prevents clock rollback reset',async()=>{
  const store=new TransactionStore();let now=86400000+1000;
@@ -22,8 +22,17 @@ test('parallel attempts share durable stock; failed external work has no refund 
 
 test('binding stock is finite, transactional, retained across limits changes and anchored against missing counters',async()=>{
  const store=new TransactionStore(),options={issuer:'https://identity.example/api/auth',environment:'sandbox',organizationId:'org',limits:{maxBindings:1}},reserve=createBillingBindingCapacity(options);
- await assert.rejects(store.transaction(async tx=>{await reserve(tx);throw Error('rollback');}),/rollback/);assert.equal(store.snapshot().size,0);
+ await assert.rejects(store.transaction(reserve),/capacity_unavailable/);
+ await createEmptyBillingCapacityProvisioner({...options,store,firstBinding:async()=>null})();
+ await assert.rejects(store.transaction(async tx=>{await reserve(tx);throw Error('rollback');}),/rollback/);assert.equal(store.snapshot().size,2);
  await store.transaction(reserve);await assert.rejects(store.transaction(reserve),/capacity_budget/);
  const raised=createBillingBindingCapacity({...options,limits:{maxBindings:2}});await store.transaction(raised);await assert.rejects(store.transaction(raised),/capacity_budget/);
  await store.transaction(tx=>tx.delete('hosted/polar/bindings-stock-v1'));await assert.rejects(store.transaction(raised),/capacity_unavailable/);
+});
+
+
+test('old uncounted financial bindings prevent fresh provisioning and runtime flags cannot initialize stock',async()=>{
+ const options={issuer:'https://identity.example/api/auth',environment:'sandbox',organizationId:'org'},store=new TransactionStore([['hosted/polar/waypo_old',{subject:'old-owner'}]]);
+ const provision=createEmptyBillingCapacityProvisioner({...options,store,firstBinding:async(tx,input)=>{assert.deepEqual(input,{prefix:'hosted/polar/waypo_',limit:1});return {key:'hosted/polar/waypo_old'};}});
+ await assert.rejects(provision(),/requires_migration/);await assert.rejects(store.transaction(createBillingBindingCapacity({...options,limits:{maxBindings:1000}})),/capacity_unavailable/);assert.equal(store.snapshot().size,1);
 });

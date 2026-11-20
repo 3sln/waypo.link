@@ -267,3 +267,13 @@ signed raw webhook replay and epoch ordering, closed credential-read avoidance,
 existing-only servicing, failed cancellation, fixed-row budget concurrency,
 clock rollback, limit-change persistence and anchored binding stock rollback.
 No actual vendor sandbox, Worker/browser or newly merged log-runtime claim.
+
+Independent coordinator review required programmatic old-catalog stock protection.
+Follow-up removes purchase-time capacity initialization entirely. A private fresh
+Node operator provisioner checks maintained file/schema guards, holds actual
+SQLite BEGIN IMMEDIATE, probes exact hosted/polar/waypo_ range LIMIT1, then creates
+paired anchors/count0 only on empty catalog. Existing count never resets; old
+uncounted customers deny and require reviewed migration. Actual SQLite and adapter
+regressions cover unrelated earlier budget key, old catalog, immutable organization,
+restart/count preservation and zero SDK calls on absent stock. Worker provisioning
+still pending before any paid Worker activation. No production provisioning ran.

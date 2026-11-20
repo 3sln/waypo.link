@@ -70,9 +70,14 @@ limit Polar's own payment processing charges automatically.
 
 Binding stock is retained until a separately qualified financial retention/purge
 policy exists. It has no TTL-based refund and is not silently reset by config
-revision. Existing installations with older uncounted financial rows require an
-explicit migration before allowing new purchases; do not initialize an empty
-counter over an old populated catalog. At capacity, refuse new purchases while
+revision. Runtime purchases require pre-provisioned anchored stock and never initialize
+it. For a fresh Node installation, stop the service and invoke the private
+`provisionEmptyNodeBillingCapacity({filename,issuer,environment,organizationId})`
+operator function from `billing-provision-node.mjs`. Its actual SQLite transaction
+probes the exact customer prefix with LIMIT1 before initializing count0. Existing
+stock is preserved. Older uncounted customers fail closed and require a separately
+reviewed migration; no automatic old-ledger migration exists. Worker operator
+provisioning remains an activation gate. At capacity, refuse new purchases while
 existing servicing remains available. Account deletion is not permission to
 erase payment evidence.
 
