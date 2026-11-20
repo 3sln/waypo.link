@@ -14,6 +14,11 @@ not enable them. These controls are operator configuration, never request input.
 new offers should retain explicitly enabled subscription servicing while any
 subscriptions remain: cancellation is an obligation, not an upsell gate. An
 operator must not simply turn both controls off with renewal obligations left.
+When disabling sales, first keep `paidPlansEnabled:true` with `enableActions:false`
+until approved pending checkout sessions have settled or been cancelled. A
+servicing-only profile intentionally cannot enroll a previously unbound
+subscription, even if an old checkout completes later. Reconcile those pending
+obligations before the final transition; never strand an external payment.
 
 The annual $10/10 GB preset is dormant commercial direction, not published terms
 or a profitability claim. Overages remain disabled. Paid capacity cannot bypass
