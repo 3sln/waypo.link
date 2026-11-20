@@ -288,3 +288,18 @@ Hosted npmtest83/83 passes1.04s. Vendor-attempt budgets explicitly do not bound
 unauthenticated HTTP/webhook ingress; edge/work guards remain separate.
 
 2026-11-19 coordinator review: independently inspected dormant paid controls, canonical servicing, prepaid vendor budgets and actual SQLite empty-catalog provisioning. Requested and verified two corrections: never initialize financial stock from checkout over uncounted prior records; require finite signup stock/rate policies for every public hosted mode, including commercial configuration with paid flags off. Independently reran final candidateeb52e21 hosted `npm test`:83/83 passed4.56s, including actual SQLite provisioning and mocked/intercepted maintained Polar SDK behavior. Candidate merged to main5167e4c; tracked source tree matched reviewed candidate. This is acceptance of disabled implementation, not pricing/activation or live Polar evidence. No production flag, vendor call or billing activation changed. Sandbox lifecycle, Worker provisioning, financial retention and log-aware paid account archive/restore remain activation gates.
+
+## 2026-11-19 — analytics consent/privacy primary-source spike
+
+Owner requested legal analysis before assuming analytics needs a consent toast and
+per-user acceptance ledger. Added internal docs/research/waypo-analytics-consent-
+2026-11-19.md with current ICO2026statisticalexception, EDPBfinaltechnicalscope,
+USCalOPPA/CCPA/Colorado, conditionalCanada/Australia andCloudflareDPA evidence.
+Currentchecked-inallowlist[] isnotworldwideapproval; testsUSonly. Currentper-action
+AEpoints/timestamp/precisedurations arepotentiallypersonal/pseudonymous, notproven
+anonymous despiteclosedIDfree schema. Server-onlydoesnotautomaticallyexemptterminal
+purpose rules. RecommendkeepOFFwhilechoosingcoarselocalaggregation+assessment versus
+optionalpriorconsentwithdurablewithdrawableproof; no blankettoastimplemented.
+Necessaryidentity processing remainsseparate andtelemetrymustnotresetretention.
+No production/vendor calls or policy activation. Legalinterpretationsexplicitly
+provisional; no all-jurisdictions certification.
