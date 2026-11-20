@@ -239,3 +239,31 @@ Final paired hosted qualification on frozen `634e06b` with exact core `eca42e156
 - Hosted82/82 after preserving the initial managed Miniflare cache warm-up qualification failure; documentation50 pages and local Worker dry-run passed. Additive explicit preset/config tests9/9 plus fresh docs check passed.
 - Exported operator-only WAYPO_LINK_INITIAL_TEXT_SUPPORT with full finite engineering limits (4096fleet/32owner), media:false. Generic/self-host defaults and public flags unchanged. These caps are operational guards, not a profitability guarantee.
 - Evidence: adjacent core .artifacts/support-final-20261110/{qualification-receipt.json,index.html}; earlier red executions preserved separately. No Actions, cloud writes, public activation or deployment.
+
+## 2026-11-19 — dormant paid activation and guarded existing servicing candidate
+
+User's active objective includes paid tiers implemented but initially disabled.
+Isolated hosted candidate adds explicit default-off paidPlansEnabled and separate
+subscriptionServicingEnabled. Closed composition retains500MB/free signaling and
+selects no billing routes/SDK client/vendor calls, even when secrets are present.
+Servicing-only requires preexisting exact customer/subscription authority and
+cannot create checkout, trial, customer or portal. Status/usage do not allocate
+financial rows. Failed cancellation never becomes confirmed state.
+
+Added finite configurable prepaid installation-wide vendor attempts with separate
+cancellation lane, clock high-water, immutable anchors and retained binding stock.
+No config revision refund; no automatic unknown-effect replay/refund. These are
+reference safety caps, not monetary guarantees or cross-store fleet enforcement.
+Dormant annual10USD/10GB remains provisional; free baseline survives downgrade.
+PAID-ACTIVATION.md records activation/migration/financial-retention/global-topology
+gates and unconfirmed cancellation recovery. No production settings/activation,
+external sends or vendor calls. Focused tests use actual pinned policy and SDK
+with intercepted transport, not production qualification. Full merged validation
+and independent security review remain required before activation.
+
+Validation of isolated paid-guard candidate: hosted `npm test` passes79/79 in3.47s,
+including actual pinned policy downgrade, maintained SDK intercepted transport,
+signed raw webhook replay and epoch ordering, closed credential-read avoidance,
+existing-only servicing, failed cancellation, fixed-row budget concurrency,
+clock rollback, limit-change persistence and anchored binding stock rollback.
+No actual vendor sandbox, Worker/browser or newly merged log-runtime claim.

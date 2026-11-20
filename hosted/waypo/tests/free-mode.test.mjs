@@ -29,3 +29,14 @@ test('configured free policy grants shared capacity and signaling with real poli
  await store.transaction(tx=>events.recordServiceUsage(tx,{issuer,subject:'owner',usedBytes:500000000}));assert.equal((await store.transaction(tx=>events.accountCapacity(tx,{issuer,subject:'owner'}))).maxAccountBytes,500000000);
  const result=(await engine.dispatch(new RunFundingMaintenanceAction({subject:'owner'})).next('result')).detail;assert.equal(result.scheduled,false);assert.equal([...store.snapshot().keys()].some(key=>key.startsWith('hosted/')),false);
 });
+
+
+test('closed commercial flags select no vendor extension, paid plans or credential access',async()=>{
+ const settings={environment:'sandbox'},env={WAYPO_CONFIG:JSON.stringify(provider),HOSTED_BILLING_CONFIG:JSON.stringify(settings)};
+ Object.defineProperties(env,{POLAR_ACCESS_TOKEN:{get(){throw Error('Polar token touched');}},POLAR_WEBHOOK_SECRET:{get(){throw Error('Polar secret touched');}}});
+ const composed=hostedWorkerEnvironment(env),policy=JSON.parse(composed.env.WAYPO_CONFIG).policy;assert.deepEqual(policy.plans,{});assert.deepEqual(policy.freeServices,{storageBytes:500000000,signaling:true});assert.equal(Object.hasOwn(composed.settings,'accessToken'),false);
+ const extension=await createWaypoLinkExtensionFactory(composed.settings)({});assert.deepEqual(extension.userLinks,[]);assert.equal(extension.recordServiceUsage,undefined);
+ for(const path of ['/account/billing','/api/hosted/billing/checkout','/api/hosted/polar/webhook'])assert.equal((await extension.handle(new Request('https://identity.example'+path))).status,404);
+ for(const flags of [{enableActions:true},{enableTrial:true},{paidPlansEnabled:'true'},{subscriptionServicingEnabled:1}])assert.throws(()=>createWaypoLinkExtensionFactory({...settings,...flags}));
+ assert.equal(Object.keys(composeWaypoLinkProviderConfiguration(provider,{...settings,paidPlansEnabled:true}).policy.plans).length,1);
+});
