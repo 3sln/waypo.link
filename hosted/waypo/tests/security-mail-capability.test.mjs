@@ -14,7 +14,7 @@ test('only exact issuer-bound budgeted hosted transport obtains readiness; JSON,
 });
 
 test('hosted mail capability independently requires required production session-security human verifier',async()=>{
- const {isHostedSessionSecurityMailReady}=await import('../../../../waypo/packages/auth/session-security-human.mjs');
+ const {isHostedSessionSecurityMailReady}=await import(new URL('../../packages/auth/session-security-human.mjs',import.meta.resolve('@3sln/waypo/node')));
  const transport=createHostedEmailBinding({emailBinding:{send:async()=>({messageId:'id'})},configuration,beforeEmailAttempt:createHostedEmailBudgetAdmission(env),requireEmailBudget:true});
  const challengeOrigin='https://challenge.identity.example',verification={verify:async()=>true,configuration:{action:'session-security',testOnly:false,siteKey:'fixture-site',challengeOrigin}};
  const profile={transport,issuer,emailHuman:{required:true},verification,challengeOrigin};assert.equal(isHostedSessionSecurityMailReady(profile),true);
