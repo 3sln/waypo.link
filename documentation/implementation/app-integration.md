@@ -12,7 +12,7 @@ Waypo provides an OIDC identity issuer and optional app-scoped personal services
 4. The app creates its own session. Optional storage, notifications or signaling work only when discovered, consented and currently allowed. An identity-only provider remains usable for login.
 5. “Sign out of this app” clears the app session. Provider account management opens a separate provider-owned page. Provider logout and revoking a particular app's background grant are distinct actions.
 
-The reference samples use top-level redirects and a backend for frontend. This avoids dependence on third-party iframe cookies or storage. FedCM remains a separate implementation item; the chooser does not imply that it is supported.
+The reference samples include a backend for frontend and a direct browser client. Both use top-level redirects. This avoids dependence on third-party iframe cookies or storage. FedCM remains a separate implementation item; the chooser does not imply that it is supported.
 
 ## Embed the chooser and account menu
 
@@ -58,9 +58,9 @@ After verifying the selected OIDC issuer, use the public discovery helpers in `@
 
 For background operations, request the relevant consent and renewable authority rather than depending on the provider's browser cookie. Keep tokens within their intended app/account boundary. A backend proxy should expose only discovered operations, validate its own CSRF boundary and reject stale account-context requests before forwarding them. Switching accounts in another tab must never send the previous account's queued edits using the new account's credentials.
 
-`@3sln/waypo/sdk/sync` supplies structural Yjs document synchronization; `@3sln/waypo/sdk/indexeddb` supplies its browser persistence adapter. The Notebook browser (in the Waypo source repository) demonstrates real IndexedDB, text editing, offline persistence, quota/recovery states, private attachments and account-bound transport. Generic map/array/text transaction support is exercised separately by the SDK engine tests. The `transport` methods are injected: the SDK does not assume every app should expose bearer tokens to browser JavaScript. Use a namespace containing the verified issuer, subject and client ID, preserve local data on failed synchronization, and present quota/backoff/recovery states accurately.
+`@3sln/waypo/sdk/logs` exposes app-private opaque append/read/conditional-trim operations. `@3sln/waypo/sdk/log-tail` exposes replay-then-live HTTP CBOR sequences with explicit application acknowledgment. Your app owns its reducer or CRDT, offline intents and durable state/cursor commit. Namespace local data by verified issuer, subject, client ID and log ID. Save an operation ID with its immutable bytes before first network submission; an uncertain append must retain that intent rather than minting a replacement.
 
-Storage subscriptions are invalidation hints, not document content or authorization. The optional `@3sln/waypo/sdk/subscriptions` helpers support the discovered short-lived ticket profile; authoritative reads/writes still use current app authority. Configure CSP for the exact discovered HTTPS/WSS endpoints and coordinate same-device tabs where supported. Provider policy and the app's local persistence limits remain separate from the wire protocol.
+The [ordered-log contract](../design/log-storage-extension.md) and [retry semantics](../design/log-semantics.md) define cursor retention, head conditions and exclusive `trimBefore(cursor, retentionRevision)`. The provider transparently archives stable prefixes; apps do not select storage tiers or issue a blanket clear. A reconnect below retained history requires explicit recovery, preserving local edits. The old provider document SDK and invalidation tickets are historical, not the new storage API.
 
 
 ## Protected notification actions
@@ -87,4 +87,4 @@ Scope-derived profile/email disclosures still apply. Original ID-token sign-in r
 
 ## Application files
 
-Use the [independent blob storage extension](../design/blob-storage-extension.md) for new file integrations. Discover it separately from synchronized state and obtain only the app-private scopes needed. The frontend SDK requires an authenticated transport, does not invent offline authority, and never blindly replays conditional writes after uncertain network outcomes. Legacy document-owned attachment routes remain compatibility paths; neither document deletion nor CRDT GC deletes a standalone blob key.
+Use the [independent blob storage extension](../design/blob-storage-extension.md) for new file integrations. Discover it separately from synchronized state and obtain only the app-private scopes needed. The frontend SDK requires an authenticated transport, does not invent offline authority, and never blindly replays conditional writes after uncertain network outcomes. Log trimming and application CRDT compaction never delete a standalone blob key. Explicit conditional file deletion is separate.

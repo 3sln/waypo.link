@@ -1,6 +1,6 @@
 # Add Waypo to an app
 
-Start with standard OpenID Connect sign-in. Add optional services only when your app needs them. Your frontend can use sync and signaling directly with properly scoped credentials; an app backend is not required for every integration.
+Start with standard OpenID Connect sign-in. Add optional services only when your app needs them. Your frontend can use logs, files and signaling directly with properly scoped credentials; an app backend is not required for every integration.
 
 ## 1. Choose your provider and client library
 
@@ -16,9 +16,9 @@ Use provider-owned account selection and permission UI where supported. Do not c
 
 ## 3. Discover only the features you need
 
-Optional features are advertised as independent OIDC metadata extensions. Check the [extension guide](../design/oidc-extensions.md), then read the individual contract for [sync](../design/sync-extension.md), [notifications](../design/notifications-extension.md), or [signaling](../design/signaling-extension.md). There is no mandatory umbrella discovery protocol.
+Optional features are advertised as independent OIDC metadata extensions. Check the [extension guide](../design/oidc-extensions.md), then read the individual contract for [ordered logs](../design/log-storage-extension.md), [notifications](../design/notifications-extension.md), or [signaling](../design/signaling-extension.md). There is no mandatory umbrella discovery protocol.
 
-For sync, use the generic document semantics rather than depending on the underlying CRDT engine. Attach large binary files separately. Handle quota pressure and provider retry instructions through the SDK rather than repeatedly retrying rejected writes.
+For cross-device state, append opaque events to an app-private log and keep the reducer, state format or CRDT in your app. Read ranges or consume the HTTP CBOR-sequence tail. Commit state and cursor together before acknowledging; reconnect from that processed cursor. Store files independently and publish their keys when useful. Handle quota pressure and provider backoff through the SDK.
 
 For signaling, your app defines rooms, roles, pairing, and consent. Waypo helps authorized participants exchange connection setup messages; it does not provide a global directory or a media relay. See the [rendezvous implementation](../implementation/rendezvous.md).
 
@@ -32,6 +32,6 @@ Use sample apps and two independently configured providers to exercise issuer bi
 
 ## Store files independently of synchronized state
 
-Discover the optional [`waypo_blobs` extension](../design/blob-storage-extension.md) and request `blobs:read` and/or `blobs:write` only when the app needs them. New apps should use app-private blob keys for files; synchronized documents may contain those keys but are not required. A provider may offer files without CRDT state or state without files. Handle absent capability and declined permission.
+Discover the optional [`waypo_blobs` extension](../design/blob-storage-extension.md) and request `blobs:read` and/or `blobs:write` only when the app needs them. New apps should use app-private blob keys for files; application state or log entries may contain those keys but are not required. A provider may offer files without logs, or logs without files. Handle absent capability and declined permission.
 
 The frontend `createBlobStorage` SDK uses your authenticated transport and conditional versions. Create a fresh key before publishing a document reference; those operations are not one transaction. Handle missing/changed keys and clean up files explicitly. A stored version is not a historical download pin. The reference currently buffers files up to4MiB; the [larger-file streaming plan](../design/blob-streaming-next.md) is provisional work, not implemented support.

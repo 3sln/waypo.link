@@ -35,6 +35,14 @@ Local candidate evidence against the adjacent current core: hosted primary44/44;
 
 **Local compatibility:** `waypo-ref.txt` selects reviewed core `4abb38e793cf98d7167211e3cfe8dec2f61e8f95`. Local qualification of this exact source pair uses hosted primary and Node/Worker integration tests plus a Worker dry build. This is not a deployed service or blanket security approval. Default country list remains empty, public routes off, preview flag false, destructive retention off. Account-data sharding is implemented and locally qualified behind explicit operator opt-in; the shipped configuration still binds only the installation actor. Native identity remains installation-local. Live email/push, restoration, comprehensive cost controls and public Cloudflare rollout remain separate gates.
 
+## Current storage candidate and work reserves
+
+The current redesign uses independent opaque ordered logs and app-private key/blob storage. Applications own their reducers or CRDTs; `sync`, document attachments and subscription-ticket aliases do not activate the new hosted storage profile. Select `services.logs` and/or `services.blobs`, explicit finite `storageCapacity`, and work/period policies with usable owner and cleanup floors. See [independent files](blob-storage.md). These primitives share the configured logical allowance while physical rows, staged objects, retained receipts and uncertain cleanup remain separately bounded.
+
+The closed identity-only Wrangler example includes owner384daily/2048monthly units inside total1024/8192 and essential256/2048 units, under a new engineering period revision. These are neither launch financial defaults nor adequate reserves for arbitrary enabled storage/Native exports. Validate an enabled profile against its largest audited operations and migrate persisted period policy explicitly. Paid flags, public signup, optional services and production routes remain off.
+
+The historical evidence and pinned-reference paragraphs above describe their exact older source pair. New log/blob compatibility tests are staged against a frozen candidate core; they do not advance `waypo-ref.txt` or qualify the old document e2e fixtures. Public docs describe the new candidate contract without claiming deployed support.
+
 ## Deferred billing composition
 
 `worker.mjs` exports the branded `HostedInstallation` Durable Object and normal

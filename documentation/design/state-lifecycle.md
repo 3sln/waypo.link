@@ -1,5 +1,7 @@
 # State lifecycle and durable cleanup
 
+> **Historical prerelease design:** Provider-owned CRDT documents were replaced by [ordered logs](log-storage-extension.md) and independent blobs. The document/epoch/patch contracts below describe the earlier candidate, not current app integration or a compatibility alias. Apps may implement their own CRDT on the new primitives.
+
 > **Status:** Proposed design; implementation varies. Consult the implementation map and release gates.
 
 2026-11-02 engineering baseline; durations and implementation mechanisms remain provisional. [Architecture](architecture.md) describes the storage boundary. Every state family needs an owner, durable purpose or deadline, collection trigger and crash-safe executor. Expiry blocks use immediately even if physical cleanup is later. No collector or erasure SLA is implemented by this document.
