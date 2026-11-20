@@ -1,0 +1,18 @@
+# Current hosted free adapter qualification
+
+Frozen hosted test source `2bf55f7` (on `3d2ec59`) replaces obsolete positive sync/documents coverage with current logs/blobs. No hosted production settings, financial budget, admission guard or negative legacy test changed.
+
+## Actual evidence
+
+- Worker account-data and free-hosted suites: **3/3 pass, 5.60s**, source `daa4e51`, selected core `daac34a3842e23f87f348865f03cada699ce29b2`. Real maintained email/OIDC consent, PKCE, nonce/audience verification and bearer authorization drive opaque log create/append/replay and independent R2 blob PUT/GET. Account/control placement, composed500MB allowance, Native SQL separation, account-scoped object ownership, persistence, restart and further authorized writes pass. The other cases retain separate public/admin assets, no-Polar/billing404, native account-rate exhaustion and existing-login/restart behavior. Evidence: `.waypo-hosted-prerelease-20261119/.artifacts/hosted-current-selected-core-02/worker.log`.
+- Node free suite: **1/1 pass, 2.97s**, source `2bf55f7`, selected core `b31fad63fd02cc537a12d22507a73603aeefd847`. Actual maintained email login, OIDC consent/PKCE and verified token audience/nonce drive real log append/replay and independent disk-backed blob PUT/GET before the signed-in UI displays6B of shared use. Native user/operator creation and client registration are trusted fixture setup; no session/credential verification is mocked, and this is not a CIMD network-fetch proof. No-Polar/billing404, free signaling, current quota UI and desktop/mobile nonoverflow pass. Saturation UI uses an explicit trusted usage projection; the test does not claim500MB physically allocated. Evidence: `.../.artifacts/hosted-current-selected-core-05/node.log`; optional screenshots `.../screenshots/free-full-desktop.png` and `free-full-mobile.png`.
+
+The selected core checkouts' tracked trees were independently confirmed clean (untracked notes/artifacts ignored). The Node run reports `trackedClean:true`. Both emit exact package/root/commit and Node/Worker entry SHA256 values. The helper now fails closed on tracked changes whenever `WAYPO_TEST_CORE_COMMIT` is supplied. Compiled Worker proofs require the selected exported entry in esbuild's input metadata. Tools and public assets come from that selected package, not an adjacent checkout named waypo.
+
+The Node proof required a separate core runtime correction `b31fad6`: enabled lifecycle notices are allowed with execution false; destructive archive/deletion execution remains rejected at startup. Its actual local-mail accepted-notice/nondeletion tests pass separately. This does not activate paid archives or automatic Node retention deletion. Worker retention has its own independent actual new-profile proof.
+
+Initial retained reds distinguished an obsolete zero-control-work assertion from legitimate prepaid control accounting, a fixture missing its current account binding, a CommonJS tool namespace issue and the real overbroad Node notice guard. No guard was weakened to force the old fixture through. All owned runtimes, browser and temporary application state were closed/disposed.
+
+## Scope still open
+
+Additional optional paid/mail/security-browser actual-adapter fixtures still contain adjacent-core tooling/source references and need a bounded selected-core followup before claiming those particular current-source proofs. Intentional negative/mock engine tests were not mechanically rewritten. Remote Cloudflare delivery, Polar, production deployment and lawful activation are not qualified here. Billing and analytics remain OFF.

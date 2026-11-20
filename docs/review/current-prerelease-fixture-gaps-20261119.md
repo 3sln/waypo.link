@@ -37,3 +37,7 @@ valuable but do not substitute for the hosted composition boundary.
 The account/runtime agent owns this followup after freezing the new-profile free
 retention composition proof; paid capacity reservation is queued after this free
 launch qualification work.
+
+## Current positive free proofs reconciled
+
+See [current hosted free qualification](current-hosted-free-qualification-20261120.md): the current account-data/free Worker cases and free Node case now pass with selected-core provenance and real log/blob operations. The exact old zero-control-work assertion was replaced with actual shared admission accounting; data catalogs remain on account actors. Node's separate notice-only startup guard correction is qualified without enabling destructive retention execution. Remaining optional actual-adapter path references are still open and are not covered by this closure.

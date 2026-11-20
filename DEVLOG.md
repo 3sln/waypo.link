@@ -338,3 +338,7 @@ This is paired local engine/document evidence. The independent hosted paid
 cancellation review has separate unresolved fixes; no vendor call, public signup,
 paid purchase/trial, analytics or production release was activated. Core main
 promotion and broader exact-source browser qualification remain separate gates.
+
+### 2026-11-20 — Current hosted free Node/Worker fixtures
+
+Replaced stale positive sync/documents fixtures with current Native-authorized logs and independent blobs, retaining free entitlement, rate/admission, public/admin, no-billing and restart outcomes. Test infrastructure resolves selected @3sln core exports for tooling/source/assets, verifies compiled entry metadata and records exact commit/entry hashes; explicit pinned checks reject tracked source changes. Actual Worker cases pass3/3 in5.60s on clean daac34a; actual Node OIDC/log/blob/browser case passes1/1 in2.97s on clean b31fad6 with optional desktop/mobile screenshots. Quota saturation remains explicitly a trusted UI projection, not500MB disk allocation. No billing/analytics enabled; broader optional adapter provenance remains open. Precise sources/evidence and fixture-vs-runtime red distinctions are recorded in docs/review/current-hosted-free-qualification-20261120.md.
