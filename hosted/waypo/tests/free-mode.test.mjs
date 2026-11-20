@@ -40,3 +40,20 @@ test('closed commercial flags select no vendor extension, paid plans or credenti
  for(const flags of [{enableActions:true},{enableTrial:true},{paidPlansEnabled:'true'},{subscriptionServicingEnabled:1}])assert.throws(()=>createWaypoLinkExtensionFactory({...settings,...flags}));
  assert.equal(Object.keys(composeWaypoLinkProviderConfiguration(provider,{...settings,paidPlansEnabled:true}).policy.plans).length,1);
 });
+
+
+test('every public hosted mode requires finite account admission and creation rate regardless of paid flags',()=>{
+ const publicProvider={...provider,admission:'public'},admission=settings.accountAdmission,rate=settings.accountCreationRate;
+ for(const flags of [{},{paidPlansEnabled:true},{subscriptionServicingEnabled:true}]){
+  const commercial={environment:'sandbox',...flags};
+  assert.throws(()=>composeWaypoLinkProviderConfiguration(publicProvider,commercial));
+  assert.throws(()=>composeWaypoLinkProviderConfiguration({...publicProvider,accountAdmission:admission},commercial));
+  assert.throws(()=>composeWaypoLinkProviderConfiguration({...publicProvider,accountCreationRate:rate},commercial));
+  const config=composeWaypoLinkProviderConfiguration({...publicProvider,accountAdmission:admission,accountCreationRate:rate},commercial);assert.deepEqual(config.accountAdmission,admission);assert.deepEqual(config.accountCreationRate,rate);
+  const strict={...admission,maxPublicAccounts:3};const overridden=composeWaypoLinkProviderConfiguration({...publicProvider,accountAdmission:admission,accountCreationRate:rate},{...commercial,accountAdmission:strict});assert.equal(overridden.accountAdmission.maxPublicAccounts,3);
+  for(const malformed of [{accountAdmission:{...admission,maxPublicAccounts:Infinity}},{accountCreationRate:null}])assert.throws(()=>composeWaypoLinkProviderConfiguration({...publicProvider,accountAdmission:admission,accountCreationRate:rate},{...commercial,...malformed}));
+  assert.throws(()=>hostedWorkerEnvironment({WAYPO_CONFIG:JSON.stringify(publicProvider),HOSTED_BILLING_CONFIG:JSON.stringify(commercial)}));
+  assert.equal(composeWaypoLinkProviderConfiguration({...provider,admission:'closed'},commercial).admission,'closed');
+ }
+ const env=hostedWorkerEnvironment({WAYPO_CONFIG:JSON.stringify(publicProvider),HOSTED_BILLING_CONFIG:JSON.stringify({environment:'sandbox',accountAdmission:admission,accountCreationRate:rate})});assert.deepEqual(JSON.parse(env.env.WAYPO_CONFIG).accountAdmission,admission);
+});

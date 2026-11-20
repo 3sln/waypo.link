@@ -277,3 +277,12 @@ uncounted customers deny and require reviewed migration. Actual SQLite and adapt
 regressions cover unrelated earlier budget key, old catalog, immutable organization,
 restart/count preservation and zero SDK calls on absent stock. Worker provisioning
 still pending before any paid Worker activation. No production provisioning ran.
+
+Coordinator config review closed a billing-mode admission bypass: all public
+hosted providers now require validated finite accountAdmission/accountCreationRate,
+including default-off commercial settings and active paid plans (identity remains
+free). Explicit hosted settings override provider fields; malformed overrides deny,
+and private closed engineering profiles remain possible. Tests exercise allthree
+flag modes, missinghalf, nonfinite/null controls and Worker environment parsing.
+Hosted npmtest83/83 passes1.04s. Vendor-attempt budgets explicitly do not bound
+unauthenticated HTTP/webhook ingress; edge/work guards remain separate.

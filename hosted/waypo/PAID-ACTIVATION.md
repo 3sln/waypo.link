@@ -43,6 +43,15 @@ recorded as confirmed. Owner authority is rechecked after external waits.
 
 ## Economic guards
 
+Every public hosted mode requires validated finite account-admission and new-account
+creation-rate policies, including closed billing flags and active paid plans:
+identity still has a free entry path. Explicit hosted settings override provider
+settings without resetting durable counters; malformed overrides fail closed.
+Private closed engineering deployments remain possible. Vendor-attempt budgets
+do not cap unauthenticated HTTP requests, webhook body/signature work or edge CPU.
+Mandatory ingress/edge rate and work guards remain separate requirements; a valid
+signed webhook is still subject to canonical-read admission.
+
 `billingLimits` accepts finite positive integer fields (maximum 1,000,000):
 
 | Field | Default |
