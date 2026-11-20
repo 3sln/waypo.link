@@ -113,10 +113,11 @@ logs-only provider need not advertise blobs. Apps discover each independent OIDC
 metadata extension. Disabling a service does not authorize deleting its retained
 inventory or changing backend identity.
 
-The basic blob interface accepts buffered objects up to 4 MiB. Optional native
-multipart streaming is an experimental implementation feature; discovery/readiness
-is still gated separately. To evaluate its configured maximum **before starting a
-fresh installation**, add:
+The basic blob interface accepts buffered objects up to 4 MiB. Optional Native
+multipart streaming is mounted by maintained Node/Worker hosts when configured;
+apps discover it as `waypo_blobs.transfers`. The local normal-host discovery and
+SDK flow is qualified separately from public deployment and maximum-size performance.
+To configure its maximum **before starting a fresh installation**, add:
 
 ```json
 "blobTransfers": {"maxBytes": 134217728}
@@ -126,7 +127,8 @@ Place this inside `services`, with `blobs: true`. The example already reserves
 268,435,456 staged bytes and enough work, rows and physical space for that 128 MiB
 maximum. The maximum supported native object remains 128 MiB with 5 MiB parts; it
 is a validated implementation bound, not a paid tier. Enabling the field alone is
-not evidence that a public deployment's native capability is qualified. Native
+not evidence that a public deployment's Native capability is qualified. The
+[streaming guide](../design/blob-streaming-next.md) explains discovery and app flow. Native
 bytes use the operator filesystem, not end-to-end encryption. Optional legacy
 object-key encryption must retain all keys required to read old objects.
 

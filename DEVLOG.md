@@ -346,3 +346,9 @@ Replaced stale positive sync/documents fixtures with current Native-authorized l
 ### 2026-11-20 — Hosted merge gate against current qualified core
 
 Coordinator re-ran the complete hosted engine gate at 0e88e09 with the selected private dependency pinned to clean core bcac4a9 (runtime 4eb97b0): 83/83 pass, zero failures/skips/cancellations, 1.077 seconds. Evidence `.artifacts/paired-core-bcac4a9/engine.log`. Prior selected-core Native Node/Worker browser proofs remain scoped to the exact earlier commits documented in current-hosted-free-qualification; this engine recheck does not widen those browser claims. Documentation build/link checks previously passed for this unchanged documentation subtree. Production preview, public admission, paid purchases/trials and analytics remain disabled; this merge is source/docs reconciliation, not deployment.
+
+## 2026-11-20 — reconcile public file-transfer guidance
+
+The public developer guide still described the abandoned encrypted-chunk plan as the only larger-file path. Replaced that page with the maintained Native transfer flow and a source SDK example using actual `capabilities.features.blobs.transfers`; corrected the app introduction, self-host setup and independent blob extension. Configured Node/Worker issuer discovery is locally qualified at core bffcfa6, while public deployment, maximum-size performance and signed-download activation remain separate. The page distinguishes 4MiB buffered blobs from bounded5MiB-part Native transfers up to128MiB, whole-file SHA256, at-rest protection, CAS, owned cleanup and retained physical liabilities. It makes no direct URL replay/egress cap promise.
+
+Validation: docs build54public pages/127routes and checker55pages/local references/static metadata/HEAD/route boundaries PASS. No service configuration, core dependency pin, billing, analytics or launch setting changed.
