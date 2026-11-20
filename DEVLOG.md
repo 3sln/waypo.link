@@ -317,3 +317,24 @@ The checked-in closed identity-only preview advances engineering period revision
 Published the new ordered-log contract/retry semantics in the public documentation subtree and linked them from developer entrypoints, extension navigation, architecture and app integration. The app owns its reducer/CRDT, durable state+cursor acknowledgment and independent blob references; provider archive placement is transparent and trim requires an explicit committed cursor/revision. Removed the old sync entry from current capability navigation and visibly labeled earlier sync/state-lifecycle/self-host document-tuning text historical rather than treating it as a supported alias. Updated blob/hosted guidance to distinguish bounded legacy transfers, separately qualified native streaming, read-only optional direct downloads and required physical/work/owner/cleanup policy.
 
 No new production capability/readiness claim, public admission, native activation, pricing or core pin change. Full Worker/hosted and real external-service gates remain open. Earlier detailed historical pages remain available with notices; this is not a claim that every implementation-status page has been refreshed. Generated public assets rebuilt:51documentation pages/121routes; static check passed52HTMLpages, links/socialmetadata/HEAD/route boundaries. This docs-only candidate is separate from hosted primary751290a and requires independent review before adoption.
+
+### 2026-11-19 — Hosted staged composition against integrated current core
+
+Merged the staged compatibility composition and public disk-backed setup guide
+into isolated a3a9206; rebuilt generated documentation from the combined sources
+instead of choosing either conflicting generated asset. Static validation passed
+53 pages, references, metadata, HEAD and route boundaries.
+
+With a private dependency forest pointing exactly to core b4e803d, initial hosted
+engine execution passed81/83: two functional fixtures could not prepay the
+current bounded terminal-maintenance envelope. The closed core matrix requires
+2050 weighted units; historical service test buckets admitted1024. Updated only
+finite functional service fixtures to4096, retaining token buckets1024, monetary
+period reserves and deployment policies unchanged. No production quota was raised.
+Full hosted engine rerun passed83/83, zero failures/skips/cancellations,1122ms.
+Local log: .artifacts/hosted-current-core-20261119/engine.log.
+
+This is paired local engine/document evidence. The independent hosted paid
+cancellation review has separate unresolved fixes; no vendor call, public signup,
+paid purchase/trial, analytics or production release was activated. Core main
+promotion and broader exact-source browser qualification remain separate gates.
