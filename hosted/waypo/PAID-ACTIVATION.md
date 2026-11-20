@@ -107,7 +107,7 @@ Polar sandbox reconciliation/checkout/cancellation and signed webhook delivery;
 final product/price/trial/terms and profitability approval; safe old-ledger stock
 migration where relevant; shared budget topology; financial record retention;
 and alerting/manual cancellation procedure. No production vendor calls occurred
-for these tests. Restorable log-aware encrypted account archive/restore remains
+for these tests. Restorable log/blob-aware account archive/restore remains
 disabled until independently qualified; paid inactivity archival must not activate
 using the older catalog-only adapter. Log cold archival and owner export are
 separate facilities and do not satisfy that requirement.
