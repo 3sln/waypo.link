@@ -132,8 +132,7 @@ cancellationIntentId}`. Later calls reconcile by GET, never blindly repeat PATCH
 A false/nonconfirming GET is not proof the earlier write did not happen. The
 original policy job retries automatically through its existing due-job loop;
 owner API callers can retry the same intent after the server floor or refresh
-verified status. This slice adds no separate owner-cancellation scheduler. After
-32 reads the operation becomes blocked for staff reconciliation. There are at
+verified status. This slice adds no separate owner-cancellation scheduler. Unresolved reads share a32-attempt ceiling across the same subscription, including routine billing-version bumps and superseded intents; at that ceiling the operation becomes blocked for staff reconciliation. Canonical subscription period start/end must match the captured term before PATCH and confirmation; remote renewal before webhook delivery quarantines the old intent. An expired claim cannot authorize PATCH. There are at
 most eight retained intents per binding; current-version receipts and unknown
 liabilities cannot be evicted to reopen vendor work. These bounds may refuse new
 work rather than discard uncertainty. The status response and billing UI expose
