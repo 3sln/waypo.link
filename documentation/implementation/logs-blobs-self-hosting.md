@@ -11,13 +11,13 @@ The Node host archives retained log prefixes into its private object directory a
 serves the same log interface across hot/cold storage. Metadata and native identity
 live in separate SQLite files. These paths must survive process/container restarts.
 
-> This guide follows the reviewed open-source candidate `e95d17e`. It does not change the hosted service runtime pin or enable public services. Use that source or a later qualified release for the example below.
+> This guide follows the reviewed open-source candidate `bffcfa6`. It does not change the hosted service runtime pin or enable public services. Use that source or a later qualified release for the example below.
 
 ## 1. Create a private configuration
 
 From the repository root, install Node 24+ and run `npm ci` (including install
 scripts). The pinned Native compatibility patches are required. The committed
-[example](https://github.com/3sln/waypo/blob/e95d17e/examples/self-hosting/storage.config.json) intentionally has **no
+[example](https://github.com/3sln/waypo/blob/bffcfa6/examples/self-hosting/storage.config.json) intentionally has **no
 signing secret** and cannot be started as-is. Generate a private copy:
 
 ```sh
@@ -158,8 +158,8 @@ boundary independent of application accounting.
 No limit accepts `Infinity`, a negative number or an unlimited sentinel. Product
 allowances are configurable; request sizes, memory bounds, catalog ceilings and
 replay invariants still protect the implementation. See the
-[closed funding matrix](https://github.com/3sln/waypo/blob/e95d17e/docs/review/storage-operation-funding.md) and
-[service limits](https://github.com/3sln/waypo/blob/e95d17e/packages/services/limits.mjs) for the actual boundaries.
+[closed funding matrix](https://github.com/3sln/waypo/blob/bffcfa6/docs/review/storage-operation-funding.md) and
+[service limits](https://github.com/3sln/waypo/blob/bffcfa6/packages/services/limits.mjs) for the actual boundaries.
 
 The work settings are finite per-account/app/fleet rate buckets plus an optional
 installation daily/monthly wallet. Owner export and essential cleanup reserves are
@@ -196,7 +196,7 @@ Choose the Node or Docker setup for a fresh data directory; do not provision the
 
 ## Single-container Docker
 
-The [runtime Dockerfile](https://github.com/3sln/waypo/blob/e95d17e/docker/node.Dockerfile) checks the tracked browser
+The [runtime Dockerfile](https://github.com/3sln/waypo/blob/bffcfa6/docker/node.Dockerfile) checks the tracked browser
 bundle in a build stage, then removes development tools. The final image runs Node
 as a non-root user; it does not contain browsers, Docker Compose, Cloudflare tools
 or the E2E test environment. Build from the repository root:
@@ -248,7 +248,7 @@ the configured canonical origin. Loopback HTTP is for local browser evaluation,
 not a public deployment setting. A stable domain/RP ID matters to existing passkeys.
 
 The optional container smoke command is documented with its source in
-[`e2e/self-hosting-container.mjs`](https://github.com/3sln/waypo/blob/e95d17e/e2e/self-hosting-container.mjs). It provisions
+[`e2e/self-hosting-container.mjs`](https://github.com/3sln/waypo/blob/bffcfa6/e2e/self-hosting-container.mjs). It provisions
 an isolated mounted installation, checks non-root runtime/health/locked UI/closed
 signup and persistence across restart, and cleans up only its own container.
 Screenshots are opt-in. It does not replace the multi-app/provider release suite.
