@@ -1,5 +1,6 @@
 import {seedInitializedFixture,createFixtureAuthority} from './native-capacity.fixture.mjs';
 // Native local test harness only; never selected by the hosted deployment config.
+export {HostedAccountData as FixtureHostedBasicAccountData} from '../worker.mjs';
 import HostedWorker,{HostedInstallation} from '../worker.mjs';
 let polarTransport;const originalFetch=globalThis.fetch;
 globalThis.fetch=(input,init)=>{const url=new URL(input instanceof Request?input.url:String(input));if(url.origin==='https://sandbox-api.polar.sh'){if(!polarTransport)throw Error('Fixture transport unavailable');return polarTransport.fetch(new Request(input,init));}return originalFetch(input,init);};
