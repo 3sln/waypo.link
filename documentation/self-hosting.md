@@ -8,7 +8,7 @@ Waypo is the open-source provider behind Waypo.link. A private installation can 
 
 You supply a stable HTTPS origin, provider configuration, durable database and private file storage, backups, and a way to deliver required account messages. Passkeys and OIDC callbacks are bound to deployment identity: choose the public origin deliberately before enrolling real users.
 
-The Node adapter can keep app objects in a private directory on your own disk; no separate object-storage service is required. The Node adapter supports durable self-hosting. Cloudflare is another deployment option, not a prerequisite. Use Node 24 for the currently tested reference installation. Start with the exact commands and configuration in the [installation guide](implementation/self-hosting.md), and review the [durable adapter constraints](implementation/durable-adapters.md).
+The Node adapter can keep app objects in a private directory on your own disk; no separate object-storage service is required. The Node adapter supports durable self-hosting. Cloudflare is another deployment option, not a prerequisite. Use Node 24 for the currently tested reference installation. For a fresh provider with disk-backed app data, start with the [logs and blobs setup guide](implementation/logs-blobs-self-hosting.md), including a private configuration and single-container Docker commands. The [identity installation guide](implementation/self-hosting.md) covers bootstrap and recovery, and review the [durable adapter constraints](implementation/durable-adapters.md).
 
 ## Keep registration private
 
@@ -32,7 +32,7 @@ These controls do not cover every charge: requests, messages, storage, and backg
 
 ## Decide which services to enable
 
-Start with identity. Enable notifications, sync, signaling, and support only when you can operate them and understand their resource limits. Advertise only the independent extensions your deployment actually supports. Apps should tolerate absent optional capabilities.
+Start with identity. Enable ordered logs, independent blobs, notifications, signaling, and support only when you can operate them and understand their resource limits. Advertise only the independent extensions your deployment actually supports. Apps should tolerate absent optional capabilities.
 
 Your admission policy, quotas, contact requirements, and retention policy are operator decisions. Waypo.link's initial free 500 MB plan is not a protocol requirement. No Waypo.link account or billing vendor is required to run your provider.
 
