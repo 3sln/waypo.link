@@ -5,6 +5,8 @@
 
 Waypo is incomplete and production release is disabled. This guide describes the implemented Node installation boundary, not approval to expose it publicly. No Waypo.link, Polar or Cloudflare account is required. Use the [implementation map](plan.md) for verification status and [durable adapter guide](durable-adapters.md) for persistence and recovery constraints.
 
+> For a fresh disk-backed logs/blobs provider, use the [current setup guide and validated example](logs-blobs-self-hosting.md).
+
 > Storage redesign: new installations use independent [ordered logs](../design/log-storage-extension.md) and [blobs](../design/blob-storage-extension.md), with explicit physical capacity and work reserves. The older document/patch/CRDT tuning examples below describe a historical candidate; do not use them to enable the new profile or infer compatibility. Identity/bootstrap guidance remains separately applicable.
 
 ## Local installation
