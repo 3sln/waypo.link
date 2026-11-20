@@ -111,3 +111,36 @@ for these tests. Restorable log-aware encrypted account archive/restore remains
 disabled until independently qualified; paid inactivity archival must not activate
 using the older catalog-only adapter. Log cold archival and owner export are
 separate facilities and do not satisfy that requirement.
+
+## Durable future-renewal cancellation (implemented locally, not activated)
+
+The trusted maintenance port is `cancelRenewal({subject,jobId,billingVersion})`.
+The portable policy job supplies the stable ID and expected verified billing
+version. No public request chooses a subscription ID. Owner cancellation derives
+a stable ID from its currently authorized subscription/version; sales may remain
+disabled while existing subscriptions can be serviced.
+
+An intent binds the exact subscription, customer/product and current term/version.
+GET and PATCH attempts each spend the existing global vendor budget before the
+maintained SDK is called. A finite claim lease coordinates concurrent workers.
+Only an exact current binding can confirm local renewal cancellation; neither a
+late response nor an old job may mark a rejoined subscription canceled. Paid-through
+and trial expiry are never extended or erased by this operation.
+
+An unknown PATCH result returns `{pending:true,nextAt,state:'uncertain',
+cancellationIntentId}`. Later calls reconcile by GET, never blindly repeat PATCH.
+A false/nonconfirming GET is not proof the earlier write did not happen. The
+original policy job retries automatically through its existing due-job loop;
+owner API callers can retry the same intent after the server floor or refresh
+verified status. This slice adds no separate owner-cancellation scheduler. After
+32 reads the operation becomes blocked for staff reconciliation. There are at
+most eight retained intents per binding; current-version receipts and unknown
+liabilities cannot be evicted to reopen vendor work. These bounds may refuse new
+work rather than discard uncertainty. The status response and billing UI expose
+pending, uncertain and review-required state without subscription/job identifiers.
+
+Local maintained-SDK tests intercept sandbox HTTP and exercise lost responses,
+restart/retry, concurrency, reordering, rejoin, late acknowledgement, finite stock
+and prepaid attempts. They make no live API calls and prove no production billing
+activation. The current log/blob archive/restore adapter and paid capacity proof
+remain required before paid readiness; this cancellation slice does not supply them.
