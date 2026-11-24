@@ -92,8 +92,8 @@ index on startup and each second.
 usage accounting, SDK/webhook reconciliation and overage candidates with injected
 resources. `npm run test:e2e` separately runs actual Node TLS/native-session/email
 proof and browser billing checks, cancellation, and native Miniflare/workerd SQLite
-state/session persistence across restart. `npm run test:all` runs both. These use
-the adjacent Waypo checkout's development tools. Set `E2E_SNAPSHOTS=true` only for
+state/session persistence across restart. `npm run test:all` runs both. E2E and all-tests commands first build the generated Worker public assets from the installed core package; engine-only tests do not build assets. These use
+the installed Waypo package's development tools. Set `E2E_SNAPSHOTS=true` only for
 requested E2E desktop/mobile billing evidence; captures and test state are ignored.
 No external checkout or charge is made. Real Polar annual sandbox settlement,
 production configuration, all lifecycle/browser gates and launch capacity remain

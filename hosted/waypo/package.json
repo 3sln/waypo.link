@@ -24,6 +24,8 @@
     "test:security-mail:node": "E2E_PASSKEY_HUMAN_BACKEND=node node tests/security-mail.browser.mjs",
     "test:security-mail:worker": "E2E_PASSKEY_HUMAN_BACKEND=worker node tests/security-mail.browser.mjs",
     "build:branding": "node build-branding.mjs",
-    "test:native-paid": "node --test tests/native-paid-flow.test.mjs"
+    "test:native-paid": "node --test tests/native-paid-flow.test.mjs",
+    "pretest:e2e": "node prepare-e2e.mjs",
+    "pretest:all": "node prepare-e2e.mjs"
   }
 }
