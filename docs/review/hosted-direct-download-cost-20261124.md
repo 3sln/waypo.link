@@ -24,5 +24,8 @@ download handler is separate; its policy was not changed. Apps continue to use
 the ordinary blob read/stream interface; hosted discovery must not advertise
 raw R2 download URLs.
 
-The new configuration cases are registered in the primary hosted suite. They
-have not yet run: the active source-freeze job retains the validation slot.
+The three configuration cases passed3/3 in1.862s and are registered in the
+primary hosted suite. The first incomplete fixture omitted the already-required
+physical storage profile and failed before reaching this guard; the corrected
+fixture uses the existing maintained capacity profile. No production validator
+was relaxed. The complete coherent hosted primary gate remains pending.
