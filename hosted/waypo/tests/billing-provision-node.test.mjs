@@ -42,3 +42,22 @@ test('an unknown read-only inspection close retains the operation lease through 
   const output=execFileSync(process.execPath,['--expose-gc','--input-type=module','-e',script,JSON.stringify({...scope,filename})],{cwd:new URL('../',import.meta.url),encoding:'utf8',timeout:10000,maxBuffer:65536});assert.match(output,/unknown-close lease retained/);assert.deepEqual(financialRows(filename),[]);assert.deepEqual(await provisionEmptyNodeBillingCapacity({...scope,filename}),{provisioned:true,count:0});
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test('billing provisioning refuses genuine hot rollback and committed WAL before SQLite can recover either',{timeout:15000},async()=>{
+ const {copyFile}=await import('node:fs/promises');
+ for(const mode of['rollback','wal']){
+  const directory=await mkdtemp(join(tmpdir(),'waypo-billing-recovery-')),filename=join(directory,'metadata.sqlite'),scope={issuer:'https://identity.example/api/auth',environment:'sandbox',organizationId:'org'};
+  try{
+   await provisionNodeInstallation({filename,installationId:'billing-recovery'});await initialized(filename);
+   const script=mode==='rollback'?"import{DatabaseSync}from'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA cache_size=5;BEGIN IMMEDIATE;');db.prepare('UPDATE waypo_state SET value=? WHERE key=?').run(JSON.stringify({changed:'x'.repeat(8192)}),'bootstrap/installation');const q=db.prepare('INSERT INTO waypo_state(key,value) VALUES(?,?)');for(let n=0;n<256;n++)q.run('fixture/hot-'+n,JSON.stringify('x'.repeat(8192)));process.exit(0);":"import{DatabaseSync}from'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA wal_autocheckpoint=0;BEGIN IMMEDIATE;');db.prepare('INSERT INTO waypo_state(key,value) VALUES(?,?)').run('fixture/wal-pending','{}');db.exec('COMMIT');process.exit(0);";
+   execFileSync(process.execPath,['--input-type=module','-e',script,filename],{stdio:'ignore',timeout:10000});
+   const side=filename+(mode==='rollback'?'-journal':'-wal'),beforeMain=await readFile(filename),beforeSide=await readFile(side);assert.ok(beforeSide.length>512);
+   if(mode==='rollback'){
+    assert.equal(beforeSide.subarray(0,8).toString('hex'),'d9d505f920a163d7');
+    const copy=join(directory,'recovery-demonstration.sqlite');await copyFile(filename,copy);await copyFile(side,copy+'-journal');const recovered=new DatabaseSync(copy);try{assert.equal(recovered.prepare("SELECT count(*) AS n FROM waypo_state WHERE key LIKE 'fixture/hot-%'").get().n,0);}finally{recovered.close();}assert.notDeepEqual(await readFile(copy),beforeMain,'the owned copied hot pair really requires SQLite recovery');
+   }
+   await assert.rejects(provisionEmptyNodeBillingCapacity({...scope,filename}),{code:'billing_database_recovery_required'});
+   assert.deepEqual(await readFile(filename),beforeMain);assert.deepEqual(await readFile(side),beforeSide);
+  }finally{await rm(directory,{recursive:true,force:true});}
+ }
+});

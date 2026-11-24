@@ -5,6 +5,7 @@ import {realpathSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {openNodeSqliteStore} from '@3sln/waypo/adapters/node/sqlite';
 import {acquireNodeInstallationOperation,nodeInstallationControlDirectory} from '@3sln/waypo/adapters/node/installation-operation';
+import {assertStoppedSqliteSidecars} from '@3sln/waypo/adapters/node/stopped-sqlite';
 import {createEmptyBillingCapacityProvisioner} from './billing-controls.mjs';
 const unconfirmed=new Set();
 export async function provisionEmptyNodeBillingCapacity({filename,issuer,environment,organizationId}){
@@ -14,9 +15,11 @@ export async function provisionEmptyNodeBillingCapacity({filename,issuer,environ
   await operation.assertServingAllowed();const current=lstatSync(canonical);if(current.dev!==before.dev||current.ino!==before.ino)throw Error('database_file_changed');
   // Deny locked/prebootstrap installations using a read-only view BEFORE any
   // mutable adapter/database open. This marker is not a bootstrap bypass.
+  assertStoppedSqliteSidecars(canonical,{recoveryCode:'billing_database_recovery_required',unsafeCode:'billing_database_invalid'});
   view=new DatabaseSync(canonical,{readOnly:true});view.exec('PRAGMA trusted_schema=OFF;');const saved=view.prepare('SELECT substr(value,1,16385) AS value,length(CAST(value AS BLOB)) AS bytes FROM waypo_state WHERE key=?').get('bootstrap/installation');let marker;try{if(!saved||saved.bytes>16384)throw Error();marker=JSON.parse(saved.value);}catch{throw Error('billing_installation_unavailable');}
   if(marker.version!==1||marker.status!=='initialized'||typeof marker.id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(marker.id)||!Number.isSafeInteger(marker.consumedGeneration)||marker.consumedGeneration<0)throw Error('billing_installation_unavailable');
   try{view.close();view=undefined;}catch(error){throw Object.assign(new AggregateError([error],'Read-only billing inspection closure unconfirmed'),{code:'billing_capacity_cleanup_unconfirmed'});}
+  assertStoppedSqliteSidecars(canonical,{recoveryCode:'billing_database_recovery_required',unsafeCode:'billing_database_invalid'});
   maintained=openNodeSqliteStore({filename:canonical});const path=maintained.filename;db=new DatabaseSync(path);const after=lstatSync(path);if(before.dev!==after.dev||before.ino!==after.ino)throw Error('database_file_changed');
   db.exec('PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;');
   const store={async transaction(callback){operation.assertHeld();db.exec('BEGIN IMMEDIATE');try{const tx={get:async key=>{const row=db.prepare('SELECT value FROM waypo_state WHERE key=?').get(key);return row?JSON.parse(row.value):undefined;},put:async(key,value)=>db.prepare('INSERT INTO waypo_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value))};const result=await callback(tx);operation.assertHeld();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}}};
