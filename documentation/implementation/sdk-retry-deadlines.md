@@ -1,6 +1,18 @@
 # SDK provider retry deadlines
 
-> Source-development reference: core `21ecbc3` in this isolated hosted candidate. Production/public operation remains disabled.
+> Source-development guidance. The historical scheduling evidence below comes from core `21ecbc3`; it does not qualify the current hosted source pair. Production/public operation remains disabled.
+
+## Current log and blob clients
+
+The hosted storage primitives are independent logs and blobs. Low-level calls do not promise automatic replay of every failed operation. For finite log operations, `appendWithRetry` and `readWithRetry` provide bounded, provider-directed recovery; the current defaults allow two retries within 20 seconds. An append keeps the same operation ID, captured bytes and expected-head precondition. A provider's longer retry floor must not be shortened to fit that window. When recovery cannot safely finish, the caller receives a failure; these helpers are not a persistent offline outbox.
+
+Low-level blob writes expose retry information but do not automatically repeat an uncertain PUT or DELETE. Reconcile the current version before deciding what to do next. The resumable native-transfer upload helper has a separate reconciliation contract. A lost connection is not proof that a write failed, and choosing a new operation ID or dropping a precondition can turn a retry into a different operation.
+
+A typed, explicitly hinted refusal at the service-admission boundary occurs before the resource operation runs. That differs from an ambiguous network outcome or an arbitrary backend 503. Tests and applications that use raw HTTP must preserve this distinction rather than repeat all failed writes. Temporary pressure does not invalidate the user's identity or justify discarding application-owned state.
+
+## Historical scheduling and compatibility evidence
+
+The document and subscription clients discussed below are retained implementation references. They are not the current hosted log/blob capabilities and must not be inferred from current discovery metadata.
 
 A provider's daily/monthly work refusal can require up to 31 days of backoff. That network deadline is distinct from a local timer interval. SDK/sample adapters retain the absolute deadline, schedule local wakeups no longer than seven days, and check the deadline again before making a provider request. A timer wakeup, focus/reconnect, online event or local edit does not confer fresh provider authority or bypass the stored floor.
 
