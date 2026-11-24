@@ -28,6 +28,7 @@ export async function createChargeableOperations({store,issuer,installationId,bi
     });
     const input={subject,intentId:selected.id};
     try{
+     await store.transaction(async tx=>{if(!await owners.authorizeDisclosure(tx,{subject,ownerProofHash,request,owner:expectedOwner}))fail('billing_owner_required');if(typeof ports.readBillingGeneration!=='function'||await ports.readBillingGeneration(tx,{subject,binding})!==prepared.billingGeneration)fail('financial_intent_generation_changed');});
      const result=await post(prepared.payload);
      // The trusted acceptor must durably retain a bounded canonical result
      // proof in this SAME transaction; a returned URL alone is not evidence.

@@ -6,6 +6,9 @@ import {WAYPO_LINK_PERSONAL_PLAN,WAYPO_LINK_TRIAL_CANDIDATE} from './policy-pres
 const enc=new TextEncoder(),MAX_BODY=131072;
 const text=(value,max=256)=>{if(typeof value!=='string'||!value.length||value.length>max)throw new Error('invalid_billing_input');return value;};
 const date=value=>{const at=Date.parse(value);if(!Number.isSafeInteger(at)||at<0)throw new Error('invalid_billing_snapshot');return at;};
+const money=value=>{if(!Number.isSafeInteger(value)||value<0||value>1000000000000)throw Error('invalid_checkout_money');return value;};
+const nullableText=value=>value===null?null:text(value,128);
+const nullableCount=value=>value===null?null:money(value);
 const hash=async value=>Buffer.from(await crypto.subtle.digest('SHA-256',enc.encode(value))).toString('base64url');
 // Server-only optional commercial adapter. No HTTP handler trusts caller IDs;
 // the embedding shell must resolve its authenticated owner before each action.
@@ -46,7 +49,7 @@ export function createPolarHostedAdapter({store,policyEvents,issuer,organization
   runDue:ledger.runDue,nextDue:ledger.nextDue,
   async beginCheckout({subject,context,intent}){
    if(!['trial','annual'].includes(intent))throw Error('billing_invalid_offer');
-   if(!paidPlansEnabled||!enableActions)throw Error('billing_actions_disabled');if(typeof chargeableOperations?.execute!=='function')throw Error('billing_financial_unavailable');
+   if(!paidPlansEnabled||!enableActions)throw Error('billing_actions_disabled');await owner(subject,context);await store.transaction(tx=>purchase(tx,subject));if(typeof chargeableOperations?.execute!=='function')throw Error('billing_financial_unavailable');
    const {id}=await action(subject,context,'checkout');
    const result=await chargeableOperations.execute({request:context.request,expectedOwner:context.owner,kind:intent==='trial'?'trial':'checkout',prepare:async tx=>{
     const row=await tx.get(key(id));await purchase(tx,subject);
@@ -55,11 +58,11 @@ export function createPolarHostedAdapter({store,policyEvents,issuer,organization
     return {id,allowTrial:intent==='trial'};
    }},async({id,allowTrial})=>{
     const checkout=await polar.checkouts.create({products:[productId],external_customer_id:id,success_url:back.href,return_url:back.href,allow_discount_codes:false,allow_trial:allowTrial,...allowTrial?{trial_interval:'day',trial_interval_count:WAYPO_LINK_TRIAL_CANDIDATE.days}:{}});
-    const url=new URL(checkout.url);if(url.protocol!=='https:'||url.port||url.username||url.password||url.href.length>4096||!(environment==='sandbox'?url.hostname==='sandbox.polar.sh':url.hostname==='polar.sh'))throw Error('invalid_checkout_destination');const reference={kind:allowTrial?'trial':'checkout',environment,vendorObjectId:text(checkout.id,128),externalCustomerId:checkout.external_customer_id,organizationId:checkout.organization_id,productId:checkout.product_id,expiresAt:date(checkout.expires_at),status:checkout.status};if(reference.externalCustomerId!==id||reference.organizationId!==organizationId||reference.productId!==productId||reference.expiresAt<=clock()||reference.status!=='open')throw Error('invalid_checkout_reference');return {public:{url:url.href},reference};
+    const url=new URL(checkout.url);if(url.protocol!=='https:'||url.port||url.username||url.password||url.href.length>4096||!(environment==='sandbox'?url.hostname==='sandbox.polar.sh':url.hostname==='polar.sh'))throw Error('invalid_checkout_destination');const reference={kind:allowTrial?'trial':'checkout',environment,vendorObjectId:text(checkout.id,128),externalCustomerId:checkout.external_customer_id,organizationId:checkout.organization_id,productId:checkout.product_id,expiresAt:date(checkout.expires_at),status:checkout.status,productPriceId:nullableText(checkout.product_price_id),currency:checkout.currency,amount:money(checkout.amount),netAmount:money(checkout.net_amount),totalAmount:money(checkout.total_amount),discountAmount:money(checkout.discount_amount),taxAmount:checkout.tax_amount===null?null:money(checkout.tax_amount),allowTrial:checkout.allow_trial,trialInterval:nullableText(checkout.trial_interval),trialIntervalCount:nullableCount(checkout.trial_interval_count),activeTrialInterval:nullableText(checkout.active_trial_interval),activeTrialIntervalCount:nullableCount(checkout.active_trial_interval_count),trialEnd:checkout.trial_end===null?null:date(checkout.trial_end)};if(reference.externalCustomerId!==id||reference.organizationId!==organizationId||reference.productId!==productId||reference.expiresAt<=clock()||reference.status!=='open'||!(/^[a-z]{3}$/.test(reference.currency))||reference.allowTrial!==allowTrial)throw Error('invalid_checkout_reference');return {public:{url:url.href},reference};
    });await owner(subject,context);await store.transaction(tx=>purchase(tx,subject));return result.public;
   },
   async openPortal({subject,context}){
-   if(!paidPlansEnabled||!enableActions)throw Error('billing_actions_disabled');if(typeof chargeableOperations?.execute!=='function')throw Error('billing_financial_unavailable');
+   if(!paidPlansEnabled||!enableActions)throw Error('billing_actions_disabled');await owner(subject,context);await store.transaction(tx=>purchase(tx,subject));if(typeof chargeableOperations?.execute!=='function')throw Error('billing_financial_unavailable');
    const {id}=await action(subject,context,'portal');
    const result=await chargeableOperations.execute({request:context.request,expectedOwner:context.owner,kind:'portal',prepare:async tx=>{await purchase(tx,subject);return {id};}},async({id})=>{
     const session=await polar.customerSessions.create({external_customer_id:id,return_url:back.href}),url=new URL(session.customer_portal_url);if(url.protocol!=='https:'||url.port||url.username||url.password||url.href.length>4096||!(environment==='sandbox'?url.hostname==='sandbox.polar.sh':url.hostname==='polar.sh'))throw Error('invalid_portal_destination');const reference={kind:'portal',environment,vendorObjectId:text(session.id,128),externalCustomerId:session.customer?.external_id,organizationId:session.customer?.organization_id,productId:null,expiresAt:date(session.expires_at),customerId:text(session.customer_id,128)};if(reference.externalCustomerId!==id||reference.organizationId!==organizationId||session.customer?.id!==reference.customerId||reference.expiresAt<=clock())throw Error('invalid_portal_reference');return {public:{url:url.href},reference};
