@@ -36,3 +36,12 @@ test('old uncounted financial bindings prevent fresh provisioning and runtime fl
  const provision=createEmptyBillingCapacityProvisioner({...options,store,firstBinding:async(tx,input)=>{assert.deepEqual(input,{prefix:'hosted/polar/waypo_',limit:1});return {key:'hosted/polar/waypo_old'};}});
  await assert.rejects(provision(),/requires_migration/);await assert.rejects(store.transaction(createBillingBindingCapacity({...options,limits:{maxBindings:1000}})),/capacity_unavailable/);assert.equal(store.snapshot().size,1);
 });
+
+test('chargeable intent dispatch and vendor attempt debit share an atomic transaction without nested reservations',async()=>{
+ const store=new TransactionStore(),prepay=createBillingVendorBudget({store,issuer:'https://identity.example/api/auth',environment:'sandbox',organizationId:'org',clock:()=>1000,limits:{checkout:1}});
+ await assert.rejects(store.transaction(async tx=>{await prepay.inTransaction(tx,'checkout');await tx.put('intent',{state:'dispatching'});throw Error('dispatch rollback');}),/dispatch rollback/);
+ assert.equal(store.snapshot().size,0,'failed dispatch leaves neither external allowance nor a misleading dispatch fence');
+ const dispatch=()=>store.transaction(async tx=>{if((await tx.get('intent'))?.state==='dispatching')return false;await prepay.inTransaction(tx,'checkout');await tx.put('intent',{state:'dispatching'});return true;});
+ assert.deepEqual(await Promise.all([dispatch(),dispatch()]),[true,false]);
+ assert.equal(store.snapshot().get('hosted/polar/vendor-attempts-v1').counts.checkout,1);await assert.rejects(prepay('checkout'),/billing_vendor_budget/);
+});

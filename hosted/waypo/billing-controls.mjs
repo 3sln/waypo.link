@@ -9,9 +9,9 @@ export function billingLimits(input={}){
 }
 export function createBillingVendorBudget({store,issuer,environment,organizationId,limits,clock=Date.now}){
  const {maxBindings,...selected}=billingLimits(limits),key='hosted/polar/vendor-attempts-v1',dayMs=86400000;
- return async function prepay(kind){
+ async function inTransaction(tx,kind){
+  if(typeof tx?.get!=='function'||typeof tx?.put!=='function')throw TypeError('Trusted shared billing transaction required');
   if(!Object.hasOwn(selected,kind))throw Error('billing_unknown_vendor_operation');
-  return store.transaction(async tx=>{
    const observed=clock();if(!Number.isSafeInteger(observed)||observed<0)throw Error('billing_clock_unavailable');
    const anchorKey=key+'/anchor',anchor=await tx.get(anchorKey);let row=await tx.get(key);
    if(Boolean(anchor)!==Boolean(row)||anchor&&(anchor.v!==1||anchor.issuer!==issuer||anchor.environment!==environment||anchor.organizationId!==organizationId))throw Error('billing_budget_unavailable');
@@ -21,8 +21,11 @@ export function createBillingVendorBudget({store,issuer,environment,organization
    row.highWater=at;
    if(row.counts[kind]>=selected[kind])throw Object.assign(Error(kind==='cancel'?'billing_cancellation_budget':'billing_vendor_budget'),{retryAfter:Math.max(1,Math.ceil(((day+1)*dayMs-at)/1000))});
    row.counts[kind]++;if(!anchor)await tx.put(anchorKey,{v:1,issuer,environment,organizationId});await tx.put(key,row);
-  });
- };
+ }
+ // Chargeable dispatch uses this same transaction to publish its no-replay
+ // fence. The legacy wrapper remains for independent cancellation/reconcile.
+ const prepay=async kind=>store.transaction(tx=>inTransaction(tx,kind));
+ return Object.freeze(Object.assign(prepay,{inTransaction}));
 }
 
 // Retained financial bindings have a separate lifetime stock ceiling. No
