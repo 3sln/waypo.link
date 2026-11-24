@@ -27,6 +27,7 @@ import {createFixtureAuthority,seedInitializedFixture} from './native-capacity.f
 import {freeCreationRate} from './free-rate.fixture.mjs';
 
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
+const appScopes=['openid','blobs:read','blobs:write','logs:read','logs:append'];
 async function merchantFixture(t){
  const state={calls:[],creates:0,checkout:null,customer:null,subscription:null,orders:new Map(),hold:null,started:null};
  const server=createServer(async(request,response)=>{
@@ -64,7 +65,7 @@ test('actual Native owner signup and OAuth session drive provisioned paid admiss
  const directory=await mkdtemp(join(tmpdir(),'waypo-native-paid-')),database=join(directory,'metadata.sqlite'),mail=join(directory,'mail.jsonl');
  let app,browser;const merchant=await merchantFixture(t),jar=new Map();
  const clientId='https://paid-app.example/client.json',redirect='https://paid-app.example/callback';
- const metadata=createServer((_request,response)=>{response.writeHead(200,{'Content-Type':'application/json','Cache-Control':'public,max-age=300'});response.end(JSON.stringify({client_id:clientId,client_name:'Native paid fixture application',redirect_uris:[redirect],grant_types:['authorization_code'],response_types:['code'],token_endpoint_auth_method:'none'}));});
+ const metadata=createServer((_request,response)=>{response.writeHead(200,{'Content-Type':'application/json','Cache-Control':'public,max-age=300'});response.end(JSON.stringify({client_id:clientId,client_name:'Native paid fixture application',redirect_uris:[redirect],grant_types:['authorization_code'],response_types:['code'],token_endpoint_auth_method:'none',scope:appScopes.join(' ')}));});
  metadata.listen(0,'127.0.0.1');await once(metadata,'listening');
  const key=join(directory,'fixture-key.pem'),cert=join(directory,'fixture-cert.pem');execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',cert,'-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'ignore',timeout:10000,maxBuffer:65536});
  const http=createHttpsServer({key:await readFile(key),cert:await readFile(cert)},async(incoming,outgoing)=>{try{const parts=[];for await(const chunk of incoming)parts.push(chunk);const result=await app.handle(new Request(origin+incoming.url,{method:incoming.method,headers:incoming.headers,...['GET','HEAD'].includes(incoming.method)?{}:{body:Buffer.concat(parts)}}));const headers=Object.fromEntries([...result.headers].filter(([name])=>name!=='set-cookie'));if(result.headers.getSetCookie().length)headers['Set-Cookie']=result.headers.getSetCookie();outgoing.writeHead(result.status,headers);outgoing.end(Buffer.from(await result.arrayBuffer()));}catch{outgoing.writeHead(500);outgoing.end();}});
@@ -95,12 +96,13 @@ test('actual Native owner signup and OAuth session drive provisioned paid admiss
  const session=await(await request('/api/auth/get-session')).json();assert.equal(session.user.email,'paid-owner@example.test');assert.ok(session.session.id);assert.notEqual(session.user.id,'fixture-bootstrap-authority');
  const policy=async()=>{const response=await request('/api/waypo/account-policy');assert.equal(response.status,200);return response.json();};
  assert.equal((await policy()).state.storageBytes,500000000);
- const discovery=await request('/api/auth/.well-known/openid-configuration');assert.equal(discovery.status,200);
- const verifier=randomBytes(32).toString('base64url'),query=new URLSearchParams({client_id:clientId,redirect_uri:redirect,response_type:'code',scope:'openid blobs:read blobs:write logs:read logs:write',state:randomBytes(32).toString('base64url'),nonce:randomBytes(32).toString('base64url'),code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});
+ const discovery=await request('/api/auth/.well-known/openid-configuration');assert.equal(discovery.status,200);const metadataDocument=await discovery.json();for(const scope of appScopes)assert.equal(metadataDocument.scopes_supported.includes(scope),true,'requested scope must be explicitly advertised: '+scope);
+ const verifier=randomBytes(32).toString('base64url'),state=randomBytes(32).toString('base64url'),query=new URLSearchParams({client_id:clientId,redirect_uri:redirect,response_type:'code',scope:appScopes.join(' '),state,nonce:randomBytes(32).toString('base64url'),code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});
  const authorization=await request('/api/auth/oauth2/authorize?'+query);assert.equal(authorization.status,302);let location=new URL(authorization.headers.get('location'),origin);
  if(location.pathname==='/consent'){const consent=await request('/api/auth/oauth2/consent',{body:{accept:true,oauth_query:location.search.slice(1)}});assert.equal(consent.status,200);const value=await consent.json();location=new URL(value.redirect_uri??value.url);}
  assert.equal(location.origin,new URL(redirect).origin);
- const exchange=await request('/api/auth/oauth2/token',{cookies:false,form:{grant_type:'authorization_code',client_id:clientId,redirect_uri:redirect,code_verifier:verifier,code:location.searchParams.get('code')}});assert.equal(exchange.status,200);const tokens=await exchange.json();assert.ok(tokens.id_token);assert.ok(tokens.access_token);
+ const oauthError=location.searchParams.get('error');assert.equal(oauthError,null,'authorization error: '+(/^[a-z_]{1,64}$/.test(oauthError??'')?oauthError:'unclassified'));assert.equal(location.searchParams.get('state'),state);assert.ok(location.searchParams.get('code'),'authorization must return a nonempty code before token exchange');
+ const exchange=await request('/api/auth/oauth2/token',{cookies:false,form:{grant_type:'authorization_code',client_id:clientId,redirect_uri:redirect,code_verifier:verifier,code:location.searchParams.get('code')}}),tokens=await exchange.json();assert.equal(exchange.status,200,'token error: '+(/^[a-z_]{1,64}$/.test(tokens.error??'')?tokens.error:'unclassified'));assert.ok(tokens.id_token);assert.ok(tokens.access_token);
  const identity=await request('/api/auth/oauth2/userinfo',{cookies:false,bearer:tokens.access_token});assert.equal(identity.status,200);const pairwise=await identity.json();assert.ok(pairwise.sub);assert.notEqual(pairwise.sub,session.user.id);
  const billing=async(operation,body)=>request('/api/hosted/billing/'+operation,{body,expectedUser:session.user.id});
  const before=await(await billing('status')).json();assert.equal(before.portalEnabled,false);assert.equal(before.actionsEnabled,true);
@@ -115,7 +117,7 @@ test('actual Native owner signup and OAuth session drive provisioned paid admiss
  const verified=await(await billing('status')).json();assert.equal(verified.paidThrough,paid.end);assert.equal(verified.portalEnabled,false);assert.equal(merchant.state.creates,1);
  assert.equal((await billing('refresh',{})).status,200);assert.equal((await policy()).state.storageBytes,10000000000);
  const fetchResource=(url,options={})=>{const headers=new Headers(options.headers);headers.set('Authorization','Bearer '+tokens.access_token);return app.handle(new Request(url,{...options,headers}));};
- const capabilities=await discoverServiceCapabilities({issuer,metadata:await discovery.json(),allowInsecureLoopback:true});
+ const capabilities=await discoverServiceCapabilities({issuer,metadata:metadataDocument,allowInsecureLoopback:true});
  const transfers=createBlobTransfers({issuer,streaming:capabilities.features.blobs.transfers,fetchResource,allowInsecureLoopback:true}),content=new TextEncoder().encode('Genuine Native application resource after funded policy');
  const uploaded=await transfers.uploadBlob(new Blob([content]),{key:'native-paid-file',requestId:randomBytes(16).toString('hex'),retryDeadlineMs:20000});
  const download=await transfers.getResumableStream('native-paid-file',{ifVersion:uploaded.version});assert.deepEqual(new Uint8Array(await new Response(download.stream).arrayBuffer()),content);
