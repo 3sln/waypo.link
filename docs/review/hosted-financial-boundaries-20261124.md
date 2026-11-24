@@ -1,0 +1,9 @@
+# Hosted financial-boundary review
+
+Coordinator source review of the shared-transaction vendor debit, duplicate personal-plan guard and bounded private owner registry (`05c934f`, `3b25cc7`, `37cb321`, `3d3ea48`). The coherent hosted suite independently passed **98/98 in1.269s** against selected core `13069b4`, no failures/skips/cancellations. The four changes were assembled without changing production configuration or the dormant cancellation flow.
+
+Dispatch can now use the existing vendor-budget debit inside its own transaction, with rollback and one-winner evidence; the legacy wrapper remains. Annual and trial checkout reject an already known subscription or live funded/trial term server-side, even when a caller bypasses the disabled UI button. This is a known-state duplicate guard, not proof that every externally open merchant operation is closed.
+
+The unused owner registry is bounded to16 operations/30s by default. It holds the actual Request object and exact issuer/subject/SID, rechecks the maintained transaction-local owner port before and after awaited verification, and removes operation proofs on completion. The core port has separate genuine Native sign-out/session and nested-transaction evidence; the registry's three focused cases are DI evidence, not a wired checkout's end-to-end proof.
+
+The registry and new chargeable-intent engine are not wired into purchase/portal dispatch by this change. Pending/unknown effects, physical paid capacity, canonical merchant closure, superseded settlement and full archive/restore remain activation gates. The Node billing provisioning tool also still needs the shared stopped-installation/quarantine guard being developed separately. Billing/trials, analytics and production stay disabled; no live merchant request or charge was made.
