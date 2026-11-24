@@ -27,3 +27,13 @@ trials and production remain disabled. Portal capabilities remain unqualified.
 Synthetic legacy paid browser scenarios must not be represented as positive
 funded-capacity evidence; their missing-admission/retained-subscription checks
 are being updated and qualified separately.
+
+Those fixture-only updates were subsequently reviewed and included: Worker
+`7346618` passed its actual DO/SQLite case (1/1, 3.444s); HTTP/Chromium
+`df372ee` passed its case (1/1, 10.799s), paired with the private core lifecycle
+candidate. Both prove missing-admission no-POST behavior and explicitly seeded
+retained-subscription servicing, not purchase admission or live merchant
+funding. The corrections retain the current 500,000,000-byte free baseline and
+supply the canonical subscription/term fields required by cancellation. No
+runtime policy was weakened to make these fixtures pass. Full coherent hosted
+release coverage remains separate from these narrow proofs.
