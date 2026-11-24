@@ -32,3 +32,8 @@ Native04 session83410 RED8.410s after real blob: single-attempt public logs.appe
 Native05 session52634 RED8.063s at raw owner policy GET503 following invalid EUR check; before managed append/usage/UI. Its body was not captured, so no retrospective exact-error claim. The next maintained observer classified only the actual06reply. No05screenshot.
 
 Original36416 HTTPS/import fixture RED and23995 OAuth400 RED remain recorded in the first receipt. No historical failure is rewritten as proof of the current result.
+
+
+## Durable evidence preservation
+
+The coordinator independently preserved the exact06 raw log,19-file hash manifest,overlay manifest and both PNGs at `/Users/raystubbs/Projects/@3sln/waypo.link/.artifacts/native-paid-20261124-06`, alongside preservation.json. Each preserved file was independently hash-compared to the original. The private directory is0700/files0600 and git-ignored; no dependency or source tree was copied. Original temporary evidence and historical receipts remain unchanged. This pointer records preservation, not another execution.
