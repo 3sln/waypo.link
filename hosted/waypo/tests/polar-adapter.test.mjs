@@ -121,7 +121,7 @@ test('status and usage do not allocate customer rows; global vendor attempts rem
  await f.adapter.inspect(owner);assert.equal(f.store.snapshot().size,2);await f.store.transaction(tx=>f.adapter.recordServiceUsage(tx,{subject:'alice',usedBytes:1,includedBytes:500000000}));assert.equal(f.store.snapshot().size,2);
  f.beforeCheckoutReturn(()=>{throw Error('uncertain-vendor');});await assert.rejects(f.adapter.beginCheckout({...owner,intent:'annual'}),/uncertain-vendor/);assert.equal(f.calls.length,1);
  await assert.rejects(f.adapter.beginCheckout({...owner,intent:'annual'}),/vendor_budget/);assert.equal(f.calls.length,1);
- await assert.rejects(f.adapter.beginCheckout({subject:'bob',context:'actual-owner-session',intent:'annual'}),/capacity_budget/);assert.equal(f.calls.length,1);
+ await assert.rejects(f.adapter.beginCheckout({subject:'bob',context:'actual-owner-session',intent:'annual'}),/vendor_budget/);assert.equal(f.calls.length,1);assert.equal(f.store.snapshot().get('hosted/polar/bindings-stock-v1').count,1,'global vendor exhaustion cannot allocate another binding');
 });
 
 test('paid activation cannot initialize absent financial stock over an old catalog',async()=>{
