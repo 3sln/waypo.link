@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {hostedWorkerEnvironment,composeWaypoLinkProviderConfiguration} from '../composition.mjs';
-import {WAYPO_LINK_ISSUER} from '../policy-preset.mjs';
+import {WAYPO_LINK_ISSUER,WAYPO_LINK_INITIAL_FREE_STORAGE_SERVICES} from '../policy-preset.mjs';
+import {storageCapacityProfile} from './work-policy.fixture.mjs';
 import {nativeCapacityProfile} from './native-capacity.fixture.mjs';
 import {freeCreationRate} from './free-rate.fixture.mjs';
 
 const admission={revision:1,maxPublicAccounts:16,maxProtectedAccounts:2,acceptingNewAccounts:false};
 const free=environment=>({mode:'free',environment,accountAdmission:admission,accountCreationRate:freeCreationRate()});
 const direct={revision:1,operations:{GET:{delivery:'direct-allowed',defaultTtlMs:1000,maxTtlMs:1000,maxObjectBytes:1,mintRate:{capacity:1,refillPerMinute:1}},PUT:{delivery:'proxy'},DELETE:{delivery:'proxy'}}};
-function provider(environment,blobDelivery){return {...nativeCapacityProfile(),issuer:environment==='production'?WAYPO_LINK_ISSUER:'https://identity.example/api/auth',adminUrl:environment==='production'?'https://waypo.link/admin/':'https://identity.example/admin/',installationId:'hosted-download-policy',authSecret:'private-fixture-hosted-download-policy-secret32',admission:'closed',services:{...nativeCapacityProfile().services,blobs:true,...blobDelivery===undefined?{}:{blobDelivery}}};}
+function provider(environment,blobDelivery){return {...nativeCapacityProfile(),issuer:environment==='production'?WAYPO_LINK_ISSUER:'https://identity.example/api/auth',adminUrl:environment==='production'?'https://waypo.link/admin/':'https://identity.example/admin/',installationId:'hosted-download-policy',authSecret:'private-fixture-hosted-download-policy-secret32',admission:'closed',services:{...nativeCapacityProfile().services,...WAYPO_LINK_INITIAL_FREE_STORAGE_SERVICES,logs:false,storageCapacity:storageCapacityProfile(),...blobDelivery===undefined?{}:{blobDelivery}}};}
 function environmentFor(config,settings){return {WAYPO_CONFIG:JSON.stringify(config),[settings.mode==='free'?'HOSTED_FREE_CONFIG':'HOSTED_BILLING_CONFIG']:JSON.stringify(settings)};}
 
 test('hosted Worker rejects replayable R2 reads in every billing mode before reading email or vendor ports',()=>{
