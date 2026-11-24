@@ -26,6 +26,7 @@ import {financialOperatorFixtureConfiguration} from './financial-provision.fixtu
 import {createFixtureAuthority,seedInitializedFixture} from './native-capacity.fixture.mjs';
 import {freeCreationRate} from './free-rate.fixture.mjs';
 
+const {observeNativeRead}=await import(new URL('../../tests/helpers/native-observation.mjs',import.meta.resolve('@3sln/waypo/node')).href);
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
 const appScopes=['openid','blobs:read','blobs:write','logs:read','logs:append'];
 async function merchantFixture(t){
@@ -94,7 +95,7 @@ test('actual Native owner signup and OAuth session drive provisioned paid admiss
  const message=JSON.parse((await readFile(mail,'utf8')).trim().split('\n').at(-1));
  assert.equal((await request('/api/waypo/email/approve',{body:Object.fromEntries(new URLSearchParams(new URL(message.url).hash.slice(1)))})).status,200);
  const session=await(await request('/api/auth/get-session')).json();assert.equal(session.user.email,'paid-owner@example.test');assert.ok(session.session.id);assert.notEqual(session.user.id,'fixture-bootstrap-authority');
- const policy=async()=>{const response=await request('/api/waypo/account-policy');assert.equal(response.status,200);return response.json();};
+ const policy=async()=>{const observed=await observeNativeRead({url:origin+'/api/waypo/account-policy',headers:{Cookie:[...jar].map(([key,value])=>key+'='+value).join('; ')},send:fixed=>app.handle(fixed),signal:t.signal});if(observed.refusals.length)t.diagnostic(JSON.stringify({phase:'native-paid-policy-read',attempts:observed.attempts,refusals:observed.refusals}));const response=observed.response;assert.equal(response.status,200,'exact owner policy GET must reach a real successful response');for(const item of response.headers.getSetCookie()){const [key,...parts]=item.split(';')[0].split('=');jar.set(key,parts.join('='));}return response.json();};
  assert.equal((await policy()).state.storageBytes,500000000);
  const discovery=await request('/api/auth/.well-known/openid-configuration');assert.equal(discovery.status,200);const metadataDocument=await discovery.json();for(const scope of appScopes)assert.equal(metadataDocument.scopes_supported.includes(scope),true,'requested scope must be explicitly advertised: '+scope);
  const verifier=randomBytes(32).toString('base64url'),state=randomBytes(32).toString('base64url'),query=new URLSearchParams({client_id:clientId,redirect_uri:redirect,response_type:'code',scope:appScopes.join(' '),state,nonce:randomBytes(32).toString('base64url'),code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});
