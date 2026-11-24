@@ -1,17 +1,22 @@
 // Server-only coordinator: the caller never supplies an intent sequence or an
 // owner proof. Unknown remote effects stay in the shared ledger indefinitely.
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {createChargeableFinancialIntents} from '@3sln/waypo/engines/financial-intents';
 import {createFinancialOwnerProofs} from './financial-owner-proofs.mjs';
 import {createBillingVendorBudget} from './billing-controls.mjs';
 const fail=code=>{throw Object.assign(Error(code),{code});};
-export async function createChargeableOperations({store,issuer,installationId,binding,ports={},authorizeOwnerInTransaction,resolveOwner,qualifyVendorClosure=async()=>false,acceptResult=async()=>false,prepareOperation=async()=>false,clock=Date.now,random, billingLimits}){
- if(typeof store?.transaction!=='function'||typeof resolveOwner!=='function'||typeof qualifyVendorClosure!=='function'||typeof acceptResult!=='function'||typeof prepareOperation!=='function')throw TypeError('Private chargeable operation ports required');
+export async function createChargeableOperations({store,issuer,installationId,binding,ports={},authorizeOwnerInTransaction,resolveOwner,qualifyVendorClosure=async()=>false,acceptResult=async()=>false,prepareOperation=async()=>false,resourcePreflight=async()=>{},closeResources=async()=>{},onLedgerReady=async()=>{},clock=Date.now,random, billingLimits}){
+ if(typeof store?.transaction!=='function'||typeof resolveOwner!=='function'||typeof qualifyVendorClosure!=='function'||typeof acceptResult!=='function'||typeof prepareOperation!=='function'||typeof resourcePreflight!=='function'||typeof closeResources!=='function'||typeof onLedgerReady!=='function')throw TypeError('Private chargeable operation ports required');
  const owners=createFinancialOwnerProofs({issuer,authorizeOwnerInTransaction,clock,...random?{random}:{}}),budget=createBillingVendorBudget({store,issuer,environment:binding.environment,organizationId:binding.organizationId,limits:billingLimits,clock});
- let intents;try{intents=await createChargeableFinancialIntents({...ports,store,issuer,installationId,binding,clock,authorizeOwner:(tx,input)=>owners.authorizeInTransaction(tx,input),consumeVendorWork:async(tx,{kind})=>{await budget.inTransaction(tx,kind==='trial'?'checkout':kind);return true;}});}catch(error){owners.close();throw error;}
- return Object.freeze({
-  async execute({request,kind,prepare,expectedOwner},post){
+ let intents;try{intents=await createChargeableFinancialIntents({...ports,store,issuer,installationId,binding,clock,authorizeOwner:(tx,input)=>owners.authorizeInTransaction(tx,input),consumeVendorWork:async(tx,{kind})=>{await budget.inTransaction(tx,kind==='trial'?'checkout':kind);return true;}});await onLedgerReady(intents);}catch(error){const errors=[error];for(const close of[()=>owners.close(),closeResources,()=>intents?.close()])try{await close();}catch(cleanupError){errors.push(cleanupError);}if(errors.length>1)throw Object.assign(new AggregateError(errors,'Financial initialization cleanup unconfirmed'),{code:'billing_financial_cleanup_unconfirmed'});throw error;}
+ let closing=false,closePromise;const active=new Set(),operationScope=new AsyncLocalStorage(),operationMarker=Object.freeze({});
+ function tracked(callback){if(closing)fail('billing_financial_closing');if(typeof callback!=='function')fail('billing_financial_unavailable');if(active.size>=16)fail('billing_financial_busy');const operation=Promise.resolve().then(()=>operationScope.run(operationMarker,callback)).then(result=>{if(closing)fail('billing_financial_closing');return result;});active.add(operation);void operation.finally(()=>active.delete(operation)).catch(()=>{});return operation;}
+ async function execute({request,kind,prepare,expectedOwner},post){
+   if(closing)fail('billing_financial_closing');
    if(!['checkout','trial','portal'].includes(kind)||typeof post!=='function'||prepare!==undefined&&typeof prepare!=='function')fail('billing_financial_unavailable');
+   await resourcePreflight();if(closing)fail('billing_financial_closing');
    const owner=await resolveOwner(request);
+   if(closing)fail('billing_financial_closing');
    if(!expectedOwner||Object.keys(expectedOwner).sort().join(',')!=='issuer,sessionId,subject'||expectedOwner.issuer!==owner.issuer||expectedOwner.subject!==owner.subject||expectedOwner.sessionId!==owner.sessionId)fail('billing_owner_required');
    return owners.withOwner({request,owner},async({ownerProofHash})=>{
     const subject=owner.subject,{selected,prepared}=await store.transaction(async tx=>{
@@ -24,24 +29,29 @@ export async function createChargeableOperations({store,issuer,installationId,bi
      if(prepare)prepared.payload=await prepare(tx,{subject,kind});
      const {offerDigest,capacityBytes,billingGeneration}=prepared;
      const requestId=crypto.randomUUID().replaceAll('-',''),row=await intents.reserveInTransaction(tx,{subject,kind,offerDigest,capacityBytes,billingGeneration,ownerProofHash,requestId,sequence:status.nextSequence});
-     const dispatch=await intents.dispatchInTransaction(tx,{subject,intentId:row.id,ownerProofHash});if(!dispatch.dispatchAllowed)fail('billing_financial_pending');return {selected:row,prepared:structuredClone(prepared)};
+     const dispatch=await intents.dispatchInTransaction(tx,{subject,intentId:row.id,ownerProofHash});if(!dispatch.dispatchAllowed)fail('billing_financial_pending');if(closing)fail('billing_financial_closing');return {selected:row,prepared:structuredClone(prepared)};
     });
     const input={subject,intentId:selected.id};
     try{
      await store.transaction(async tx=>{if(!await owners.authorizeDisclosure(tx,{subject,ownerProofHash,request,owner:expectedOwner}))fail('billing_owner_required');if(typeof ports.readBillingGeneration!=='function'||await ports.readBillingGeneration(tx,{subject,binding})!==prepared.billingGeneration)fail('financial_intent_generation_changed');});
-     const result=await post(prepared.payload);
+     if(closing)fail('billing_financial_closing');
+     const result=await post(prepared.payload,Object.freeze({intentId:selected.id,offerDigest:selected.offerDigest,billingGeneration:selected.billingGeneration}));
      // The trusted acceptor must durably retain a bounded canonical result
      // proof in this SAME transaction; a returned URL alone is not evidence.
      await store.transaction(async tx=>{const proofDigest=await acceptResult(tx,{subject,intent:selected,result});await intents.recordResultInTransaction(tx,{...input,proofDigest});});
      const current=await resolveOwner(request);
      await store.transaction(async tx=>{if(typeof ports.readBillingGeneration!=='function'||await ports.readBillingGeneration(tx,{subject,binding})!==prepared.billingGeneration)fail('financial_intent_generation_changed');if(await qualifyVendorClosure(tx,{subject,kind,binding})!==true)fail('billing_financial_closure_unavailable');if(!await owners.authorizeDisclosure(tx,{subject,ownerProofHash,request,owner:current}))fail('billing_owner_required');});
+     if(closing)fail('billing_financial_closing');
      return result;
     }catch(error){
      try{await intents.markUnknown(input);}catch{/* A committed dispatch already holds liability even if marking fails. */}
      throw error;
     }
    });
-  },
-  close(){owners.close();return intents.close();}
+ }
+ return Object.freeze({
+  async execute(input,post){return tracked(()=>execute(input,post));},
+  async run(callback){return tracked(callback);},
+  close(){if(operationScope.getStore()===operationMarker){closing=true;return Promise.reject(Object.assign(Error('Cannot confirm financial shutdown from its own active operation'),{code:'billing_financial_cleanup_unconfirmed'}));}return closePromise??=(async()=>{closing=true;await Promise.allSettled([...active]);owners.close();const errors=[];for(const close of[closeResources,()=>intents.close()])try{await close();}catch(error){errors.push(error);}if(errors.length)throw Object.assign(new AggregateError(errors,'Financial resources shutdown unconfirmed'),{code:'billing_financial_cleanup_unconfirmed'});})();}
  });
 }
